@@ -104,9 +104,25 @@ app.post('/api/create-checkout', async (req, res) => {
 })
 
 // Monime webhook handler
-app.post('/webhook/monime', async (req, res) => {
+app.post('/webhook/monime', express.raw({ type: 'application/json' }), async (req, res) => {
   try {
-    const event = req.body
+    const crypto = require('crypto')
+    const signature = req.headers['monime-signature']
+    const rawBody = req.body
+
+    if (signature && WEBHOOK_SECRET) {
+      const expectedSig = crypto
+        .createHmac('sha256', WEBHOOK_SECRET)
+        .update(rawBody)
+        .digest('hex')
+
+      if (signature !== expectedSig) {
+        console.error('Invalid webhook signature')
+        return res.status(401).json({ error: 'Invalid signature' })
+      }
+    }
+
+    const event = JSON.parse(rawBody)
 
     console.log('Webhook received:', event.type)
 
