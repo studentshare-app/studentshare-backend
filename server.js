@@ -36,7 +36,6 @@ app.post('/api/create-checkout', async (req, res) => {
     const planConfig = PLANS[plan]
     if (!planConfig) return res.status(400).json({ error: 'Invalid plan' })
 
-    const appUrl = process.env.APP_URL || 'https://studentshare.app'
     const response = await fetch(`${MONIME_API_URL}/checkout-sessions`, {
       method: 'POST',
       headers: {
@@ -48,8 +47,9 @@ app.post('/api/create-checkout', async (req, res) => {
         name: planConfig.name,
         description: `StudentShare ${planConfig.name}`,
         lineItems: [{ type: 'custom', name: planConfig.name, quantity: 1, unitAmount: planConfig.amount, currency: 'SLE' }],
-        successUrl: `${appUrl}/payment-success?plan=${plan}&userId=${userId}`,
-        cancelUrl: `${appUrl}/payment-cancelled`,
+        // Deep links bring the user straight back into the app
+        successUrl: `studentshare://payment-pending`,
+        cancelUrl:  `studentshare://subscription`,
         metadata: { userId, plan, userEmail: userEmail || '', userName: userName || '' },
         paymentOptions: { momo: { enabledProviders: ['m17', 'm18'] } }
       })
