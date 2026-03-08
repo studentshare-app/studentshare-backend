@@ -32,8 +32,8 @@ app.get('/', (req, res) => res.json({ status: 'StudentShare backend running' }))
 // ─── FIX 3: Keep-alive ping so Render free instance never sleeps ───────────
 setInterval(async () => {
   try {
-    await fetch('https://studentshare-backend.onrender.com/')
-    console.log('Keep-alive ping sent')
+    const res = await fetch('https://studentshare-backend.onrender.com/')
+    console.log('Keep-alive ping sent, status:', res.status)
   } catch (e) {
     console.error('Keep-alive failed:', e.message)
   }
@@ -64,7 +64,14 @@ app.post('/api/create-checkout', async (req, res) => {
       })
     })
 
-    const data = await response.json()
+    const rawText = await response.text()
+    let data
+    try {
+      data = JSON.parse(rawText)
+    } catch (e) {
+      console.error('Monime non-JSON response:', rawText)
+      return res.status(500).json({ error: 'Monime returned unexpected response' })
+    }
     if (!response.ok) {
       console.error('Monime error:', data)
       return res.status(500).json({ error: 'Failed to create checkout session' })
