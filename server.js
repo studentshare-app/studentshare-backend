@@ -15,7 +15,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_KEY
 )
 
-const MONIME_API_URL = 'https://api.monime.io'
+const MONIME_API_URL = 'https://api.monime.io/v1'
 const MONIME_SPACE_ID = process.env.MONIME_SPACE_ID
 const MONIME_ACCESS_TOKEN = process.env.MONIME_ACCESS_TOKEN
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET
