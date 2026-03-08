@@ -88,7 +88,7 @@ app.post('/api/create-checkout', async (req, res) => {
     }
     console.log('Monime full response:', JSON.stringify(data, null, 2))
     // Monime may wrap response in a data object
-    const session = data.data || data
+    const session = data.result || data
     console.log('Session id:', session.id, '| redirectUrl:', session.redirectUrl)
 
     // ─── FIX 2: Safe insert — never overwrite an active subscription ──────────
@@ -102,7 +102,7 @@ app.post('/api/create-checkout', async (req, res) => {
     if (existing?.status === 'active') {
       // Already active — just return the checkout URL without touching the DB
       // (user may be upgrading; let the webhook handle it)
-      const session2 = data.data || data
+      const session2 = data.result || data
       return res.json({ checkoutUrl: session2.redirectUrl, sessionId: session2.id })
     }
 
@@ -111,14 +111,14 @@ app.post('/api/create-checkout', async (req, res) => {
       user_id: userId,
       plan,
       status: 'pending',
-      monime_session_id: (data.data || data).id,
+      monime_session_id: (data.result || data).id,
       amount: planConfig.amount,
       currency: 'SLE',
       payment_method: 'monime',
       created_at: new Date().toISOString(),
     }, { onConflict: 'user_id' })
 
-    const sessionData = data.data || data
+    const sessionData = data.result || data
     res.json({ checkoutUrl: sessionData.redirectUrl, sessionId: sessionData.id })
   } catch (err) {
     console.error('Checkout error:', err)
@@ -144,7 +144,7 @@ app.post('/webhook/monime', async (req, res) => {
 
     // ─── FIX 1: Confirmed event name from Monime docs is checkout_session.completed
     if (event.type === 'checkout_session.completed') {
-      const { userId, plan } = event.data?.metadata || {}
+      const { userId, plan } = event.result?.metadata || event.data?.metadata || {}
       if (!userId || !plan) return res.status(200).json({ received: true })
       const planConfig = PLANS[plan]
       if (!planConfig) return res.status(200).json({ received: true })
@@ -168,7 +168,7 @@ app.post('/webhook/monime', async (req, res) => {
         status: 'active',
         expires_at: expiresAt.toISOString(),
         activated_at: new Date().toISOString(),
-        monime_session_id: event.data.id,
+        monime_session_id: (event.result || event.data)?.id,
         amount: planConfig.amount,
         currency: 'SLE',
       }).eq('user_id', userId)
