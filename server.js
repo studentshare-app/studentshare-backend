@@ -169,6 +169,7 @@ app.post('/webhook/monime', async (req, res) => {
       const expiresAt = new Date()
       expiresAt.setDate(expiresAt.getDate() + planConfig.days)
 
+      // Update subscriptions table
       if (sessionId) {
         await supabase
           .from('subscriptions')
@@ -192,11 +193,20 @@ app.post('/webhook/monime', async (req, res) => {
           .eq('status', 'pending')
       }
 
-      // Grant verified badge
-      await supabase
+      // ✅ FIX: Grant premium access on profiles — this is what the app checks
+      const { error: profileErr } = await supabase
         .from('profiles')
-        .update({ is_verified: true })
+        .update({
+          is_premium:          true,
+          is_verified:         true,
+          premium_plan:        plan,
+          premium_expires_at:  expiresAt.toISOString(),
+        })
         .eq('id', userId)
+
+      if (profileErr) {
+        console.error('Failed to update profile premium status:', profileErr.message)
+      }
 
       console.log(`✅ Auto-activated: user=${userId} plan=${plan} expires=${expiresAt.toISOString()}`)
     }
@@ -281,10 +291,20 @@ app.post('/api/approve', async (req, res) => {
 
     if (updateErr) return res.status(500).json({ error: 'DB update failed: ' + updateErr.message })
 
-    await supabase
+    // ✅ FIX: Grant premium access on profiles — this is what the app checks
+    const { error: profileErr } = await supabase
       .from('profiles')
-      .update({ is_verified: true })
+      .update({
+        is_premium:         true,
+        is_verified:        true,
+        premium_plan:       targetPlan,
+        premium_expires_at: expiresAt.toISOString(),
+      })
       .eq('id', targetUserId)
+
+    if (profileErr) {
+      console.error('Failed to update profile premium status:', profileErr.message)
+    }
 
     console.log(`✅ Manually approved: user=${targetUserId} plan=${targetPlan} expires=${expiresAt.toISOString()}`)
     return res.json({ success: true, expiresAt })
