@@ -55,8 +55,8 @@ app.post('/api/create-checkout', async (req, res) => {
     const response = await fetch(`${MONIME_API_URL}/checkout-sessions`, {
       method: 'POST',
       headers: {
-        'Content-Type':   'application/json',
-        'Authorization':  `Bearer ${MONIME_ACCESS_TOKEN}`,
+        'Content-Type':    'application/json',
+        'Authorization':   `Bearer ${MONIME_ACCESS_TOKEN}`,
         'Monime-Space-Id': MONIME_SPACE_ID,
         'Idempotency-Key': `${userId}-${plan}-${Date.now()}`,
       },
@@ -93,9 +93,6 @@ app.post('/api/create-checkout', async (req, res) => {
     console.log('Monime session id:', session.id, '| redirectUrl:', session.redirectUrl)
 
     // 2. INSERT a fresh pending row — never upsert
-    //    FIX: old code used upsert({onConflict:'user_id'}) which broke
-    //    multiple purchases. Now every checkout gets its own row,
-    //    and the webhook matches by monime_session_id.
     const { error: dbError } = await supabase.from('subscriptions').insert({
       user_id:           userId,
       plan,
@@ -108,7 +105,6 @@ app.post('/api/create-checkout', async (req, res) => {
     })
 
     if (dbError) {
-      // Non-fatal — log and continue. Webhook can still activate.
       console.error('DB insert error (non-fatal):', dbError.message)
     }
 
@@ -129,15 +125,25 @@ app.post('/webhook/monime', async (req, res) => {
     const signature = req.headers['monime-signature']
     const rawBody   = req.body  // Buffer
 
+    // ── Signature verification ────────────────────────────────
     if (signature && WEBHOOK_SECRET) {
       const expectedSig = crypto
         .createHmac('sha256', WEBHOOK_SECRET)
         .update(rawBody)
         .digest('hex')
-      if (signature !== expectedSig) {
-        console.error('Invalid webhook signature')
+
+      // Monime may send as "sha256=abc..." or raw "abc..."
+      const cleanSig = signature.startsWith('sha256=') ? signature.slice(7) : signature
+
+      console.log('Webhook sig received:', cleanSig)
+      console.log('Webhook sig expected:', expectedSig)
+
+      if (cleanSig !== expectedSig) {
+        console.error('Invalid webhook signature — mismatch')
         return res.status(401).json({ error: 'Invalid signature' })
       }
+    } else {
+      console.warn('Webhook: no signature or secret — skipping verification')
     }
 
     const event = JSON.parse(rawBody.toString())
@@ -163,8 +169,6 @@ app.post('/webhook/monime', async (req, res) => {
       const expiresAt = new Date()
       expiresAt.setDate(expiresAt.getDate() + planConfig.days)
 
-      // FIX: match by monime_session_id, not user_id
-      // Old code updated by user_id which breaks when a user buys multiple times
       if (sessionId) {
         await supabase
           .from('subscriptions')
@@ -174,9 +178,8 @@ app.post('/webhook/monime', async (req, res) => {
             activated_at: new Date().toISOString(),
           })
           .eq('monime_session_id', sessionId)
-          .eq('status', 'pending')   // idempotency — skip if already active
+          .eq('status', 'pending')
       } else {
-        // Fallback: no session ID in webhook payload
         console.warn('Webhook: no session ID — using user_id + most recent pending row')
         await supabase
           .from('subscriptions')
@@ -278,7 +281,6 @@ app.post('/api/approve', async (req, res) => {
 
     if (updateErr) return res.status(500).json({ error: 'DB update failed: ' + updateErr.message })
 
-    // FIX: grant verified badge — was missing in the old version
     await supabase
       .from('profiles')
       .update({ is_verified: true })
