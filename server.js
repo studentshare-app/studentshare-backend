@@ -64,7 +64,7 @@ app.post('/api/create-checkout', async (req, res) => {
             type: 'custom',
             name: planConfig.name,
             quantity: 1,
-            price: { currency: 'SLE', value: planConfig.amount },
+            price: { currency: 'SLE', value: planConfig.amount * 100 },
           }
         ],
         successUrl: `studentshare://payment-pending`,
