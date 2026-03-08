@@ -46,6 +46,8 @@ app.post('/api/create-checkout', async (req, res) => {
     const planConfig = PLANS[plan]
     if (!planConfig) return res.status(400).json({ error: 'Invalid plan' })
 
+    console.log('Plan:', plan, '| Amount:', planConfig.amount, '| UserId:', userId)
+    console.log('Space ID set:', !!MONIME_SPACE_ID, '| Token set:', !!MONIME_ACCESS_TOKEN)
     const response = await fetch(`${MONIME_API_URL}/checkout-sessions`, {
       method: 'POST',
       headers: {
@@ -81,9 +83,10 @@ app.post('/api/create-checkout', async (req, res) => {
       return res.status(500).json({ error: 'Monime returned unexpected response' })
     }
     if (!response.ok) {
-      console.error('Monime error:', data)
-      return res.status(500).json({ error: 'Failed to create checkout session' })
+      console.error('Monime status:', response.status, '| body:', JSON.stringify(data))
+      return res.status(500).json({ error: 'Failed to create checkout session', details: data })
     }
+    console.log('Monime success | id:', data.id, '| redirectUrl:', data.redirectUrl)
 
     // ─── FIX 2: Safe insert — never overwrite an active subscription ──────────
     // Check if user already has an active subscription first
