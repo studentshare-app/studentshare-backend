@@ -52,11 +52,19 @@ app.post('/api/create-checkout', async (req, res) => {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${MONIME_ACCESS_TOKEN}`,
         'Monime-Space-Id': MONIME_SPACE_ID,
+        'Idempotency-Key': `${userId}-${plan}-${Date.now()}`,
       },
       body: JSON.stringify({
         name: planConfig.name,
         description: `StudentShare ${planConfig.name}`,
-        lineItems: [{ type: 'custom', name: planConfig.name, quantity: 1, unitAmount: planConfig.amount, currency: 'SLE' }],
+        lineItems: [
+          {
+            type: 'custom',
+            name: planConfig.name,
+            quantity: 1,
+            price: { currency: 'SLE', value: planConfig.amount },
+          }
+        ],
         successUrl: `studentshare://payment-pending`,
         cancelUrl:  `studentshare://subscription`,
         metadata: { userId, plan, userEmail: userEmail || '', userName: userName || '' },
