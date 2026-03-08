@@ -20,14 +20,24 @@ const MONIME_SPACE_ID = process.env.MONIME_SPACE_ID
 const MONIME_ACCESS_TOKEN = process.env.MONIME_ACCESS_TOKEN
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET
 
-// Plan config
+// Plan config — academic_year = 270 days (9 months)
 const PLANS = {
   monthly:       { name: 'Monthly Plan',       amount: 25,  days: 30  },
-  academic_year: { name: 'Academic Year Plan', amount: 150, days: 180 },
+  academic_year: { name: 'Academic Year Plan', amount: 150, days: 270 },
   yearly:        { name: 'Yearly Plan',         amount: 300, days: 365 },
 }
 
 app.get('/', (req, res) => res.json({ status: 'StudentShare backend running' }))
+
+// ─── FIX 3: Keep-alive ping so Render free instance never sleeps ───────────
+setInterval(async () => {
+  try {
+    await fetch('https://studentshare-backend.onrender.com/')
+    console.log('Keep-alive ping sent')
+  } catch (e) {
+    console.error('Keep-alive failed:', e.message)
+  }
+}, 14 * 60 * 1000) // every 14 minutes (Render sleeps after 15 min inactivity)
 
 app.post('/api/create-checkout', async (req, res) => {
   try {
@@ -47,7 +57,6 @@ app.post('/api/create-checkout', async (req, res) => {
         name: planConfig.name,
         description: `StudentShare ${planConfig.name}`,
         lineItems: [{ type: 'custom', name: planConfig.name, quantity: 1, unitAmount: planConfig.amount, currency: 'SLE' }],
-        // Deep links bring the user straight back into the app
         successUrl: `studentshare://payment-pending`,
         cancelUrl:  `studentshare://subscription`,
         metadata: { userId, plan, userEmail: userEmail || '', userName: userName || '' },
@@ -56,12 +65,34 @@ app.post('/api/create-checkout', async (req, res) => {
     })
 
     const data = await response.json()
-    if (!response.ok) { console.error('Monime error:', data); return res.status(500).json({ error: 'Failed to create checkout session' }) }
+    if (!response.ok) {
+      console.error('Monime error:', data)
+      return res.status(500).json({ error: 'Failed to create checkout session' })
+    }
 
+    // ─── FIX 2: Safe insert — never overwrite an active subscription ──────────
+    // Check if user already has an active subscription first
+    const { data: existing } = await supabase
+      .from('subscriptions')
+      .select('status')
+      .eq('user_id', userId)
+      .single()
+
+    if (existing?.status === 'active') {
+      // Already active — just return the checkout URL without touching the DB
+      // (user may be upgrading; let the webhook handle it)
+      return res.json({ checkoutUrl: data.redirectUrl, sessionId: data.id })
+    }
+
+    // Safe to insert/update — user has no active subscription
     await supabase.from('subscriptions').upsert({
-      user_id: userId, plan, status: 'pending',
-      monime_session_id: data.id, amount: planConfig.amount,
-      currency: 'SLE', payment_method: 'monime',
+      user_id: userId,
+      plan,
+      status: 'pending',
+      monime_session_id: data.id,
+      amount: planConfig.amount,
+      currency: 'SLE',
+      payment_method: 'monime',
       created_at: new Date().toISOString(),
     }, { onConflict: 'user_id' })
 
@@ -79,12 +110,16 @@ app.post('/webhook/monime', async (req, res) => {
 
     if (signature && WEBHOOK_SECRET) {
       const expectedSig = crypto.createHmac('sha256', WEBHOOK_SECRET).update(rawBody).digest('hex')
-      if (signature !== expectedSig) { console.error('Invalid signature'); return res.status(401).json({ error: 'Invalid signature' }) }
+      if (signature !== expectedSig) {
+        console.error('Invalid webhook signature')
+        return res.status(401).json({ error: 'Invalid signature' })
+      }
     }
 
     const event = JSON.parse(rawBody)
-    console.log('Webhook:', event.type)
+    console.log('Webhook received:', event.type)
 
+    // ─── FIX 1: Confirmed event name from Monime docs is checkout_session.completed
     if (event.type === 'checkout_session.completed') {
       const { userId, plan } = event.data?.metadata || {}
       if (!userId || !plan) return res.status(200).json({ received: true })
@@ -94,13 +129,32 @@ app.post('/webhook/monime', async (req, res) => {
       const expiresAt = new Date()
       expiresAt.setDate(expiresAt.getDate() + planConfig.days)
 
+      // Only activate if not already active (idempotency guard)
+      const { data: existing } = await supabase
+        .from('subscriptions')
+        .select('status')
+        .eq('user_id', userId)
+        .single()
+
+      if (existing?.status === 'active') {
+        console.log(`ℹ️ Already active, skipping: user=${userId}`)
+        return res.status(200).json({ received: true })
+      }
+
       const { error } = await supabase.from('subscriptions').update({
-        status: 'active', expires_at: expiresAt.toISOString(),
-        activated_at: new Date().toISOString(), monime_session_id: event.data.id,
-        amount: planConfig.amount, currency: 'SLE',
+        status: 'active',
+        expires_at: expiresAt.toISOString(),
+        activated_at: new Date().toISOString(),
+        monime_session_id: event.data.id,
+        amount: planConfig.amount,
+        currency: 'SLE',
       }).eq('user_id', userId)
 
-      if (error) { console.error('Supabase error:', error); return res.status(500).json({ error: 'DB update failed' }) }
+      if (error) {
+        console.error('Supabase update error:', error)
+        return res.status(500).json({ error: 'DB update failed' })
+      }
+
       console.log(`✅ Activated: user=${userId} plan=${plan} expires=${expiresAt}`)
     }
 
@@ -113,10 +167,16 @@ app.post('/webhook/monime', async (req, res) => {
 
 app.get('/api/subscription/:userId', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('subscriptions').select('*').eq('user_id', req.params.userId).single()
+    const { data, error } = await supabase
+      .from('subscriptions')
+      .select('*')
+      .eq('user_id', req.params.userId)
+      .single()
     if (error) return res.status(404).json({ status: 'none' })
     res.json(data)
-  } catch (err) { res.status(500).json({ error: 'Internal server error' }) }
+  } catch (err) {
+    res.status(500).json({ error: 'Internal server error' })
+  }
 })
 
 app.post('/api/approve', async (req, res) => {
@@ -125,7 +185,11 @@ app.post('/api/approve', async (req, res) => {
     let targetPlan = plan, targetUserId = userId
 
     if (subscription_id) {
-      const { data: sub } = await supabase.from('subscriptions').select('user_id,plan').eq('id', subscription_id).single()
+      const { data: sub } = await supabase
+        .from('subscriptions')
+        .select('user_id,plan')
+        .eq('id', subscription_id)
+        .single()
       if (sub) { targetUserId = sub.user_id; targetPlan = sub.plan }
     }
 
@@ -136,13 +200,23 @@ app.post('/api/approve', async (req, res) => {
     expiresAt.setDate(expiresAt.getDate() + planConfig.days)
 
     const q = subscription_id
-      ? supabase.from('subscriptions').update({ status: 'active', expires_at: expiresAt.toISOString(), activated_at: new Date().toISOString() }).eq('id', subscription_id)
-      : supabase.from('subscriptions').update({ status: 'active', expires_at: expiresAt.toISOString(), activated_at: new Date().toISOString() }).eq('user_id', targetUserId)
+      ? supabase.from('subscriptions').update({
+          status: 'active',
+          expires_at: expiresAt.toISOString(),
+          activated_at: new Date().toISOString()
+        }).eq('id', subscription_id)
+      : supabase.from('subscriptions').update({
+          status: 'active',
+          expires_at: expiresAt.toISOString(),
+          activated_at: new Date().toISOString()
+        }).eq('user_id', targetUserId)
 
     const { error } = await q
     if (error) return res.status(500).json({ error: 'DB update failed' })
     res.json({ success: true, expiresAt })
-  } catch (err) { res.status(500).json({ error: 'Internal server error' }) }
+  } catch (err) {
+    res.status(500).json({ error: 'Internal server error' })
+  }
 })
 
 const PORT = process.env.PORT || 3000
