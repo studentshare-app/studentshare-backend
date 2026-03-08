@@ -86,7 +86,10 @@ app.post('/api/create-checkout', async (req, res) => {
       console.error('Monime status:', response.status, '| body:', JSON.stringify(data))
       return res.status(500).json({ error: 'Failed to create checkout session', details: data })
     }
-    console.log('Monime success | id:', data.id, '| redirectUrl:', data.redirectUrl)
+    console.log('Monime full response:', JSON.stringify(data, null, 2))
+    // Monime may wrap response in a data object
+    const session = data.data || data
+    console.log('Session id:', session.id, '| redirectUrl:', session.redirectUrl)
 
     // ─── FIX 2: Safe insert — never overwrite an active subscription ──────────
     // Check if user already has an active subscription first
@@ -99,7 +102,8 @@ app.post('/api/create-checkout', async (req, res) => {
     if (existing?.status === 'active') {
       // Already active — just return the checkout URL without touching the DB
       // (user may be upgrading; let the webhook handle it)
-      return res.json({ checkoutUrl: data.redirectUrl, sessionId: data.id })
+      const session2 = data.data || data
+      return res.json({ checkoutUrl: session2.redirectUrl, sessionId: session2.id })
     }
 
     // Safe to insert/update — user has no active subscription
@@ -107,14 +111,15 @@ app.post('/api/create-checkout', async (req, res) => {
       user_id: userId,
       plan,
       status: 'pending',
-      monime_session_id: data.id,
+      monime_session_id: (data.data || data).id,
       amount: planConfig.amount,
       currency: 'SLE',
       payment_method: 'monime',
       created_at: new Date().toISOString(),
     }, { onConflict: 'user_id' })
 
-    res.json({ checkoutUrl: data.redirectUrl, sessionId: data.id })
+    const sessionData = data.data || data
+    res.json({ checkoutUrl: sessionData.redirectUrl, sessionId: sessionData.id })
   } catch (err) {
     console.error('Checkout error:', err)
     res.status(500).json({ error: 'Internal server error' })
