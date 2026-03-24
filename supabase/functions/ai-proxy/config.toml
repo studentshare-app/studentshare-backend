@@ -1,0 +1,3 @@
+# supabase/functions/ai-proxy/config.toml
+[functions.ai-proxy]
+verify_jwt = false

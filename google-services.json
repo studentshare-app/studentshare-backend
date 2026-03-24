@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "506316702813",
+    "project_id": "studentshare-bed76",
+    "storage_bucket": "studentshare-bed76.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:506316702813:android:16ff217b9a6ab5bdfdb9b4",
+        "android_client_info": {
+          "package_name": "com.koyaapps.StudentShare"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAJLeBZBCR68oJ0D_mt9CZ0xEIa9ChHMuU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

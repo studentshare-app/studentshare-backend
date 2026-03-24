@@ -1,0 +1,2432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>StudentShare Admin</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <link href="https://cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet" />
+  <script src="https://cdn.quilljs.com/1.3.6/quill.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/dracula.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/htmlmixed/htmlmixed.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/xml/xml.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/css/css.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closetag.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box;font-family:Arial,sans-serif}
+    body{background:#F9FAFB}
+    .hidden{display:none!important}
+
+    /* ── LOGIN ── */
+    #loginPage{display:flex;justify-content:center;align-items:center;height:100vh;background:linear-gradient(135deg,#0F172A,#1E3A5F)}
+    .login-card{background:#1E293B;border:1px solid #334155;padding:40px;border-radius:20px;width:100%;max-width:400px;text-align:center}
+    .login-card h1{font-size:26px;color:#F59E0B;margin-bottom:6px;font-weight:800}
+    .login-card p{color:#64748B;margin-bottom:28px;font-size:14px}
+    .login-field{margin-bottom:14px;text-align:left}
+    .login-field label{display:block;font-size:12px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+    .login-field input{width:100%;padding:13px 16px;background:#0F172A;border:1px solid #334155;border-radius:10px;color:#F1F5F9;font-size:15px;outline:none}
+    .login-field input:focus{border-color:#F59E0B}
+    .login-btn{width:100%;padding:14px;background:#F59E0B;color:#0F172A;border:none;border-radius:10px;font-size:15px;font-weight:800;cursor:pointer;margin-top:6px}
+    .login-btn:hover{background:#FBBF24}
+    .login-error{color:#FCA5A5;font-size:13px;margin-top:10px;display:none}
+
+    /* ── DASHBOARD SHELL ── */
+    #dashboardPage{display:flex;height:100vh;overflow:hidden}
+    .sidebar{width:240px;background:#1A56DB;padding:24px 16px;display:flex;flex-direction:column;overflow-y:auto;flex-shrink:0}
+    .sidebar h2{color:#fff;font-size:20px;margin-bottom:4px;font-weight:800}
+    .sidebar>.sb-sub{color:#BFDBFE;font-size:13px;margin-bottom:28px}
+    .nav-section{font-size:10px;font-weight:800;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.8px;padding:4px 8px;margin-top:8px;margin-bottom:4px}
+    .nav-btn{display:block;width:100%;padding:10px 14px;margin-bottom:3px;background:transparent;border:none;border-radius:8px;color:#BFDBFE;font-size:13.5px;cursor:pointer;text-align:left;transition:all .15s}
+    .nav-btn:hover{background:rgba(255,255,255,.1);color:#fff}
+    .nav-btn.active{background:rgba(255,255,255,.2);color:#fff;font-weight:700}
+    .nav-badge{background:#EF4444;color:#fff;font-size:10px;font-weight:800;border-radius:20px;padding:1px 7px;margin-left:6px}
+    .logout-btn{margin-top:auto;padding:11px;background:rgba(255,255,255,.1);border:none;border-radius:8px;color:#BFDBFE;cursor:pointer;font-size:13px;text-align:center}
+    .logout-btn:hover{background:rgba(255,255,255,.2);color:#fff}
+
+    /* ── MAIN CONTENT ── */
+    #mainContent{flex:1;overflow-y:auto;padding:32px}
+    .page-title{font-size:24px;font-weight:800;color:#111827;margin-bottom:24px}
+    .card{background:#fff;border-radius:12px;padding:24px;box-shadow:0 1px 4px rgba(0,0,0,.06);margin-bottom:20px}
+    .field{margin-bottom:16px}
+    .field label{display:block;font-size:13px;font-weight:600;color:#374151;margin-bottom:6px}
+    .field input,.field select,.field textarea{width:100%;padding:11px 13px;border-radius:8px;border:1.5px solid #E5E7EB;font-size:14px;outline:none;transition:border .15s;background:#fff}
+    .field input:focus,.field select:focus{border-color:#1A56DB}
+    .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:0}
+    .grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:0}
+    .grid-4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:14px;margin-bottom:16px}
+    .checkbox-field{display:flex;align-items:center;gap:8px;margin-bottom:18px}
+    .primary-btn{background:#1A56DB;color:#fff;border:none;border-radius:8px;padding:12px 22px;font-size:14px;font-weight:700;cursor:pointer;transition:background .15s}
+    .primary-btn:hover{background:#1648c8}
+    .btn-sm{padding:7px 14px;border-radius:6px;border:none;font-size:12px;font-weight:700;cursor:pointer}
+    .btn-approve{background:#D1FAE5;color:#065F46}
+    .btn-approve:hover{background:#A7F3D0}
+    .btn-reject{background:#FEE2E2;color:#DC2626}
+    .btn-reject:hover{background:#FECACA}
+    .btn-edit{background:#EFF6FF;color:#1A56DB}
+
+    /* ── TOAST ── */
+    #globalToast{position:fixed;bottom:24px;right:24px;z-index:9999;padding:13px 20px;border-radius:12px;font-size:14px;font-weight:700;display:flex;align-items:center;gap:8px;box-shadow:0 8px 24px rgba(0,0,0,.2);transform:translateY(80px);opacity:0;transition:all .3s cubic-bezier(.34,1.56,.64,1);pointer-events:none}
+    #globalToast.show{transform:none;opacity:1}
+    #globalToast.success{background:#065F46;color:#D1FAE5}
+    #globalToast.error{background:#7F1D1D;color:#FCA5A5}
+    #globalToast.info{background:#1E3A5F;color:#BFDBFE}
+
+    /* ── TABLE ── */
+    table{width:100%;border-collapse:collapse}
+    th{text-align:left;padding:11px 16px;background:#F8FAFC;font-size:12px;font-weight:700;color:#6B7280;border-bottom:1px solid #E5E7EB;text-transform:uppercase;letter-spacing:.4px}
+    td{padding:13px 16px;border-bottom:1px solid #F3F4F6;font-size:13.5px;color:#374151;vertical-align:middle}
+    tr:hover td{background:#FAFAFA}
+    .material-title-cell{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .badge-type{padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700}
+    .badge-past_question{background:#DBEAFE;color:#1D4ED8}
+    .badge-slide{background:#EDE9FE;color:#7C3AED}
+    .badge-book{background:#D1FAE5;color:#065F46}
+    .badge-tutorial{background:#FEF3C7;color:#92400E}
+    .ai-badge{display:inline-flex;align-items:center;background:#D1FAE5;color:#065F46;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700}
+    .no-ai-badge{display:inline-flex;align-items:center;background:#F3F4F6;color:#9CA3AF;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700}
+
+    /* ── USERS ── */
+    .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px}
+    .stat-card{background:#fff;border-radius:14px;padding:16px 20px;border:1px solid #E2E8F0;display:flex;align-items:center;gap:14px}
+    .stat-icon{width:42px;height:42px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
+    .stat-num{font-size:24px;font-weight:800;color:#0F172A;line-height:1}
+    .stat-label{font-size:12px;color:#94A3B8;margin-top:2px}
+    .search-bar{display:flex;align-items:center;gap:12px;background:#fff;border-radius:12px;padding:13px 18px;border:1px solid #E2E8F0;margin-bottom:20px}
+    .search-bar input{flex:1;border:none;outline:none;font-size:14px;color:#0F172A;background:transparent}
+    .search-bar select{padding:7px 11px;border:1.5px solid #E2E8F0;border-radius:7px;font-size:12px;font-weight:600;color:#475569;background:#F8FAFC;cursor:pointer;outline:none}
+    .user-card{display:flex;align-items:center;gap:14px;background:#fff;border-radius:14px;padding:14px 18px;border:1px solid #E2E8F0;margin-bottom:10px;transition:border-color .15s}
+    .user-card:hover{border-color:#BFDBFE}
+    .user-avatar{width:46px;height:46px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:17px;font-weight:800;flex-shrink:0;border:2px solid transparent}
+    .user-info{flex:1;min-width:0}
+    .user-name-row{display:flex;align-items:center;gap:7px;margin-bottom:3px;flex-wrap:wrap}
+    .user-name{font-size:14px;font-weight:700;color:#0F172A}
+    .verified-chip{display:inline-flex;align-items:center;gap:3px;background:linear-gradient(135deg,#1A56DB,#7C3AED);color:#fff;font-size:10px;font-weight:800;padding:2px 8px;border-radius:100px}
+    .premium-chip{display:inline-flex;align-items:center;gap:3px;background:#FEF3C7;color:#D97706;font-size:10px;font-weight:800;padding:2px 8px;border-radius:100px}
+    .user-meta{font-size:12px;color:#94A3B8}
+    .role-pill{padding:4px 12px;border-radius:100px;font-size:12px;font-weight:700;border:none}
+    .role-pill.admin{background:#EFF6FF;color:#1A56DB}
+    .role-pill.contributor{background:#ECFDF5;color:#059669}
+    .role-pill.lecturer{background:#F5F3FF;color:#7C3AED}
+    .role-pill.student{background:#F1F5F9;color:#64748B}
+    .icon-btn{width:33px;height:33px;border-radius:9px;border:1.5px solid #E2E8F0;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;background:#fff}
+    .icon-btn:hover{background:#EFF6FF;border-color:#BFDBFE}
+
+    /* ── PAYMENTS (dark theme) ── */
+    #paymentsTab .page-title{color:#F1F5F9}
+    #paymentsTab{background:#0F172A;min-height:calc(100vh - 64px);margin:-32px;padding:32px}
+    .pay-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:28px}
+    .pay-stat{background:#1E293B;border:1px solid #334155;border-radius:14px;padding:18px 20px}
+    .pay-stat-label{font-size:11px;color:#64748B;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+    .pay-stat-value{font-size:28px;font-weight:800}
+    .pay-tabs{display:flex;border-bottom:1px solid #334155;margin-bottom:20px}
+    .pay-tab{padding:11px 20px;font-size:14px;font-weight:600;color:#475569;cursor:pointer;border:none;background:transparent;border-bottom:2px solid transparent}
+    .pay-tab.active{color:#F59E0B;border-bottom-color:#F59E0B}
+    .pay-section-title{font-size:15px;font-weight:700;color:#CBD5E1;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center}
+    .pay-table-wrap{background:#1E293B;border:1px solid #334155;border-radius:14px;overflow:hidden}
+    .pay-table-wrap table{font-size:13px}
+    .pay-table-wrap th{background:#0F172A;color:#475569;border-bottom:1px solid #334155}
+    .pay-table-wrap td{border-bottom:1px solid #1E293B;color:#CBD5E1;background:transparent}
+    .pay-table-wrap tr:hover td{background:#263548}
+    .sub-badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700}
+    .sub-badge.pending{background:#78350F;color:#FCD34D}
+    .sub-badge.active{background:#064E3B;color:#34D399}
+    .sub-badge.rejected{background:#450A0A;color:#FCA5A5}
+    .sub-badge.expired{background:#1E293B;color:#475569;border:1px solid #334155}
+    .sub-badge.revoked{background:#1E293B;color:#64748B;border:1px solid #334155}
+    .btn-approve-pay{background:#065F46;color:#34D399;border:1px solid #065F46;border-radius:7px;padding:6px 13px;font-size:12px;font-weight:700;cursor:pointer}
+    .btn-approve-pay:hover{background:#047857}
+    .btn-reject-pay{background:#450A0A;color:#FCA5A5;border:1px solid #450A0A;border-radius:7px;padding:6px 13px;font-size:12px;font-weight:700;cursor:pointer}
+    .btn-reject-pay:hover{background:#7F1D1D}
+    .pay-refresh{background:#1E293B;border:1px solid #334155;color:#CBD5E1;border-radius:7px;padding:7px 14px;font-size:12px;font-weight:600;cursor:pointer}
+    .pay-refresh:hover{background:#263548}
+    .pay-empty{text-align:center;padding:48px;color:#475569;font-size:14px}
+    .pay-empty-icon{font-size:36px;margin-bottom:12px}
+
+    /* ── COLLEGE MANAGEMENT ── */
+    .college-row{background:#fff;border-radius:12px;padding:16px 20px;margin-bottom:10px;display:flex;align-items:center;gap:14px;box-shadow:0 1px 4px rgba(0,0,0,.05);border:1px solid #E5E7EB}
+    .college-logo{width:52px;height:52px;border-radius:50%;object-fit:contain;border:1px solid #E5E7EB;background:#F9FAFB;padding:4px}
+    .college-logo-placeholder{width:52px;height:52px;border-radius:50%;background:#EFF6FF;display:flex;align-items:center;justify-content:center;font-weight:800;color:#1A56DB;font-size:13px;border:1px solid #DBEAFE;flex-shrink:0}
+    .college-info{flex:1}
+    .college-name{font-size:15px;font-weight:700;color:#111827;margin-bottom:2px}
+    .college-meta{font-size:12px;color:#9CA3AF}
+    .college-actions{display:flex;gap:8px}
+
+    /* ── FEATURE FLAGS ── */
+    .flags-hero{background:linear-gradient(135deg,#0F172A,#1E3A5F);border-radius:16px;padding:24px 28px;margin-bottom:24px;display:flex;align-items:center;gap:20px;color:#fff}
+    .flag-card{background:#fff;border-radius:14px;padding:18px 22px;border:1.5px solid #E2E8F0;margin-bottom:12px;display:flex;align-items:center;gap:16px}
+    .flag-card.disabled{opacity:.6;background:#F8FAFC}
+    .flag-icon{width:46px;height:46px;border-radius:13px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0}
+    .flag-info{flex:1}
+    .flag-label{font-size:14px;font-weight:700;color:#0F172A;margin-bottom:2px}
+    .flag-desc{font-size:12px;color:#64748B}
+    .flag-tags{display:flex;gap:8px;margin-top:5px}
+    .flag-tag{font-size:11px;font-weight:700;padding:2px 9px;border-radius:100px}
+    .flag-tag.premium{background:#FEF3C7;color:#D97706}
+    .flag-tag.free{background:#ECFDF5;color:#059669}
+    .flag-tag.off{background:#FEE2E2;color:#DC2626}
+    .flag-controls{display:flex;align-items:center;gap:12px;flex-shrink:0}
+    .flag-prem-btn{padding:5px 13px;border-radius:7px;font-size:12px;font-weight:700;border:1.5px solid;cursor:pointer;background:transparent}
+    .flag-prem-btn.is-premium{border-color:#F59E0B;color:#D97706;background:#FEF3C7}
+    .flag-prem-btn.is-free{border-color:#10B981;color:#059669;background:#ECFDF5}
+    .toggle{width:46px;height:26px;border-radius:100px;border:none;cursor:pointer;position:relative;transition:background .2s;flex-shrink:0}
+    .toggle.on{background:linear-gradient(135deg,#1A56DB,#7C3AED)}
+    .toggle.off{background:#E2E8F0}
+    .toggle-knob{position:absolute;top:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:left .2s;box-shadow:0 1px 4px rgba(0,0,0,.2)}
+    .toggle.on .toggle-knob{left:23px}
+    .toggle.off .toggle-knob{left:3px}
+
+    /* ── LECTURERS ── */
+    .lecturer-row{background:#fff;border-radius:12px;padding:14px 18px;margin-bottom:10px;display:flex;align-items:center;gap:12px;box-shadow:0 1px 4px rgba(0,0,0,.05);border:1px solid #E5E7EB}
+    .lec-avatar{width:46px;height:46px;border-radius:50%;object-fit:cover;border:2px solid #E5E7EB;flex-shrink:0}
+    .lec-avatar-ph{width:46px;height:46px;border-radius:50%;background:#EFF6FF;border:2px solid #DBEAFE;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:800;color:#1A56DB;flex-shrink:0}
+    .lec-info{flex:1}
+    .lec-name{font-size:14px;font-weight:700;color:#111827}
+    .lec-course{font-size:12px;color:#9CA3AF;margin-top:2px}
+
+    /* ── MODALS ── */
+    .modal-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);display:flex;justify-content:center;align-items:center;z-index:1000}
+    .modal{background:#fff;border-radius:16px;padding:32px;width:100%;max-width:540px;box-shadow:0 20px 60px rgba(0,0,0,.2);max-height:90vh;overflow-y:auto}
+    .modal h2{font-size:20px;font-weight:700;color:#111827;margin-bottom:24px}
+    .modal-actions{display:flex;gap:10px;margin-top:24px;justify-content:flex-end}
+    .modal-cancel{padding:10px 20px;background:#F3F4F6;color:#374151;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer}
+    .modal-save{padding:10px 22px;background:#1A56DB;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer}
+    .modal-delete{padding:10px 18px;background:#FEE2E2;color:#DC2626;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer}
+    .cover-ph{width:80px;height:110px;border-radius:8px;background:#D1FAE5;display:flex;align-items:center;justify-content:center;font-size:28px;border:1px solid #E5E7EB}
+    .cover-img{width:80px;height:110px;border-radius:8px;object-fit:cover;border:1px solid #E5E7EB}
+
+    /* ── USER EDIT MODAL ── */
+    .uem-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(15,23,42,.7);display:flex;align-items:center;justify-content:center;z-index:2000;backdrop-filter:blur(6px)}
+    .uem-card{background:#fff;border-radius:24px;padding:32px;width:100%;max-width:480px;box-shadow:0 24px 60px rgba(0,0,0,.25);animation:slideUp .2s ease}
+    @keyframes slideUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+    .uem-avatar{width:64px;height:64px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:800;margin:0 auto 8px;border:3px solid #E2E8F0}
+    .uem-name{font-size:19px;font-weight:800;color:#0F172A;text-align:center;margin-bottom:3px}
+    .uem-college{font-size:13px;color:#94A3B8;text-align:center;margin-bottom:24px}
+    .uem-label{font-size:11px;font-weight:800;color:#94A3B8;text-transform:uppercase;letter-spacing:.8px;margin-bottom:10px}
+    .uem-role-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:24px}
+    .uem-role{border:2px solid #E2E8F0;border-radius:12px;padding:12px 6px;text-align:center;cursor:pointer;transition:all .15s;background:#FAFAFA}
+    .uem-role.selected{border-color:#1A56DB;background:#EFF6FF}
+    .uem-role .re{font-size:22px;display:block;margin-bottom:4px}
+    .uem-role .rl{font-size:11px;font-weight:700;color:#0F172A;display:block}
+    .uem-toggle-row{display:flex;align-items:center;justify-content:space-between;border-radius:13px;padding:14px 16px;margin-bottom:12px;border:1.5px solid}
+    .uem-toggle-left{display:flex;align-items:center;gap:11px}
+    .uem-toggle-icon{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px}
+    .uem-toggle-label{font-size:14px;font-weight:700;color:#0F172A}
+    .uem-toggle-sub{font-size:11px;color:#94A3B8;margin-top:1px}
+    .uem-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:24px}
+    .uem-cancel{padding:11px 22px;background:#F1F5F9;color:#475569;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer}
+    .uem-save{padding:11px 26px;background:#1A56DB;color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer}
+
+    /* ── WEB BUILDER ── */
+    #collegePageTab.wb-mode{padding:0!important;margin:0!important;overflow:hidden;height:100%}
+    .wb-wrap{display:flex;flex-direction:column;height:100%;background:#0D1117;overflow:hidden}
+    .wb-topbar{display:flex;align-items:center;gap:10px;padding:9px 16px;background:#161B22;border-bottom:1px solid #30363D;flex-shrink:0;overflow-x:auto;scrollbar-width:none}
+    .wb-topbar::-webkit-scrollbar{display:none}
+    .wb-logo{font-size:13px;font-weight:800;color:#58A6FF;letter-spacing:-.3px;white-space:nowrap}
+    .wb-college-sel{flex:1;max-width:200px;padding:6px 11px;background:#0D1117;border:1px solid #30363D;border-radius:7px;color:#E6EDF3;font-size:13px;font-weight:600;outline:none;cursor:pointer}
+    .wb-college-sel:focus{border-color:#58A6FF}
+    .wb-page-sel{flex:1;max-width:220px;padding:6px 11px;background:#0D1117;border:1px solid #30363D;border-radius:7px;color:#E6EDF3;font-size:13px;font-weight:600;outline:none;cursor:pointer}
+    .wb-page-sel:focus{border-color:#58A6FF}
+    .wb-status{font-size:12px;color:#8B949E;flex:1;white-space:nowrap}
+    .wb-status.saved{color:#3FB950;font-weight:700}
+    .wb-status.saving{color:#D29922}
+    .wb-topbar-btns{display:flex;gap:8px;align-items:center;flex-shrink:0;margin-left:auto}
+    .wb-btn{display:inline-flex;align-items:center;gap:5px;padding:6px 14px;border-radius:7px;font-size:12px;font-weight:700;cursor:pointer;border:none;transition:all .15s;white-space:nowrap}
+    .wb-btn-save{background:#238636;color:#fff}
+    .wb-btn-save:hover{background:#2EA043}
+    .wb-btn-new{background:#6E40C9;color:#fff}
+    .wb-btn-new:hover{background:#8B5CF6}
+    .wb-btn-delete{background:#6E1313;color:#FCA5A5;border:1px solid #450A0A}
+    .wb-btn-delete:hover{background:#7F1D1D}
+    .wb-btn-preview{background:#1F6FEB;color:#fff}
+    .wb-btn-preview:hover{background:#388BFD}
+    .wb-btn-ghost{background:#21262D;color:#8B949E;border:1px solid #30363D}
+    .wb-btn-ghost:hover{background:#30363D;color:#E6EDF3}
+    .wb-main{display:flex;flex:1;overflow:hidden}
+    .wb-editor-panel{display:flex;flex-direction:column;width:50%;border-right:1px solid #30363D;overflow:hidden;min-width:300px}
+    .wb-tabs{display:flex;background:#161B22;border-bottom:1px solid #30363D;flex-shrink:0;overflow-x:auto;scrollbar-width:none}
+    .wb-tabs::-webkit-scrollbar{display:none}
+    .wb-tab{padding:10px 18px;font-size:13px;font-weight:700;cursor:pointer;border:none;background:transparent;color:#8B949E;border-bottom:2px solid transparent;display:flex;align-items:center;gap:5px;transition:all .15s}
+    .wb-tab.active{color:#E6EDF3;border-bottom-color:#58A6FF;background:#0D1117}
+    .wb-tab:hover:not(.active){color:#C9D1D9;background:#1C2128}
+    .wb-dot{width:8px;height:8px;border-radius:50%}
+    .wb-editor-body{flex:1;overflow:hidden;position:relative}
+    .wb-cm-wrap{position:absolute;inset:0;display:none}
+    .wb-cm-wrap.active{display:block}
+    .wb-cm-wrap .CodeMirror{height:100%;font-size:13px;font-family:'JetBrains Mono','Fira Code','Cascadia Code',monospace;line-height:1.6}
+    .wb-preview-panel{flex:1;display:flex;flex-direction:column;overflow:hidden}
+    .wb-preview-bar{display:flex;align-items:center;gap:8px;padding:7px 13px;background:#161B22;border-bottom:1px solid #30363D;flex-shrink:0}
+    .wb-preview-dots{display:flex;gap:5px}
+    .wb-preview-dot{width:10px;height:10px;border-radius:50%}
+    .wb-preview-urlbar{flex:1;background:#0D1117;border:1px solid #30363D;border-radius:6px;padding:4px 11px;font-size:11px;color:#8B949E;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .wb-device-row{display:flex;gap:4px}
+    .wb-device-btn{padding:4px 10px;background:#21262D;border:1px solid #30363D;border-radius:6px;color:#8B949E;font-size:11px;cursor:pointer;font-weight:600}
+    .wb-device-btn.active{background:#1F6FEB;border-color:#1F6FEB;color:#fff}
+    .wb-preview-frame-wrap{flex:1;display:flex;align-items:center;justify-content:center;background:#F6F8FA;overflow:hidden;transition:all .3s;padding:0}
+    .wb-preview-frame-wrap.mobile{padding:16px;background:#1C2128}
+    .wb-preview-frame-wrap.tablet{padding:12px;background:#1C2128}
+    #wbPreviewFrame{width:100%;height:100%;border:none;background:#fff;display:block}
+    .wb-preview-frame-wrap.mobile #wbPreviewFrame{width:375px;height:667px;border-radius:20px;box-shadow:0 0 0 8px #30363D,0 20px 60px rgba(0,0,0,.5)}
+    .wb-preview-frame-wrap.tablet #wbPreviewFrame{width:768px;height:90%;border-radius:14px;box-shadow:0 0 0 6px #30363D,0 20px 60px rgba(0,0,0,.5)}
+    .wb-empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:14px;color:#8B949E;text-align:center;padding:40px}
+    .wb-empty-icon{font-size:52px}
+    .wb-empty-title{font-size:16px;font-weight:700;color:#C9D1D9}
+    .wb-empty-sub{font-size:13px;line-height:1.6;max-width:280px}
+
+    /* New page modal */
+    .wb-new-page-modal{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;z-index:3000}
+    .wb-new-page-card{background:#161B22;border:1px solid #30363D;border-radius:16px;padding:28px;width:100%;max-width:420px}
+    .wb-new-page-card h3{color:#E6EDF3;font-size:16px;font-weight:700;margin-bottom:18px}
+    .wb-new-page-card input{width:100%;padding:10px 13px;background:#0D1117;border:1px solid #30363D;border-radius:8px;color:#E6EDF3;font-size:14px;outline:none;margin-bottom:14px}
+    .wb-new-page-card input:focus{border-color:#58A6FF}
+    .wb-new-page-actions{display:flex;gap:8px;justify-content:flex-end}
+
+    /* ── COLLEGE INFO TABS ── */
+    #collegeInfoTabsTab{background:#F0F4FF;min-height:100%}
+    .cit-hero{background:linear-gradient(135deg,#1A56DB,#6366F1);border-radius:16px;padding:24px 28px;margin-bottom:24px;display:flex;align-items:center;gap:20px;color:#fff}
+    .cit-hero-icon{font-size:44px;flex-shrink:0}
+    .cit-hero h2{font-size:18px;font-weight:800;margin-bottom:4px}
+    .cit-hero p{font-size:13px;color:rgba(255,255,255,.7);line-height:1.6;margin:0}
+    .cit-toolbar{display:flex;align-items:center;gap:12px;background:#fff;border-radius:12px;padding:14px 18px;margin-bottom:20px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+    .cit-toolbar select{flex:1;max-width:280px;padding:9px 13px;border:1.5px solid #E5E7EB;border-radius:8px;font-size:14px;font-weight:600;color:#374151;outline:none;cursor:pointer;background:#F8FAFC}
+    .cit-toolbar select:focus{border-color:#1A56DB}
+    .cit-add-btn{display:inline-flex;align-items:center;gap:6px;padding:10px 18px;background:#1A56DB;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;margin-left:auto;transition:background .15s}
+    .cit-add-btn:hover{background:#1648c8}
+    .cit-tab-row{background:#fff;border-radius:12px;padding:16px 20px;margin-bottom:10px;display:flex;align-items:center;gap:14px;box-shadow:0 1px 4px rgba(0,0,0,.05);border:1px solid #E5E7EB;transition:border-color .15s}
+    .cit-tab-row:hover{border-color:#C7D7FD}
+    .cit-tab-drag{color:#CBD5E1;font-size:18px;cursor:grab;flex-shrink:0;padding:0 4px}
+    .cit-tab-icon-box{width:42px;height:42px;border-radius:10px;background:#EFF6FF;border:1px solid #DBEAFE;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0}
+    .cit-tab-info{flex:1}
+    .cit-tab-label{font-size:14px;font-weight:700;color:#111827;margin-bottom:2px}
+    .cit-tab-meta{font-size:12px;color:#9CA3AF}
+    .cit-tab-badge{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:700;margin-right:6px}
+    .cit-tab-badge.active{background:#D1FAE5;color:#065F46}
+    .cit-tab-badge.inactive{background:#FEE2E2;color:#DC2626}
+    .cit-tab-badge.linked{background:#DBEAFE;color:#1D4ED8}
+    .cit-no-college{text-align:center;padding:60px 20px;color:#94A3B8}
+    .cit-no-college-icon{font-size:48px;margin-bottom:16px}
+    .cit-no-college h3{font-size:16px;font-weight:700;color:#374151;margin-bottom:6px}
+    .cit-empty{text-align:center;padding:48px;color:#94A3B8}
+    .cit-empty-icon{font-size:36px;margin-bottom:12px}
+
+    /* ── TAB EDITOR MODAL ── */
+    .cit-modal-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.6);display:flex;justify-content:center;align-items:flex-start;z-index:2000;overflow-y:auto;padding:24px}
+    .cit-modal{background:#fff;border-radius:20px;width:100%;max-width:700px;margin:0 auto;box-shadow:0 24px 60px rgba(0,0,0,.3);display:flex;flex-direction:column;overflow:hidden}
+    .cit-modal-header{display:flex;align-items:center;justify-content:space-between;padding:20px 24px;border-bottom:1px solid #E5E7EB;flex-shrink:0}
+    .cit-modal-header h2{font-size:18px;font-weight:800;color:#111827;margin:0}
+    .cit-modal-close{width:32px;height:32px;border-radius:8px;background:#F3F4F6;border:none;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center}
+    .cit-modal-close:hover{background:#E5E7EB}
+    .cit-modal-body{padding:24px;flex:1}
+    .cit-meta-row{display:grid;grid-template-columns:1fr 1fr 60px 100px;gap:12px;margin-bottom:20px;align-items:end}
+    .cit-meta-row .field{margin-bottom:0}
+    .cit-editor-label{font-size:12px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+    .cit-modal-footer{padding:16px 24px;border-top:1px solid #E5E7EB;display:flex;align-items:center;gap:10px;background:#F8FAFC;flex-shrink:0}
+    .cit-save-btn{padding:11px 24px;background:#1A56DB;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer}
+    .cit-save-btn:hover{background:#1648c8}
+    .cit-delete-btn{padding:11px 18px;background:#FEE2E2;color:#DC2626;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer}
+    .cit-cancel-btn{padding:11px 18px;background:#F3F4F6;color:#374151;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer}
+    .icon-picker{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;background:#F8FAFC;border:1.5px solid #E5E7EB;border-radius:8px;padding:10px;max-height:150px;overflow-y:auto}
+    .icon-pill{padding:5px 8px;border-radius:6px;border:1.5px solid #E5E7EB;background:#fff;cursor:pointer;font-size:12px;text-align:center;transition:all .1s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .icon-pill:hover{border-color:#1A56DB;background:#EFF6FF}
+    .icon-pill.selected{border-color:#1A56DB;background:#1A56DB;color:#fff}
+
+    /* ── PAGE LINK SECTION ── */
+    .page-link-box{background:#F0F9FF;border:1.5px solid #BAE6FD;border-radius:12px;padding:16px 18px;margin-bottom:16px}
+    .page-link-box-title{font-size:12px;font-weight:700;color:#0369A1;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+    .page-link-select{width:100%;padding:10px 13px;border:1.5px solid #BAE6FD;border-radius:8px;font-size:14px;font-weight:600;color:#0C4A6E;background:#fff;outline:none;cursor:pointer}
+    .page-link-select:focus{border-color:#0EA5E9}
+    .page-link-hint{font-size:11px;color:#64748B;margin-top:6px}
+    .linked-page-preview{background:#0F172A;border-radius:8px;padding:10px 14px;margin-top:8px;display:flex;align-items:center;gap:10px}
+    .linked-page-preview-icon{font-size:18px}
+    .linked-page-preview-name{font-size:13px;font-weight:700;color:#E6EDF3}
+    .linked-page-preview-college{font-size:11px;color:#64748B}
+
+    /* ── SLIDES MANAGER ── */
+    .slide-row{background:#fff;border-radius:12px;padding:14px 16px;margin-bottom:10px;display:flex;align-items:center;gap:12px;box-shadow:0 1px 4px rgba(0,0,0,.05);border:1px solid #E5E7EB}
+    .slide-thumb{width:72px;height:48px;border-radius:8px;object-fit:cover;border:1px solid #E5E7EB;flex-shrink:0}
+    .slide-thumb-ph{width:72px;height:48px;border-radius:8px;background:#EFF6FF;border:1px solid #DBEAFE;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0}
+    .slide-info{flex:1}
+    .slide-title-txt{font-size:13px;font-weight:700;color:#111827}
+    .slide-sub-txt{font-size:11px;color:#9CA3AF}
+
+    /* misc */
+    .filter-bar{background:#fff;border-radius:12px;padding:20px;margin-bottom:20px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+    .request-card{background:#fff;border-radius:12px;padding:18px 20px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+    .empty-state{text-align:center;padding:48px;color:#6B7280;font-size:14px}
+    .empty-icon{font-size:36px;margin-bottom:12px}
+  </style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════ LOGIN ═══════════════════════════════ -->
+<div id="loginPage">
+  <div class="login-card">
+    <div style="font-size:44px;margin-bottom:14px">⚡</div>
+    <h1>StudentShare</h1>
+    <p>Sign in to the admin dashboard</p>
+    <div id="loginError" style="color:#FCA5A5;font-size:13px;margin-bottom:12px;display:none"></div>
+    <div class="login-field"><label>Email</label><input type="email" id="loginEmail" placeholder="admin@studentshare.app" /></div>
+    <div class="login-field"><label>Password</label><input type="password" id="loginPassword" placeholder="••••••••" onkeydown="if(event.key==='Enter')handleLogin()" /></div>
+    <button class="login-btn" onclick="handleLogin()">Log In</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════ DASHBOARD ═══════════════════════════════ -->
+<div id="dashboardPage" class="hidden">
+  <div class="sidebar">
+    <h2>StudentShare</h2>
+    <p class="sb-sub">Admin Panel</p>
+    <div class="nav-section">Content</div>
+    <button class="nav-btn active" id="navUpload">📤 Upload Material</button>
+    <button class="nav-btn" id="navMaterials">📁 All Materials</button>
+    <div class="nav-section">People</div>
+    <button class="nav-btn" id="navUsers">👥 Users</button>
+    <button class="nav-btn" id="navRequests">📋 Requests</button>
+    <div class="nav-section">Finance</div>
+    <button class="nav-btn" id="navPayments">💳 Payments <span class="nav-badge hidden" id="pendingBadge">0</span></button>
+    <div class="nav-section">Communication</div>
+    <button class="nav-btn" id="navNotifications">🔔 Notifications</button>
+    <div class="nav-section">Academic</div>
+    <button class="nav-btn" id="navColleges">🏛 Colleges</button>
+    <button class="nav-btn" id="navLogos">🏫 College Logos</button>
+    <button class="nav-btn" id="navClasses">🎓 Classes</button>
+    <button class="nav-btn" id="navCourses">📖 Courses</button>
+    <button class="nav-btn" id="navLecturers">🧑‍🏫 Lecturers</button>
+    <div class="nav-section">Customise</div>
+    <button class="nav-btn" id="navCollegePage">🌐 Web Builder</button>
+    <button class="nav-btn" id="navCollegeInfoTabs">📑 College Info Tabs</button>
+    <button class="nav-btn" id="navSlides">🖼 Slideshow</button>
+    <button class="nav-btn" id="navFlags">🚩 Feature Flags</button>
+    <button class="logout-btn" id="logoutBtn">⬅ Log Out</button>
+  </div>
+
+  <div class="main" id="mainContent" style="flex:1;overflow-y:auto;padding:32px">
+    <div id="globalMsg" class="hidden" style="margin-bottom:16px;padding:12px 16px;border-radius:8px;font-size:14px;font-weight:600"></div>
+
+    <!-- UPLOAD -->
+    <div id="uploadTab">
+      <h1 class="page-title">📤 Upload Material</h1>
+      <div class="card">
+        <div class="grid-2" style="margin-bottom:16px">
+          <div class="field"><label>College</label><select id="collegeSelect"><option value="">Select college...</option></select></div>
+          <div class="field"><label>Class / Year</label><select id="classSelect" disabled><option value="">Select class...</option></select></div>
+          <div class="field"><label>Course</label><select id="courseSelect" disabled><option value="">Select course...</option></select></div>
+          <div class="field"><label>Material Type</label>
+            <select id="typeSelect" onchange="onTypeChange()">
+              <option value="past_question">Past Question</option>
+              <option value="slide">Slide</option>
+              <option value="book">Book</option>
+              <option value="tutorial">Tutorial</option>
+            </select>
+          </div>
+        </div>
+        <div id="lecturerUploadField" style="display:none;background:#F5F3FF;border-radius:10px;padding:14px;margin-bottom:16px;border:1px solid #DDD6FE">
+          <p style="font-size:13px;font-weight:700;color:#7C3AED;margin-bottom:8px">🧑‍🏫 Assign Lecturer (optional)</p>
+          <div class="field" style="margin-bottom:0"><select id="lecturerUploadSelect"><option value="">Select lecturer...</option></select></div>
+        </div>
+        <div class="grid-2" style="margin-bottom:16px">
+          <div class="field"><label>Title</label><input type="text" id="titleInput" placeholder="e.g. Anatomy Past Questions 2024" /></div>
+          <div class="field" id="academicYearField"><label>Academic Year</label><input type="text" id="academicYearInput" placeholder="e.g. 2024/2025" /></div>
+        </div>
+        <div class="field"><label>File (PDF, PPTX, DOCX)</label><input type="file" id="fileInput" accept=".pdf,.ppt,.pptx,.doc,.docx" /></div>
+        <div id="coverUploadSection" style="display:none;background:#F0FDF4;border-radius:10px;padding:16px;margin-bottom:16px;border:1px solid #BBF7D0">
+          <p style="font-size:13px;font-weight:700;color:#065F46;margin-bottom:10px">📖 Book Cover (optional)</p>
+          <div style="display:flex;align-items:center;gap:14px">
+            <div id="uploadCoverPreview" class="cover-ph">📖</div>
+            <div>
+              <input type="file" id="coverFileInput" accept="image/*" style="display:none" onchange="previewCover(this)" />
+              <button onclick="document.getElementById('coverFileInput').click()" style="padding:9px 16px;background:#10B981;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer">Choose Image</button>
+            </div>
+          </div>
+        </div>
+        <div class="checkbox-field"><input type="checkbox" id="premiumCheck" /><label for="premiumCheck" style="font-size:14px;font-weight:600;color:#374151">Premium content (requires subscription)</label></div>
+        <div style="background:#EFF6FF;border-radius:10px;padding:13px;margin-bottom:20px;border:1px solid #DBEAFE">
+          <p style="font-size:13px;color:#1A56DB;font-weight:700;margin-bottom:3px">🤖 AI Reading Enabled</p>
+          <p style="font-size:12px;color:#3B82F6">Text is auto-extracted from PDF, DOCX and PPTX so the AI assistant can teach students from the content.</p>
+        </div>
+        <button class="primary-btn" id="uploadBtn">📤 Upload Material</button>
+      </div>
+    </div>
+
+    <!-- ALL MATERIALS -->
+    <div id="materialsTab" class="hidden">
+      <h1 class="page-title">📁 All Materials</h1>
+      <div class="filter-bar">
+        <div class="grid-4">
+          <div class="field" style="margin-bottom:0"><label>College</label><select id="filterCollege"><option value="">All Colleges</option></select></div>
+          <div class="field" style="margin-bottom:0"><label>Class</label><select id="filterClass"><option value="">All Classes</option></select></div>
+          <div class="field" style="margin-bottom:0"><label>Category</label>
+            <select id="filterType">
+              <option value="">All</option><option value="past_question">Past Questions</option>
+              <option value="slide">Slides</option><option value="book">Books</option><option value="tutorial">Tutorials</option>
+            </select>
+          </div>
+          <div class="field" style="margin-bottom:0"><label>Year</label><select id="filterYear"><option value="">All Years</option></select></div>
+        </div>
+        <div style="margin-top:14px;display:flex;gap:10px">
+          <button class="primary-btn" onclick="loadMaterials()" style="padding:10px 18px;font-size:13px">Apply Filters</button>
+          <button onclick="clearFilters()" style="padding:10px 18px;font-size:13px;background:#F3F4F6;color:#374151;border:none;border-radius:8px;font-weight:600;cursor:pointer">Clear</button>
+        </div>
+      </div>
+      <div id="materialsCount" style="font-size:13px;color:#6B7280;margin-bottom:12px"></div>
+      <div class="card" style="padding:0;overflow:hidden">
+        <table>
+          <thead><tr><th>Title</th><th>Type</th><th>Year</th><th>Course</th><th>AI</th><th>Cover</th><th>Access</th><th>Date</th><th>Actions</th></tr></thead>
+          <tbody id="materialsBody"><tr><td colspan="9" class="empty-state">Select filters and click Apply</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- USERS -->
+    <div id="usersTab" class="hidden">
+      <h1 class="page-title">👥 Manage Users</h1>
+      <div class="stat-grid">
+        <div class="stat-card"><div class="stat-icon" style="background:#EFF6FF">👥</div><div><div class="stat-num" id="statTotal">—</div><div class="stat-label">Total Users</div></div></div>
+        <div class="stat-card"><div class="stat-icon" style="background:#F5F3FF">🧑‍🎓</div><div><div class="stat-num" id="statStudents">—</div><div class="stat-label">Students</div></div></div>
+        <div class="stat-card"><div class="stat-icon" style="background:#ECFDF5">✅</div><div><div class="stat-num" id="statVerified">—</div><div class="stat-label">Verified</div></div></div>
+        <div class="stat-card"><div class="stat-icon" style="background:#FEF3C7">⭐</div><div><div class="stat-num" id="statPremium">—</div><div class="stat-label">Premium</div></div></div>
+      </div>
+      <div class="search-bar">
+        <span style="font-size:18px">🔍</span>
+        <input type="text" id="userSearch" placeholder="Search by name or college..." oninput="filterUsers()" />
+        <select id="userRoleFilter" onchange="filterUsers()"><option value="">All Roles</option><option value="student">Students</option><option value="lecturer">Lecturers</option><option value="contributor">Contributors</option><option value="admin">Admins</option></select>
+        <select id="userVerifiedFilter" onchange="filterUsers()"><option value="">All Users</option><option value="verified">Verified Only</option><option value="unverified">Unverified</option></select>
+      </div>
+      <div id="usersCount" style="font-size:12px;color:#94A3B8;margin-bottom:12px"></div>
+      <div id="usersList"></div>
+    </div>
+
+    <!-- REQUESTS -->
+    <div id="requestsTab" class="hidden">
+      <h1 class="page-title">📋 Contributor Requests</h1>
+      <div id="requestsList"></div>
+    </div>
+
+    <!-- PAYMENTS -->
+    <div id="paymentsTab" class="hidden">
+      <h1 class="page-title">💳 Payments</h1>
+      <div class="pay-stats">
+        <div class="pay-stat"><div class="pay-stat-label">Pending</div><div class="pay-stat-value" style="color:#F59E0B" id="payStatPending">—</div></div>
+        <div class="pay-stat"><div class="pay-stat-label">Active Subs</div><div class="pay-stat-value" style="color:#34D399" id="payStatActive">—</div></div>
+        <div class="pay-stat"><div class="pay-stat-label">Total Revenue</div><div class="pay-stat-value" style="color:#60A5FA" id="payStatRevenue">—</div></div>
+      </div>
+      <div class="pay-tabs">
+        <button class="pay-tab active" id="payTabPendingBtn" onclick="switchPayTab('pending',this)">⏳ Pending <span id="pendingCountBadge" style="background:#F59E0B;color:#000;border-radius:20px;padding:1px 8px;font-size:11px;margin-left:6px">0</span></button>
+        <button class="pay-tab" onclick="switchPayTab('all',this)">📋 All Subscriptions</button>
+      </div>
+      <div id="payTabPending">
+        <div class="pay-section-title">Pending Payments <button class="pay-refresh" onclick="loadPayments()">↻ Refresh</button></div>
+        <div class="pay-table-wrap"><table>
+          <thead><tr><th>Time</th><th>User</th><th>Phone</th><th>Plan</th><th>Amount</th><th>Method</th><th>Type</th><th>Actions</th></tr></thead>
+          <tbody id="pendingTbody"><tr><td colspan="8" class="pay-empty"><div class="pay-empty-icon">⏳</div>Loading...</td></tr></tbody>
+        </table></div>
+      </div>
+      <div id="payTabAll" style="display:none">
+        <div class="pay-section-title">All Subscriptions <button class="pay-refresh" onclick="loadPayments()">↻ Refresh</button></div>
+        <div class="pay-table-wrap"><table>
+          <thead><tr><th>Date</th><th>User</th><th>Phone</th><th>Plan</th><th>Amount</th><th>Method</th><th>Status</th><th>Expires</th></tr></thead>
+          <tbody id="allSubsTbody"><tr><td colspan="8" class="pay-empty"><div class="pay-empty-icon">📋</div>Loading...</td></tr></tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════ NOTIFICATIONS TAB ═══════════════════ -->
+    <div id="notificationsTab" class="hidden">
+      <h1 class="page-title">🔔 Notification Management</h1>
+
+      <!-- Stats row -->
+      <div class="stat-grid" style="margin-bottom:24px">
+        <div class="stat-card">
+          <div class="stat-icon" style="background:#EFF6FF;font-size:20px">📬</div>
+          <div><div class="stat-num" id="notifStatTotal">—</div><div class="stat-label">Total Sent</div></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="background:#FEF3C7;font-size:20px">📖</div>
+          <div><div class="stat-num" id="notifStatUnread">—</div><div class="stat-label">Unread</div></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="background:#ECFDF5;font-size:20px">📤</div>
+          <div><div class="stat-num" id="notifStatBroadcasts">—</div><div class="stat-label">Broadcasts</div></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="background:#F5F3FF;font-size:20px">👥</div>
+          <div><div class="stat-num" id="notifStatUsers">—</div><div class="stat-label">Users Reached</div></div>
+        </div>
+      </div>
+
+      <!-- Send new notification -->
+      <div class="card" style="margin-bottom:24px;border-left:4px solid #1A56DB">
+        <h3 style="font-size:16px;font-weight:700;color:#111827;margin-bottom:18px;display:flex;align-items:center;gap:8px">
+          📤 Send Notification
+        </h3>
+
+        <div class="grid-2" style="margin-bottom:16px">
+          <div class="field">
+            <label>Target Audience</label>
+            <select id="notifTarget" onchange="onNotifTargetChange()">
+              <option value="all">📢 Everyone</option>
+              <option value="college">🏛 Specific College</option>
+              <option value="class">🎓 Specific Class</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Type</label>
+            <select id="notifType">
+              <option value="admin_broadcast">📣 Announcement</option>
+              <option value="material_upload">📄 Material Upload</option>
+              <option value="leaderboard">🏆 Leaderboard Update</option>
+              <option value="general">🔔 General</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="notifCollegeRow" class="field" style="display:none">
+          <label>College</label>
+          <select id="notifCollegeSelect" onchange="loadNotifClasses()">
+            <option value="">Select college...</option>
+          </select>
+        </div>
+        <div id="notifClassRow" class="field" style="display:none">
+          <label>Class</label>
+          <select id="notifClassSelect">
+            <option value="">Select class...</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Notification Title</label>
+          <input type="text" id="notifTitle" placeholder="e.g. New Past Questions Available!" maxlength="80" />
+          <div id="notifTitleCount" style="font-size:11px;color:#94A3B8;margin-top:4px">0 / 80</div>
+        </div>
+        <div class="field">
+          <label>Message</label>
+          <textarea id="notifBody" rows="3" placeholder="Write your notification message here..." maxlength="300" style="resize:vertical;padding:11px 13px;border-radius:8px;border:1.5px solid #E5E7EB;font-size:14px;width:100%;outline:none;font-family:inherit;line-height:1.5"></textarea>
+          <div id="notifBodyCount" style="font-size:11px;color:#94A3B8;margin-top:4px">0 / 300</div>
+        </div>
+
+        <!-- Quick templates -->
+        <div style="margin-bottom:16px">
+          <p style="font-size:12px;font-weight:700;color:#64748B;margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">Quick Templates</p>
+          <div style="display:flex;flex-wrap:wrap;gap:8px">
+            <button class="btn-sm" style="background:#EFF6FF;color:#1A56DB" onclick="applyNotifTemplate('material')">📄 New Material</button>
+            <button class="btn-sm" style="background:#F5F3FF;color:#7C3AED" onclick="applyNotifTemplate('leaderboard')">🏆 Leaderboard</button>
+            <button class="btn-sm" style="background:#ECFDF5;color:#059669" onclick="applyNotifTemplate('reminder')">⏰ Study Reminder</button>
+            <button class="btn-sm" style="background:#FEF3C7;color:#D97706" onclick="applyNotifTemplate('deadline')">📅 Deadline Alert</button>
+            <button class="btn-sm" style="background:#FEE2E2;color:#DC2626" onclick="applyNotifTemplate('exam')">📝 Exam Notice</button>
+          </div>
+        </div>
+
+        <!-- Preview -->
+        <div id="notifPreviewBox" style="background:#F8FAFC;border:1.5px solid #E2E8F0;border-radius:12px;padding:14px;margin-bottom:16px;display:none">
+          <p style="font-size:11px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">📱 Preview</p>
+          <div style="background:#0F172A;border-radius:12px;padding:12px 14px;display:flex;align-items:flex-start;gap:10px">
+            <div id="notifPreviewIcon" style="width:36px;height:36px;border-radius:10px;background:#EFF6FF;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px">🔔</div>
+            <div>
+              <div id="notifPreviewTitle" style="font-size:13px;font-weight:700;color:#F1F5F9;margin-bottom:3px">Title</div>
+              <div id="notifPreviewBody" style="font-size:12px;color:#94A3B8;line-height:1.5">Message preview</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:10px;align-items:center">
+          <button class="primary-btn" id="sendNotifBtn" onclick="sendNotification()">
+            📤 Send Notification
+          </button>
+          <button onclick="clearNotifForm()" style="padding:12px 18px;background:#F3F4F6;color:#374151;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">
+            Clear
+          </button>
+          <div id="notifSendStatus" style="font-size:13px;color:#64748B"></div>
+        </div>
+      </div>
+
+      <!-- Recent broadcast history -->
+      <div class="card" style="padding:0;overflow:hidden">
+        <div style="padding:18px 20px;border-bottom:1px solid #E5E7EB;display:flex;align-items:center;justify-content:space-between">
+          <h3 style="font-size:15px;font-weight:700;color:#111827">📋 Recent Broadcasts</h3>
+          <button onclick="loadNotificationsTab()" style="padding:7px 14px;background:#F3F4F6;color:#374151;border:none;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer">↻ Refresh</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>Type</th>
+              <th>Target</th>
+              <th>Sent</th>
+              <th>Recipients</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="notifHistoryBody">
+            <tr><td colspan="6" class="empty-state">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- COLLEGES -->
+    <div id="collegesTab" class="hidden">
+      <h1 class="page-title">🏛 Manage Colleges</h1>
+      <div class="card" style="margin-bottom:24px">
+        <h3 style="font-size:16px;font-weight:700;color:#111827;margin-bottom:16px">Add New College</h3>
+        <div class="grid-3" style="margin-bottom:16px">
+          <div class="field"><label>College Name</label><input type="text" id="newCollegeName" placeholder="e.g. Fourah Bay College" /></div>
+          <div class="field"><label>Short Name</label><input type="text" id="newCollegeShort" placeholder="e.g. FBC" /></div>
+          <div class="field"><label>Display Order</label><input type="number" id="newCollegeOrder" placeholder="0" min="0" /></div>
+        </div>
+        <button class="primary-btn" onclick="addCollege()">+ Add College</button>
+      </div>
+      <div id="collegesList"></div>
+    </div>
+
+    <!-- LOGOS -->
+    <div id="logosTab" class="hidden">
+      <h1 class="page-title">🏫 College Logos</h1>
+      <div id="logosList"></div>
+    </div>
+
+    <!-- CLASSES -->
+    <div id="classesTab" class="hidden">
+      <h1 class="page-title">🎓 Manage Classes</h1>
+      <div class="card" style="margin-bottom:24px">
+        <h3 style="font-size:16px;font-weight:700;color:#111827;margin-bottom:16px">Add New Class</h3>
+        <div class="grid-2" style="margin-bottom:16px">
+          <div class="field"><label>College</label><select id="classCollegeSelect"><option value="">Select college...</option></select></div>
+          <div class="field"><label>Class Name</label><input type="text" id="newClassName" placeholder="e.g. Premed 1" /></div>
+        </div>
+        <button class="primary-btn" id="addClassBtn">+ Add Class</button>
+      </div>
+      <div id="classesList"></div>
+    </div>
+
+    <!-- COURSES -->
+    <div id="coursesTab" class="hidden">
+      <h1 class="page-title">📖 Manage Courses</h1>
+      <div class="card" style="margin-bottom:24px">
+        <h3 style="font-size:16px;font-weight:700;color:#111827;margin-bottom:16px">Add New Course</h3>
+        <div class="grid-2" style="margin-bottom:16px">
+          <div class="field"><label>College</label><select id="courseCollegeSelect" onchange="loadCourseClasses()"><option value="">Select college...</option></select></div>
+          <div class="field"><label>Class</label><select id="courseClassSelect" disabled><option value="">Select class...</option></select></div>
+          <div class="field"><label>Course Name</label><input type="text" id="newCourseName" placeholder="e.g. Human Anatomy" /></div>
+          <div class="field"><label>Course Code</label><input type="text" id="newCourseCode" placeholder="e.g. ANAT 101" /></div>
+        </div>
+        <button class="primary-btn" id="addCourseBtn">+ Add Course</button>
+      </div>
+      <div class="card" style="padding:16px;margin-bottom:12px">
+        <div class="grid-2" style="margin-bottom:0">
+          <div class="field" style="margin-bottom:0"><label>Filter College</label><select id="filterCourseCollege" onchange="loadFilterCourseClasses()"><option value="">All Colleges</option></select></div>
+          <div class="field" style="margin-bottom:0"><label>Filter Class</label><select id="filterCourseClass" onchange="loadCoursesList()"><option value="">All Classes</option></select></div>
+        </div>
+      </div>
+      <div id="coursesCount" style="font-size:13px;color:#6B7280;margin-bottom:10px"></div>
+      <div id="coursesList"></div>
+    </div>
+
+    <!-- LECTURERS -->
+    <div id="lecturersTab" class="hidden">
+      <h1 class="page-title">🧑‍🏫 Manage Lecturers</h1>
+      <div class="card" style="margin-bottom:24px">
+        <h3 style="font-size:16px;font-weight:700;color:#111827;margin-bottom:16px">Add New Lecturer</h3>
+        <div class="grid-2" style="margin-bottom:16px">
+          <div class="field"><label>College</label><select id="lecturerCollegeSelect" onchange="onLecCollegeChange()"><option value="">Select college...</option></select></div>
+          <div class="field"><label>Class</label><select id="lecturerClassSelect" disabled onchange="onLecClassChange()"><option value="">Select class...</option></select></div>
+          <div class="field"><label>Course</label><select id="lecturerCourseSelect" disabled><option value="">Select course...</option></select></div>
+          <div class="field"><label>Lecturer Name</label><input type="text" id="newLecturerName" placeholder="e.g. Dr. John Smith" /></div>
+        </div>
+        <div style="margin-bottom:18px">
+          <label style="display:block;font-size:13px;font-weight:600;color:#374151;margin-bottom:8px">Photo (optional)</label>
+          <div style="display:flex;align-items:center;gap:12px">
+            <div id="newLecAvatarPreview" class="lec-avatar-ph">👤</div>
+            <input type="file" id="newLecAvatarInput" accept="image/*" style="display:none" onchange="previewNewLecAvatar(this)" />
+            <button onclick="document.getElementById('newLecAvatarInput').click()" style="padding:9px 16px;background:#8B5CF6;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer">📷 Choose Photo</button>
+          </div>
+        </div>
+        <button class="primary-btn" onclick="addLecturer()">+ Add Lecturer</button>
+      </div>
+      <div style="background:#fff;border-radius:12px;padding:16px 20px;margin-bottom:16px;box-shadow:0 1px 4px rgba(0,0,0,.06)">
+        <div class="grid-2" style="margin-bottom:0">
+          <div class="field" style="margin-bottom:0"><label>Filter College</label><select id="filterLecCollege" onchange="onFilterLecCollegeChange()"><option value="">All Colleges</option></select></div>
+          <div class="field" style="margin-bottom:0"><label>Filter Course</label><select id="filterLecCourse" onchange="loadLecturersList()"><option value="">All Courses</option></select></div>
+        </div>
+      </div>
+      <div id="lecturersCount" style="font-size:13px;color:#6B7280;margin-bottom:10px"></div>
+      <div id="lecturersList"></div>
+    </div>
+
+    <!-- ═══════════════════ WEB BUILDER ═══════════════════ -->
+    <div id="collegePageTab" class="wb-mode hidden">
+      <div class="wb-wrap">
+        <div class="wb-topbar">
+          <span class="wb-logo">⚡ Web Builder</span>
+          <select class="wb-college-sel" id="wbCollegeSelect" onchange="onWbCollegeChange()">
+            <option value="">Choose a college...</option>
+          </select>
+          <select class="wb-page-sel" id="wbPageSelect" onchange="loadWbPage()" disabled>
+            <option value="">Select a page...</option>
+          </select>
+          <span class="wb-status" id="wbStatus">Select a college to start</span>
+          <div class="wb-topbar-btns">
+            <button class="wb-btn wb-btn-ghost" onclick="insertWbTemplate()">📄 Template</button>
+            <button class="wb-btn wb-btn-ghost" onclick="wbFormatCode()">✨ Format</button>
+            <button class="wb-btn wb-btn-new" id="wbNewPageBtn" onclick="openNewPageModal()" style="display:none">＋ New Page</button>
+            <button class="wb-btn wb-btn-delete" id="wbDeletePageBtn" onclick="deleteWbPage()" style="display:none">🗑 Delete</button>
+            <button class="wb-btn wb-btn-preview" onclick="wbRefreshPreview()">▶ Preview</button>
+            <button class="wb-btn wb-btn-save" onclick="saveWbPage()">💾 Save</button>
+          </div>
+        </div>
+        <div class="wb-main">
+          <div class="wb-editor-panel">
+            <div class="wb-tabs">
+              <button class="wb-tab active" id="wbTabHtml" onclick="switchWbTab('html',this)"><span class="wb-dot" style="background:#E34C26"></span>HTML</button>
+              <button class="wb-tab" id="wbTabCss"  onclick="switchWbTab('css',this)"><span class="wb-dot" style="background:#264DE4"></span>CSS</button>
+              <button class="wb-tab" id="wbTabJs"   onclick="switchWbTab('js',this)"><span class="wb-dot" style="background:#F7DF1E"></span>JS</button>
+            </div>
+            <div class="wb-editor-body">
+              <div class="wb-cm-wrap active" id="wbWrapHtml"></div>
+              <div class="wb-cm-wrap" id="wbWrapCss"></div>
+              <div class="wb-cm-wrap" id="wbWrapJs"></div>
+            </div>
+          </div>
+          <div class="wb-preview-panel">
+            <div class="wb-preview-bar">
+              <div class="wb-preview-dots">
+                <div class="wb-preview-dot" style="background:#FF5F56"></div>
+                <div class="wb-preview-dot" style="background:#FFBD2E"></div>
+                <div class="wb-preview-dot" style="background:#27C93F"></div>
+              </div>
+              <div class="wb-preview-urlbar" id="wbPreviewUrl">studentshare://college/page</div>
+              <div class="wb-device-row">
+                <button class="wb-device-btn active" onclick="setWbDevice('desktop',this)">🖥</button>
+                <button class="wb-device-btn" onclick="setWbDevice('tablet',this)">📱</button>
+                <button class="wb-device-btn" onclick="setWbDevice('mobile',this)">📱</button>
+              </div>
+            </div>
+            <div class="wb-preview-frame-wrap" id="wbPreviewWrap">
+              <div class="wb-empty-state" id="wbEmptyState">
+                <div class="wb-empty-icon">🌐</div>
+                <div class="wb-empty-title">No page loaded</div>
+                <div class="wb-empty-sub">Select a college, then choose or create a page to start building.</div>
+              </div>
+              <iframe id="wbPreviewFrame" sandbox="allow-scripts allow-same-origin" style="display:none;width:100%;height:100%;border:none;background:#fff"></iframe>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════ COLLEGE INFO TABS ═══════════════════ -->
+    <div id="collegeInfoTabsTab" class="hidden">
+      <h1 class="page-title">📑 College Info Tabs</h1>
+      <div class="cit-hero">
+        <div class="cit-hero-icon">📑</div>
+        <div>
+          <h2>Manage College Info Tabs</h2>
+          <p>Add, edit and reorder the tabs on each college's Info screen. Link each tab to a page built in the Web Builder — the page renders inside the app's WebView.</p>
+        </div>
+      </div>
+      <div class="cit-toolbar">
+        <select id="citCollegeSelect" onchange="loadCitTabs()">
+          <option value="">Select a college to manage its tabs...</option>
+        </select>
+        <button class="cit-add-btn" onclick="openCitModal(null)">+ Add Tab</button>
+      </div>
+      <div id="citTabsList">
+        <div class="cit-no-college">
+          <div class="cit-no-college-icon">🏛</div>
+          <h3>Select a college above</h3>
+          <p style="font-size:13px">Choose a college from the dropdown to view and manage its info tabs.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════ SLIDESHOW MANAGER ═══════════════════ -->
+    <div id="slidesTab" class="hidden">
+      <h1 class="page-title">🖼 Slideshow Manager</h1>
+      <div class="card" style="margin-bottom:20px;background:linear-gradient(135deg,#0F172A,#1E3A5F);border:none">
+        <p style="font-size:14px;color:#BFDBFE;margin-bottom:4px;font-weight:700">📸 Upload Slide Images per College</p>
+        <p style="font-size:13px;color:#64748B">These images appear in the auto-rotating slideshow at the top of each college's Info screen.</p>
+      </div>
+      <div class="card" style="margin-bottom:20px">
+        <div class="grid-2" style="margin-bottom:16px;align-items:end">
+          <div class="field" style="margin-bottom:0">
+            <label>College</label>
+            <select id="slidesCollegeSelect" onchange="loadSlidesList()">
+              <option value="">Select college...</option>
+            </select>
+          </div>
+          <div></div>
+        </div>
+        <div id="slidesUploadArea" style="display:none">
+          <div style="background:#F8FAFC;border:2px dashed #E2E8F0;border-radius:12px;padding:24px;text-align:center;margin-bottom:16px">
+            <div style="font-size:32px;margin-bottom:10px">🖼</div>
+            <p style="font-size:14px;font-weight:600;color:#374151;margin-bottom:6px">Upload Slide Image</p>
+            <p style="font-size:12px;color:#94A3B8;margin-bottom:14px">JPG, PNG, WebP recommended. Landscape 16:9 looks best (e.g. 1280×720).</p>
+            <div class="grid-2" style="margin-bottom:12px;gap:12px">
+              <div class="field" style="margin-bottom:0"><label>Title (optional)</label><input type="text" id="newSlideTitleInput" placeholder="e.g. Campus Life" /></div>
+              <div class="field" style="margin-bottom:0"><label>Subtitle (optional)</label><input type="text" id="newSlideSubInput" placeholder="e.g. Where students thrive" /></div>
+            </div>
+            <input type="file" id="slideFileInput" accept="image/*" style="display:none" onchange="previewSlideUpload(this)" />
+            <div id="slidePreviewBox" style="display:none;margin-bottom:12px">
+              <img id="slidePreviewImg" style="max-width:100%;max-height:160px;border-radius:8px;border:1px solid #E5E7EB" />
+            </div>
+            <div style="display:flex;gap:10px;justify-content:center">
+              <button onclick="document.getElementById('slideFileInput').click()" style="padding:10px 20px;background:#1A56DB;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer">Choose Image</button>
+              <button id="slideUploadBtn" onclick="uploadSlide()" style="padding:10px 20px;background:#10B981;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;display:none">⬆ Upload Slide</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="slidesList"></div>
+    </div>
+
+    <!-- FEATURE FLAGS -->
+    <div id="flagsTab" class="hidden">
+      <h1 class="page-title">🚩 Feature Flags</h1>
+      <div class="flags-hero">
+        <div style="font-size:40px;flex-shrink:0">⚙️</div>
+        <div>
+          <h3 style="font-size:17px;font-weight:800;margin-bottom:4px">Control What Users Can Access</h3>
+          <p style="font-size:13px;color:#94A3B8;line-height:1.6;margin:0">Toggle features on/off, or switch between free and premium. Changes take effect immediately for all users.</p>
+        </div>
+      </div>
+      <div id="flagsList"><div class="empty-state">Loading...</div></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════════ MODAL: Edit Material ═══════════════════ -->
+<div id="editMaterialModal" class="modal-overlay hidden">
+  <div class="modal">
+    <h2>Edit Material</h2>
+    <input type="hidden" id="editMatId" />
+    <input type="hidden" id="editMatType" />
+    <div id="editCoverSection" style="display:none;margin-bottom:20px">
+      <p style="font-size:14px;font-weight:700;margin-bottom:10px">Book Cover</p>
+      <div style="display:flex;align-items:center;gap:14px;background:#F9FAFB;border-radius:10px;padding:14px;border:1px solid #E5E7EB">
+        <div id="editCoverPh" class="cover-ph">📖</div>
+        <img id="editCoverImg" class="cover-img" style="display:none" />
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <input type="file" id="editCoverInput" accept="image/*" style="display:none" onchange="uploadEditCover(this)" />
+          <button onclick="document.getElementById('editCoverInput').click()" style="padding:8px 16px;background:#10B981;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer">Upload Cover</button>
+          <button id="deleteCoverBtn" onclick="deleteCover()" style="padding:8px 16px;background:#FEE2E2;color:#DC2626;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;display:none">Remove Cover</button>
+        </div>
+      </div>
+    </div>
+    <div class="field"><label>Title</label><input type="text" id="editMatTitle" /></div>
+    <div class="grid-2" style="margin-bottom:0">
+      <div class="field"><label>Type</label><select id="editMatTypeSelect"><option value="past_question">Past Question</option><option value="slide">Slide</option><option value="book">Book</option><option value="tutorial">Tutorial</option></select></div>
+      <div class="field"><label>Academic Year</label><input type="text" id="editMatYear" /></div>
+    </div>
+    <div class="checkbox-field"><input type="checkbox" id="editMatPremium" /><label for="editMatPremium" style="font-size:14px;font-weight:600">Premium content</label></div>
+    <div id="editAiStatus" style="margin-bottom:12px;font-size:13px"></div>
+    <div class="modal-actions">
+      <button class="modal-delete" onclick="deleteMaterial()">Delete</button>
+      <button style="padding:10px 14px;background:#EFF6FF;color:#1A56DB;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer" onclick="reExtractText()">Re-extract AI</button>
+      <button class="modal-cancel" onclick="closeModal('editMaterialModal')">Cancel</button>
+      <button class="modal-save" onclick="saveMaterial()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ MODAL: Edit College ═══════════════════ -->
+<div id="editCollegeModal" class="modal-overlay hidden">
+  <div class="modal" style="max-width:420px">
+    <h2>Edit College</h2>
+    <input type="hidden" id="editCollegeId" />
+    <div class="field"><label>College Name</label><input type="text" id="editCollegeName" /></div>
+    <div class="field"><label>Short Name</label><input type="text" id="editCollegeShort" /></div>
+    <div class="field"><label>Display Order</label><input type="number" id="editCollegeOrder" min="0" /></div>
+    <div class="modal-actions">
+      <button class="modal-delete" onclick="deleteCollege()">Delete</button>
+      <button class="modal-cancel" onclick="closeModal('editCollegeModal')">Cancel</button>
+      <button class="modal-save" onclick="saveCollege()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ MODAL: Edit Lecturer ═══════════════════ -->
+<div id="editLecturerModal" class="modal-overlay hidden">
+  <div class="modal" style="max-width:420px">
+    <h2>Edit Lecturer</h2>
+    <input type="hidden" id="editLecId" />
+    <div style="text-align:center;margin-bottom:20px">
+      <div style="position:relative;display:inline-block">
+        <img id="editLecAvatarImg" style="display:none;width:88px;height:88px;border-radius:50%;object-fit:cover;border:3px solid #8B5CF6" />
+        <div id="editLecAvatarPh" style="width:88px;height:88px;border-radius:50%;background:#EDE9FE;border:3px solid #8B5CF6;display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:800;color:#7C3AED">👤</div>
+        <button onclick="document.getElementById('editLecAvatarInput').click()" style="position:absolute;bottom:0;right:0;width:28px;height:28px;border-radius:50%;background:#8B5CF6;border:none;color:#fff;font-size:12px;cursor:pointer">📷</button>
+      </div>
+      <input type="file" id="editLecAvatarInput" accept="image/*" style="display:none" onchange="uploadLecAvatar(this)" />
+      <div style="display:flex;gap:8px;justify-content:center;margin-top:10px">
+        <button onclick="document.getElementById('editLecAvatarInput').click()" style="padding:6px 12px;background:#EDE9FE;color:#7C3AED;border:none;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer">Change Photo</button>
+        <button id="deleteLecAvatarBtn" onclick="deleteLecAvatar()" style="padding:6px 12px;background:#FEE2E2;color:#DC2626;border:none;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;display:none">Remove</button>
+      </div>
+    </div>
+    <div class="field"><label>Lecturer Name</label><input type="text" id="editLecName" /></div>
+    <div id="editLecCourseBadge" style="margin-bottom:12px"></div>
+    <div class="modal-actions">
+      <button class="modal-delete" onclick="deleteLecturer()">Delete</button>
+      <button class="modal-cancel" onclick="closeModal('editLecturerModal')">Cancel</button>
+      <button class="modal-save" onclick="saveLecturer()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ MODAL: Edit User ═══════════════════ -->
+<div id="editUserModal" class="uem-overlay" style="display:none" onclick="if(event.target===this)closeEditUser()">
+  <div class="uem-card">
+    <input type="hidden" id="uemUserId" />
+    <div id="uemAvatar" class="uem-avatar"></div>
+    <div id="uemName" class="uem-name"></div>
+    <div id="uemCollege" class="uem-college"></div>
+    <div class="uem-label">Role</div>
+    <div class="uem-role-grid">
+      <div class="uem-role selected" data-role="student" onclick="selectRole(this)"><span class="re">🧑‍🎓</span><span class="rl">Student</span></div>
+      <div class="uem-role" data-role="lecturer" onclick="selectRole(this)"><span class="re">🧑‍🏫</span><span class="rl">Lecturer</span></div>
+      <div class="uem-role" data-role="contributor" onclick="selectRole(this)"><span class="re">✏️</span><span class="rl">Contributor</span></div>
+      <div class="uem-role" data-role="admin" onclick="selectRole(this)"><span class="re">🛡️</span><span class="rl">Admin</span></div>
+    </div>
+    <div class="uem-label">Verified Badge</div>
+    <div class="uem-toggle-row" style="background:linear-gradient(135deg,#EFF6FF,#F5F3FF);border-color:#DBEAFE;margin-bottom:12px">
+      <div class="uem-toggle-left">
+        <div class="uem-toggle-icon" style="background:linear-gradient(135deg,#1A56DB,#7C3AED)">✓</div>
+        <div><div class="uem-toggle-label">Verified Badge</div><div class="uem-toggle-sub">Blue ✓ shown on profile</div></div>
+      </div>
+      <button class="toggle off" id="uemVerifiedToggle" onclick="toggleUem(this,'verified')"><div class="toggle-knob"></div></button>
+    </div>
+    <div class="uem-label">Premium Access</div>
+    <div class="uem-toggle-row" style="background:linear-gradient(135deg,#FFFBEB,#FFF7ED);border-color:#FDE68A;margin-bottom:0">
+      <div class="uem-toggle-left">
+        <div class="uem-toggle-icon" style="background:linear-gradient(135deg,#F59E0B,#EF4444)">⭐</div>
+        <div><div class="uem-toggle-label">Premium Access</div><div class="uem-toggle-sub" id="uemPremiumSub">No active subscription</div></div>
+      </div>
+      <button class="toggle off" id="uemPremiumToggle" onclick="toggleUem(this,'premium')"><div class="toggle-knob"></div></button>
+    </div>
+    <p style="font-size:11px;color:#94A3B8;margin-top:8px;padding:8px 12px;background:#FFFBEB;border-radius:8px;border:1px solid #FDE68A">
+      ⭐ Activating Premium also grants the <strong>Verified badge</strong> automatically
+    </p>
+    <div class="uem-actions">
+      <button class="uem-cancel" onclick="closeEditUser()">Cancel</button>
+      <button class="uem-save" onclick="saveUser()">Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ MODAL: New Page (Web Builder) ═══════════════════ -->
+<div id="wbNewPageModal" class="wb-new-page-modal hidden">
+  <div class="wb-new-page-card">
+    <h3>🌐 Create New Page</h3>
+    <p style="color:#8B949E;font-size:13px;margin-bottom:14px">Give this page a name. You can link it to a College Info Tab after saving.</p>
+    <input type="text" id="wbNewPageName" placeholder="e.g. About Us, Admissions, Campus Tour..." />
+    <div class="wb-new-page-actions">
+      <button class="wb-btn wb-btn-ghost" onclick="closeNewPageModal()">Cancel</button>
+      <button class="wb-btn wb-btn-new" onclick="createNewPage()">Create Page</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ MODAL: College Info Tab Editor ═══════════════════ -->
+<div id="citModal" class="cit-modal-overlay hidden" onclick="if(event.target===this)closeCitModal()">
+  <div class="cit-modal">
+    <div class="cit-modal-header">
+      <h2 id="citModalTitle">Add Tab</h2>
+      <button class="cit-modal-close" onclick="closeCitModal()">✕</button>
+    </div>
+    <div class="cit-modal-body">
+      <input type="hidden" id="citEditId" />
+      <div class="cit-meta-row">
+        <div class="field">
+          <label>Tab Label</label>
+          <input type="text" id="citLabelInput" placeholder="e.g. About Us" />
+        </div>
+        <div class="field">
+          <label>Icon (Ionicons name)</label>
+          <input type="text" id="citIconInput" placeholder="e.g. information-circle-outline" oninput="citIconPreview()" />
+        </div>
+        <div class="field">
+          <label>Order</label>
+          <input type="number" id="citOrderInput" value="0" min="0" style="width:60px" />
+        </div>
+        <div class="field">
+          <label>Status</label>
+          <select id="citActiveSelect">
+            <option value="true">Active</option>
+            <option value="false">Hidden</option>
+          </select>
+        </div>
+      </div>
+      <div style="margin-bottom:16px">
+        <div class="cit-editor-label">🎨 Quick Pick Icon</div>
+        <div class="icon-picker" id="citIconPicker"></div>
+      </div>
+      <div class="page-link-box">
+        <div class="page-link-box-title">🔗 Link to Web Builder Page</div>
+        <select class="page-link-select" id="citPageSelect" onchange="onCitPageSelectChange()">
+          <option value="">— No page linked (tab shows nothing) —</option>
+        </select>
+        <div class="page-link-hint">Select a page built in the Web Builder. The app will render it in a WebView when the user taps this tab.</div>
+        <div id="citLinkedPagePreview" style="display:none" class="linked-page-preview">
+          <div class="linked-page-preview-icon">🌐</div>
+          <div>
+            <div class="linked-page-preview-name" id="citLinkedPageName"></div>
+            <div class="linked-page-preview-college" id="citLinkedPageCollege"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="cit-modal-footer">
+      <button class="cit-delete-btn" id="citDeleteBtn" onclick="deleteCitTab()" style="display:none">🗑 Delete Tab</button>
+      <button class="cit-cancel-btn" onclick="closeCitModal()">Cancel</button>
+      <button class="cit-save-btn" onclick="saveCitTab()">💾 Save Tab</button>
+    </div>
+  </div>
+</div>
+
+<!-- Global Toast -->
+<div id="globalToast"></div>
+
+<script>
+// ════════════════════════════════════════════════════════════════════════
+//  CONFIG
+// ════════════════════════════════════════════════════════════════════════
+const { createClient } = supabase
+const sb = createClient(
+  'https://mxfrrikniesknhjgprpu.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im14ZnJyaWtuaWVza25oamdwcnB1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEzNDE5NDUsImV4cCI6MjA4NjkxNzk0NX0.37jrQ0OzFBoNoVns3hMGIclwX3lOT1RxsRRWuZDd9ig'
+)
+
+const API_URL = window.location.hostname === 'localhost'
+  ? 'http://localhost:3000'
+  : 'https://studentshare-backend.onrender.com'
+
+let session = null
+let allUsersCache = []
+let uemRole = 'student', uemVerified = false, uemPremium = false
+let editMatId = null, editLecId = null
+
+// ════════════════════════════════════════════════════════════════════════
+//  UTILS
+// ════════════════════════════════════════════════════════════════════════
+function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') }
+function escAttr(s){ return (s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;').replace(/\n/g,' ') }
+function toast(msg, type='success'){
+  const el = document.getElementById('globalToast')
+  el.textContent = (type==='success'?'✓ ':type==='error'?'✗ ':'ℹ ') + msg
+  el.className = `show ${type}`
+  clearTimeout(el._t)
+  el._t = setTimeout(()=>el.className='',3500)
+}
+function showMsg(txt, isErr){
+  const el = document.getElementById('globalMsg')
+  el.textContent = txt
+  el.className = isErr ? 'error-msg' : 'success-msg'
+  el.classList.remove('hidden')
+  if (!isErr) setTimeout(()=>el.classList.add('hidden'),5000)
+}
+function closeModal(id){ document.getElementById(id).classList.add('hidden') }
+function fmtDate(d){ return d ? new Date(d).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : '—' }
+function fmtType(t){ return {past_question:'Past Q',slide:'Slide',book:'Book',tutorial:'Tutorial'}[t]||t }
+function timeAgo(d){
+  const m = Math.floor((Date.now()-new Date(d))/60000)
+  if(m<1) return 'just now'
+  if(m<60) return m+'m ago'
+  const h=Math.floor(m/60); if(h<24) return h+'h ago'
+  return Math.floor(h/24)+'d ago'
+}
+function cap(s){ return s ? s.charAt(0).toUpperCase()+s.slice(1) : '' }
+
+// ─── Helper: format payment method ───────────────────────────────────────────
+function fmtPayMethod(method) {
+  const map = {
+    orange_money: '🟠 Orange Money',
+    afrimoney:    '🟢 Afrimoney',
+    monime:       '💳 Monime',
+    admin_grant:  '🎁 Admin Grant',
+  }
+  return map[method] || method || '—'
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  AUTH
+// ════════════════════════════════════════════════════════════════════════
+async function handleLogin(){
+  const email = document.getElementById('loginEmail').value.trim()
+  const pw = document.getElementById('loginPassword').value
+  const errEl = document.getElementById('loginError')
+  errEl.style.display='none'
+  if(!email||!pw){ errEl.textContent='Enter your email and password'; errEl.style.display='block'; return }
+  try {
+    const {data,error} = await sb.auth.signInWithPassword({email,password:pw})
+    if(error){ errEl.textContent=error.message; errEl.style.display='block'; return }
+    session = data.session
+    const {data:prof, error:profErr} = await sb.from('profiles').select('role').eq('id',session.user.id).single()
+    if(profErr){ errEl.textContent='Could not load profile: '+profErr.message; errEl.style.display='block'; return }
+    if(!prof || prof.role!=='admin'){ errEl.textContent='Access denied — admin only (role: '+(prof?.role||'none')+')'; errEl.style.display='block'; await sb.auth.signOut(); return }
+    document.getElementById('loginPage').classList.add('hidden')
+    document.getElementById('dashboardPage').classList.remove('hidden')
+    await bootDashboard()
+  } catch(e) {
+    errEl.textContent='Unexpected error: '+e.message
+    errEl.style.display='block'
+    console.error(e)
+  }
+}
+
+window.onload = async function(){
+  const {data:{session:s}} = await sb.auth.getSession()
+  if(s){
+    session = s
+    const {data:prof} = await sb.from('profiles').select('role').eq('id',s.user.id).single()
+    if(prof && prof.role==='admin'){
+      document.getElementById('loginPage').classList.add('hidden')
+      document.getElementById('dashboardPage').classList.remove('hidden')
+      await bootDashboard()
+    }
+  }
+  document.getElementById('collegeSelect').addEventListener('change', async function(){
+    const classEl = document.getElementById('classSelect'), courseEl = document.getElementById('courseSelect')
+    classEl.innerHTML='<option value="">Select class...</option>'; classEl.disabled=true
+    courseEl.innerHTML='<option value="">Select course...</option>'; courseEl.disabled=true
+    if(!this.value) return
+    const {data} = await sb.from('classes').select('*').eq('college_id',this.value).order('display_order')
+    data.forEach(c=>classEl.innerHTML+=`<option value="${c.id}">${esc(c.name)}</option>`)
+    classEl.disabled=false
+  })
+  document.getElementById('classSelect').addEventListener('change', async function(){
+    const courseEl = document.getElementById('courseSelect')
+    courseEl.innerHTML='<option value="">Select course...</option>'; courseEl.disabled=true
+    if(!this.value) return
+    const {data} = await sb.from('courses').select('*').eq('class_id',this.value).order('name')
+    data.forEach(c=>courseEl.innerHTML+=`<option value="${c.id}">${esc(c.name)} (${esc(c.code)})</option>`)
+    courseEl.disabled=false
+  })
+  document.getElementById('courseSelect').addEventListener('change', ()=>{
+    if(document.getElementById('typeSelect').value==='slide') populateLecturerDrop()
+  })
+  document.getElementById('filterCollege').addEventListener('change', async function(){
+    const fc=document.getElementById('filterClass'); fc.innerHTML='<option value="">All Classes</option>'
+    if(!this.value) return
+    const {data}=await sb.from('classes').select('*').eq('college_id',this.value).order('display_order')
+    data.forEach(c=>fc.innerHTML+=`<option value="${c.id}">${esc(c.name)}</option>`)
+  })
+
+  // ── Nav map ──────────────────────────────────────────────────────────
+  const navMap = [
+    ['navUpload','upload'],['navMaterials','materials'],['navUsers','users'],
+    ['navRequests','requests'],['navPayments','payments'],
+    ['navNotifications','notifications'],
+    ['navColleges','colleges'],['navLogos','logos'],['navClasses','classes'],
+    ['navCourses','courses'],['navLecturers','lecturers'],
+    ['navCollegePage','collegePage'],['navCollegeInfoTabs','collegeInfoTabs'],
+    ['navSlides','slides'],['navFlags','flags']
+  ]
+  navMap.forEach(([btnId,tab])=>{
+    document.getElementById(btnId).addEventListener('click', function(){ switchTab(tab, this) })
+  })
+
+  document.getElementById('logoutBtn').addEventListener('click', async()=>{ await sb.auth.signOut(); location.reload() })
+  document.getElementById('uploadBtn').addEventListener('click', handleUpload)
+  document.getElementById('editMaterialModal').addEventListener('click',e=>{ if(e.target===e.currentTarget) closeModal('editMaterialModal') })
+  document.getElementById('editCollegeModal').addEventListener('click',e=>{ if(e.target===e.currentTarget) closeModal('editCollegeModal') })
+  document.getElementById('editLecturerModal').addEventListener('click',e=>{ if(e.target===e.currentTarget) closeModal('editLecturerModal') })
+
+  // ── Notification live-preview listeners ───────────────────────────────
+  const titleEl = document.getElementById('notifTitle')
+  const bodyEl  = document.getElementById('notifBody')
+  if(titleEl) titleEl.addEventListener('input', () => { updateNotifCounts(); updateNotifPreview() })
+  if(bodyEl)  bodyEl.addEventListener('input',  () => { updateNotifCounts(); updateNotifPreview() })
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  BOOT DASHBOARD  — with real-time payments channel
+// ════════════════════════════════════════════════════════════════════════
+async function bootDashboard(){
+  await loadCollegesIntoSelects()
+  await loadUsers()
+  await loadRequests()
+  await loadPayments()
+  updatePendingBadge()
+  setInterval(updatePendingBadge, 30000)
+  initWebBuilder()
+  initCitIconPicker()
+
+  // Real-time: auto-refresh when any subscription row changes
+  sb.channel('payments-realtime')
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'subscriptions' },
+      (payload) => {
+        loadPayments()
+        updatePendingBadge()
+        if (payload.eventType === 'INSERT' && payload.new?.status === 'pending') {
+          toast('💳 New payment pending!', 'info')
+        }
+        if (payload.eventType === 'UPDATE' && payload.new?.status === 'active' && payload.old?.status === 'pending') {
+          toast('✅ Payment auto-confirmed by Monime!', 'success')
+          loadUsers()
+        }
+      }
+    )
+    .subscribe()
+}
+
+async function updatePendingBadge(){
+  const {data} = await sb.from('subscriptions').select('id',{count:'exact'}).eq('status','pending')
+  const count = data?.length || 0
+  const badge = document.getElementById('pendingBadge')
+  badge.textContent = count
+  badge.classList.toggle('hidden', count===0)
+  document.getElementById('pendingCountBadge').textContent = count
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  TAB SWITCHING
+// ════════════════════════════════════════════════════════════════════════
+const ALL_TABS = [
+  'upload','materials','users','requests','payments','notifications',
+  'colleges','logos','classes','courses','lecturers',
+  'collegePage','collegeInfoTabs','slides','flags'
+]
+
+function switchTab(tab, btn){
+  ALL_TABS.forEach(t=>{
+    const el=document.getElementById(t+'Tab')
+    if(el){
+      if(t==='collegePage'){
+        if(tab==='collegePage'){ el.classList.remove('hidden'); document.getElementById('mainContent').style.padding='0'; document.getElementById('mainContent').style.overflow='hidden' }
+        else { el.classList.add('hidden'); document.getElementById('mainContent').style.padding='32px'; document.getElementById('mainContent').style.overflow='auto' }
+      } else {
+        el.classList.toggle('hidden', t!==tab)
+      }
+    }
+  })
+  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'))
+  if(btn) btn.classList.add('active')
+  if(tab==='materials')      loadMaterialsFilters()
+  if(tab==='payments')       loadPayments()
+  if(tab==='notifications')  loadNotificationsTab()
+  if(tab==='colleges')       loadCollegesList()
+  if(tab==='logos')          loadCollegeLogos()
+  if(tab==='classes')        loadClassesTab()
+  if(tab==='courses')        loadCoursesTab()
+  if(tab==='lecturers')      loadLecturersTab()
+  if(tab==='flags')          loadFeatureFlags()
+  if(tab==='collegePage')    { loadWbColleges(); refreshWbCmEditors() }
+  if(tab==='collegeInfoTabs') loadCitColleges()
+  if(tab==='slides')         loadSlidesColleges()
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  COLLEGES SELECTS
+// ════════════════════════════════════════════════════════════════════════
+async function loadCollegesIntoSelects(){
+  const {data:colleges} = await sb.from('colleges').select('*').order('display_order')
+  const selIds = ['collegeSelect','filterCollege','classCollegeSelect','courseCollegeSelect','filterCourseCollege',
+                  'lecturerCollegeSelect','filterLecCollege','wbCollegeSelect','citCollegeSelect','slidesCollegeSelect']
+  selIds.forEach(id=>{
+    const el=document.getElementById(id); if(!el) return
+    const isFilter = id.startsWith('filter')
+    const isWb = id==='wbCollegeSelect'
+    const isCit = id==='citCollegeSelect'
+    const isSlides = id==='slidesCollegeSelect'
+    let def = isFilter ? 'All Colleges' : isWb ? 'Choose a college...' : (isCit||isSlides) ? 'Select a college...' : 'Select college...'
+    el.innerHTML = `<option value="">${def}</option>`
+    colleges.forEach(c=>el.innerHTML+=`<option value="${c.id}">${esc(c.name)}</option>`)
+  })
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  NOTIFICATION MANAGEMENT
+// ════════════════════════════════════════════════════════════════════════
+
+const NOTIF_TYPE_ICONS = {
+  admin_broadcast:   '📣',
+  material_upload:   '📄',
+  leaderboard:       '🏆',
+  deadline_reminder: '⏰',
+  deadline_due:      '🚨',
+  general:           '🔔',
+}
+
+const NOTIF_TEMPLATES = {
+  material: {
+    type:  'material_upload',
+    title: '📄 New Materials Available',
+    body:  'New study materials have been uploaded for your class. Tap to explore!',
+  },
+  leaderboard: {
+    type:  'leaderboard',
+    title: '🏆 Weekly Leaderboard Update',
+    body:  "This week's leaderboard has been updated. See where you stand among your classmates!",
+  },
+  reminder: {
+    type:  'general',
+    title: '📚 Study Reminder',
+    body:  "Don't forget to review your materials before the weekend. Stay ahead of the curve!",
+  },
+  deadline: {
+    type:  'admin_broadcast',
+    title: '📅 Assignment Deadline Approaching',
+    body:  'Reminder: your assignment deadline is coming up soon. Submit before it expires!',
+  },
+  exam: {
+    type:  'admin_broadcast',
+    title: '📝 Upcoming Examination Notice',
+    body:  'Please note that examinations are scheduled soon. Review all course materials and prepare accordingly.',
+  },
+}
+
+function applyNotifTemplate(key) {
+  const t = NOTIF_TEMPLATES[key]
+  if (!t) return
+  document.getElementById('notifTitle').value = t.title
+  document.getElementById('notifBody').value  = t.body
+  document.getElementById('notifType').value  = t.type
+  updateNotifCounts()
+  updateNotifPreview()
+}
+
+function updateNotifCounts() {
+  const title = document.getElementById('notifTitle')
+  const body  = document.getElementById('notifBody')
+  document.getElementById('notifTitleCount').textContent = `${title.value.length} / 80`
+  document.getElementById('notifBodyCount').textContent  = `${body.value.length} / 300`
+}
+
+function updateNotifPreview() {
+  const title = document.getElementById('notifTitle').value.trim()
+  const body  = document.getElementById('notifBody').value.trim()
+  const type  = document.getElementById('notifType').value
+  const box   = document.getElementById('notifPreviewBox')
+  if (!title && !body) { box.style.display = 'none'; return }
+  box.style.display = 'block'
+  document.getElementById('notifPreviewTitle').textContent = title || 'Notification title'
+  document.getElementById('notifPreviewBody').textContent  = body  || 'Notification message...'
+  document.getElementById('notifPreviewIcon').textContent  = NOTIF_TYPE_ICONS[type] || '🔔'
+}
+
+function onNotifTargetChange() {
+  const val = document.getElementById('notifTarget').value
+  document.getElementById('notifCollegeRow').style.display = (val === 'college' || val === 'class') ? 'block' : 'none'
+  document.getElementById('notifClassRow').style.display   = val === 'class' ? 'block' : 'none'
+  if (val === 'college' || val === 'class') loadNotifColleges()
+}
+
+async function loadNotifColleges() {
+  const { data } = await sb.from('colleges').select('*').order('display_order')
+  const sel = document.getElementById('notifCollegeSelect')
+  sel.innerHTML = '<option value="">Select college...</option>'
+  data.forEach(c => sel.innerHTML += `<option value="${c.id}">${esc(c.name)}</option>`)
+}
+
+async function loadNotifClasses() {
+  const cid = document.getElementById('notifCollegeSelect').value
+  const sel = document.getElementById('notifClassSelect')
+  sel.innerHTML = '<option value="">Select class...</option>'
+  if (!cid) return
+  const { data } = await sb.from('classes').select('*').eq('college_id', cid).order('display_order')
+  data.forEach(c => sel.innerHTML += `<option value="${c.id}">${esc(c.name)}</option>`)
+}
+
+async function sendNotification() {
+  const title  = document.getElementById('notifTitle').value.trim()
+  const body   = document.getElementById('notifBody').value.trim()
+  const type   = document.getElementById('notifType').value
+  const target = document.getElementById('notifTarget').value
+
+  if (!title || !body) { toast('Enter a title and message', 'error'); return }
+
+  const btn    = document.getElementById('sendNotifBtn')
+  const status = document.getElementById('notifSendStatus')
+  btn.disabled = true
+  btn.textContent = '⏳ Sending...'
+  status.textContent = ''
+
+  try {
+    let recipientCount = 0
+
+    if (target === 'all') {
+      const { data, error } = await sb.rpc('notify_all_users', {
+        p_title:    title,
+        p_body:     body,
+        p_type:     type,
+        p_sent_by:  session.user.id,
+        p_metadata: { source: 'admin_dashboard' },
+      })
+      if (error) throw error
+      recipientCount = data || 0
+
+    } else if (target === 'college') {
+      const collegeId = document.getElementById('notifCollegeSelect').value
+      if (!collegeId) { toast('Select a college', 'error'); return }
+      const { data, error } = await sb.rpc('notify_college', {
+        p_college_id: collegeId,
+        p_title:      title,
+        p_body:       body,
+        p_type:       type,
+        p_sent_by:    session.user.id,
+        p_metadata:   { source: 'admin_dashboard' },
+      })
+      if (error) throw error
+      recipientCount = data || 0
+
+    } else if (target === 'class') {
+      const classId = document.getElementById('notifClassSelect').value
+      if (!classId) { toast('Select a class', 'error'); return }
+      const { data, error } = await sb.rpc('notify_class', {
+        p_class_id:  classId,
+        p_title:     title,
+        p_body:      body,
+        p_type:      type,
+        p_sent_by:   session.user.id,
+        p_metadata:  { source: 'admin_dashboard' },
+      })
+      if (error) throw error
+      recipientCount = data || 0
+    }
+
+    // Record in notification_templates for history
+    await sb.from('notification_templates').insert({
+      title,
+      body,
+      type,
+      target,
+      created_by: session.user.id,
+      sent_at:    new Date().toISOString(),
+      send_count: recipientCount,
+    })
+
+    toast(`✅ Sent to ${recipientCount} user${recipientCount !== 1 ? 's' : ''}!`)
+    status.textContent = `Delivered to ${recipientCount} user${recipientCount !== 1 ? 's' : ''}`
+    clearNotifForm()
+    await loadNotificationsTab()
+
+  } catch (e) {
+    toast('Error: ' + e.message, 'error')
+    status.textContent = 'Failed — see console'
+    console.error(e)
+  } finally {
+    btn.disabled = false
+    btn.textContent = '📤 Send Notification'
+  }
+}
+
+function clearNotifForm() {
+  document.getElementById('notifTitle').value  = ''
+  document.getElementById('notifBody').value   = ''
+  document.getElementById('notifType').value   = 'admin_broadcast'
+  document.getElementById('notifTarget').value = 'all'
+  document.getElementById('notifCollegeRow').style.display = 'none'
+  document.getElementById('notifClassRow').style.display   = 'none'
+  document.getElementById('notifPreviewBox').style.display = 'none'
+  document.getElementById('notifSendStatus').textContent   = ''
+  updateNotifCounts()
+}
+
+async function loadNotificationsTab() {
+  try {
+    const [totalRes, unreadRes, broadcastRes] = await Promise.all([
+      sb.from('notifications').select('id', { count: 'exact', head: true }),
+      sb.from('notifications').select('id', { count: 'exact', head: true }).eq('is_read', false),
+      sb.from('notification_templates').select('id,send_count').order('sent_at', { ascending: false }),
+    ])
+
+    document.getElementById('notifStatTotal').textContent      = totalRes.count ?? '—'
+    document.getElementById('notifStatUnread').textContent     = unreadRes.count ?? '—'
+    document.getElementById('notifStatBroadcasts').textContent = broadcastRes.data?.length ?? '—'
+
+    const reached = (broadcastRes.data || []).reduce((s, r) => s + (r.send_count || 0), 0)
+    document.getElementById('notifStatUsers').textContent = reached.toLocaleString()
+
+    const tbody = document.getElementById('notifHistoryBody')
+    if (!broadcastRes.data || !broadcastRes.data.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty-state"><div class="empty-icon">📭</div>No broadcasts yet</td></tr>'
+      return
+    }
+
+    const { data: history } = await sb
+      .from('notification_templates')
+      .select('*,profiles(full_name)')
+      .order('sent_at', { ascending: false })
+      .limit(30)
+
+    const TYPE_COLORS = {
+      admin_broadcast: { bg: '#DBEAFE', color: '#1D4ED8' },
+      material_upload: { bg: '#D1FAE5', color: '#065F46' },
+      leaderboard:     { bg: '#EDE9FE', color: '#7C3AED' },
+      general:         { bg: '#F3F4F6', color: '#374151' },
+    }
+
+    tbody.innerHTML = (history || []).map(h => {
+      const tc = TYPE_COLORS[h.type] || TYPE_COLORS.general
+      const targetLabel = h.target === 'all' ? '📢 Everyone' : h.target === 'college' ? '🏛 College' : '🎓 Class'
+      return `<tr>
+        <td style="font-weight:600;color:#111827;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(h.title)}">${esc(h.title)}</td>
+        <td><span style="background:${tc.bg};color:${tc.color};padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700">${NOTIF_TYPE_ICONS[h.type] || '🔔'} ${cap(h.type.replace(/_/g,' '))}</span></td>
+        <td style="font-size:13px;color:#64748B">${targetLabel}</td>
+        <td style="font-size:12px;color:#9CA3AF">${h.sent_at ? timeAgo(h.sent_at) : '—'}</td>
+        <td style="font-weight:700;color:#1A56DB">${(h.send_count || 0).toLocaleString()}</td>
+        <td>
+          <button class="btn-sm btn-edit" onclick="resendNotification('${escAttr(h.title)}','${escAttr(h.body)}','${h.type}','${h.target}')">↩ Resend</button>
+          <button class="btn-sm btn-reject" onclick="deleteNotifTemplate('${h.id}')" style="margin-left:4px">🗑</button>
+        </td>
+      </tr>`
+    }).join('')
+
+  } catch (e) {
+    console.error('loadNotificationsTab error', e)
+  }
+}
+
+function resendNotification(title, body, type, target) {
+  document.getElementById('notifTitle').value  = title
+  document.getElementById('notifBody').value   = body
+  document.getElementById('notifType').value   = type
+  document.getElementById('notifTarget').value = target
+  onNotifTargetChange()
+  updateNotifCounts()
+  updateNotifPreview()
+  document.getElementById('notifTitle').scrollIntoView({ behavior: 'smooth', block: 'center' })
+  document.getElementById('notifTitle').focus()
+  toast('Template loaded — review and send', 'info')
+}
+
+async function deleteNotifTemplate(id) {
+  if (!confirm('Remove this broadcast from history?')) return
+  await sb.from('notification_templates').delete().eq('id', id)
+  toast('Removed from history.')
+  await loadNotificationsTab()
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  WEB BUILDER
+// ════════════════════════════════════════════════════════════════════════
+let wbHtmlEditor=null, wbCssEditor=null, wbJsEditor=null
+let wbCurrentTab='html', wbCurrentCollegeId=null, wbCurrentPageId=null, wbDevice='desktop'
+
+function initWebBuilder(){
+  wbHtmlEditor=CodeMirror(document.getElementById('wbWrapHtml'),{mode:'htmlmixed',theme:'dracula',lineNumbers:true,autoCloseTags:true,matchBrackets:true,autoCloseBrackets:true,lineWrapping:false,tabSize:2,indentWithTabs:false})
+  wbCssEditor=CodeMirror(document.getElementById('wbWrapCss'),{mode:'css',theme:'dracula',lineNumbers:true,matchBrackets:true,autoCloseBrackets:true,lineWrapping:false,tabSize:2})
+  wbJsEditor=CodeMirror(document.getElementById('wbWrapJs'),{mode:'javascript',theme:'dracula',lineNumbers:true,matchBrackets:true,autoCloseBrackets:true,lineWrapping:false,tabSize:2})
+  const debounce=(fn,ms)=>{ let t; return ()=>{ clearTimeout(t); t=setTimeout(fn,ms) } }
+  const updatePreview=debounce(wbRefreshPreview,600)
+  wbHtmlEditor.on('change',updatePreview)
+  wbCssEditor.on('change',updatePreview)
+  wbJsEditor.on('change',updatePreview)
+}
+
+function refreshWbCmEditors(){
+  setTimeout(()=>{ if(wbHtmlEditor) wbHtmlEditor.refresh(); if(wbCssEditor) wbCssEditor.refresh(); if(wbJsEditor) wbJsEditor.refresh() },100)
+}
+
+async function loadWbColleges(){
+  const {data}=await sb.from('colleges').select('*').order('display_order')
+  const sel=document.getElementById('wbCollegeSelect')
+  sel.innerHTML='<option value="">Choose a college...</option>'
+  data.forEach(c=>sel.innerHTML+=`<option value="${c.id}">${esc(c.name)}</option>`)
+}
+
+async function onWbCollegeChange(){
+  wbCurrentCollegeId = document.getElementById('wbCollegeSelect').value
+  wbCurrentPageId = null
+  const pageSel = document.getElementById('wbPageSelect')
+  const status = document.getElementById('wbStatus')
+  document.getElementById('wbDeletePageBtn').style.display='none'
+  document.getElementById('wbNewPageBtn').style.display = wbCurrentCollegeId ? 'inline-flex' : 'none'
+  pageSel.innerHTML='<option value="">Select a page...</option>'
+  pageSel.disabled = !wbCurrentCollegeId
+  if(!wbCurrentCollegeId){ status.textContent='Select a college to start'; status.className='wb-status'; showWbEmpty(); return }
+  status.textContent='Loading pages...'; status.className='wb-status'
+  const {data:pages} = await sb.from('college_pages').select('id,name').eq('college_id',wbCurrentCollegeId).order('created_at')
+  if(!pages||!pages.length){ pageSel.innerHTML='<option value="">No pages yet — create one ➕</option>'; status.textContent='No pages yet. Click "+ New Page" to create one.'; status.className='wb-status'; showWbEmpty(); return }
+  pages.forEach(p=>pageSel.innerHTML+=`<option value="${p.id}">${esc(p.name)}</option>`)
+  status.textContent='Choose a page to edit'; status.className='wb-status'; showWbEmpty()
+}
+
+async function loadWbPage(){
+  wbCurrentPageId = document.getElementById('wbPageSelect').value
+  const status = document.getElementById('wbStatus')
+  if(!wbCurrentPageId){ document.getElementById('wbDeletePageBtn').style.display='none'; showWbEmpty(); return }
+  status.textContent='Loading...'; status.className='wb-status'
+  const {data,error} = await sb.from('college_pages').select('*').eq('id',wbCurrentPageId).single()
+  if(error||!data){ toast('Could not load page','error'); return }
+  wbHtmlEditor.setValue(data.page_html||getDefaultHtml(data.name))
+  wbCssEditor.setValue(data.page_css||getDefaultCss())
+  wbJsEditor.setValue(data.page_js||getDefaultJs())
+  document.getElementById('wbPreviewUrl').textContent=`studentshare://college/page/${encodeURIComponent(data.name)}`
+  status.textContent=`Editing: ${data.name}`; status.className='wb-status saved'
+  document.getElementById('wbDeletePageBtn').style.display='inline-flex'
+  showWbPreview(); wbRefreshPreview()
+}
+
+function showWbEmpty(){ document.getElementById('wbEmptyState').style.display='flex'; document.getElementById('wbPreviewFrame').style.display='none' }
+function showWbPreview(){ document.getElementById('wbEmptyState').style.display='none'; document.getElementById('wbPreviewFrame').style.display='block' }
+
+function openNewPageModal(){ if(!wbCurrentCollegeId){ toast('Select a college first','error'); return }; document.getElementById('wbNewPageName').value=''; document.getElementById('wbNewPageModal').classList.remove('hidden'); setTimeout(()=>document.getElementById('wbNewPageName').focus(),100) }
+function closeNewPageModal(){ document.getElementById('wbNewPageModal').classList.add('hidden') }
+
+async function createNewPage(){
+  const name = document.getElementById('wbNewPageName').value.trim()
+  if(!name){ toast('Enter a page name','error'); return }
+  const {data,error} = await sb.from('college_pages').insert({ college_id: wbCurrentCollegeId, name, page_html: getDefaultHtml(name), page_css: getDefaultCss(), page_js: getDefaultJs() }).select().single()
+  if(error){ toast('Error: '+error.message,'error'); return }
+  closeNewPageModal(); toast('Page "'+name+'" created!')
+  await onWbCollegeChange()
+  const sel = document.getElementById('wbPageSelect')
+  const {data:pages} = await sb.from('college_pages').select('id,name').eq('college_id',wbCurrentCollegeId).order('created_at')
+  sel.innerHTML='<option value="">Select a page...</option>'
+  pages.forEach(p=>sel.innerHTML+=`<option value="${p.id}">${esc(p.name)}</option>`)
+  sel.value = data.id; await loadWbPage()
+}
+
+async function saveWbPage(){
+  if(!wbCurrentPageId){ toast('Select a page first','error'); return }
+  const status=document.getElementById('wbStatus'); status.textContent='Saving...'; status.className='wb-status saving'
+  const {error}=await sb.from('college_pages').update({ page_html:wbHtmlEditor.getValue(), page_css:wbCssEditor.getValue(), page_js:wbJsEditor.getValue(), updated_at: new Date().toISOString() }).eq('id',wbCurrentPageId)
+  if(error){ toast('Save failed: '+error.message,'error'); status.textContent='Save failed'; return }
+  toast('Page saved!'); status.textContent='✓ Saved '+new Date().toLocaleTimeString(); status.className='wb-status saved'
+  setTimeout(()=>{ if(wbCurrentPageId){ const sel=document.getElementById('wbPageSelect'); status.textContent='Editing: '+(sel.selectedOptions[0]?.text||''); } },5000)
+}
+
+async function deleteWbPage(){
+  if(!wbCurrentPageId) return
+  const pageName = document.getElementById('wbPageSelect').selectedOptions[0]?.text||'this page'
+  if(!confirm(`Delete "${pageName}"? This cannot be undone. Any tabs linked to this page will lose their link.`)) return
+  const {error} = await sb.from('college_pages').delete().eq('id',wbCurrentPageId)
+  if(error){ toast('Delete failed: '+error.message,'error'); return }
+  toast('Page deleted.'); wbCurrentPageId=null; await onWbCollegeChange()
+}
+
+function wbRefreshPreview(){
+  if(!wbCurrentPageId) return
+  const html=wbHtmlEditor?wbHtmlEditor.getValue():''
+  const css=wbCssEditor?wbCssEditor.getValue():''
+  const js=wbJsEditor?wbJsEditor.getValue():''
+  const full=`<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style></head><body>${html}<script>${js}<\/script></html>`
+  const frame=document.getElementById('wbPreviewFrame'); frame.srcdoc=full; showWbPreview()
+}
+
+function switchWbTab(tab, btn){
+  wbCurrentTab=tab
+  ;['html','css','js'].forEach(t=>{ document.getElementById('wbWrap'+t.charAt(0).toUpperCase()+t.slice(1)).classList.toggle('active',t===tab) })
+  document.querySelectorAll('.wb-tab').forEach(b=>b.classList.remove('active')); btn.classList.add('active')
+  const editor={html:wbHtmlEditor,css:wbCssEditor,js:wbJsEditor}[tab]; if(editor) setTimeout(()=>editor.refresh(),50)
+}
+
+function setWbDevice(device, btn){
+  wbDevice=device
+  document.querySelectorAll('.wb-device-btn').forEach(b=>b.classList.remove('active')); btn.classList.add('active')
+  const wrap=document.getElementById('wbPreviewWrap'); wrap.className='wb-preview-frame-wrap'+(device!=='desktop'?' '+device:'')
+}
+
+function wbFormatCode(){ if(wbCurrentTab==='html'){ const v=wbHtmlEditor.getValue(); wbHtmlEditor.setValue(v.replace(/></g,'>\n<').replace(/^\s*\n/gm,'')) }; toast('Code formatted ✓') }
+
+function insertWbTemplate(){
+  if(!wbCurrentPageId){ toast('Select or create a page first','error'); return }
+  const pageName = document.getElementById('wbPageSelect').selectedOptions[0]?.text||'Page'
+  wbHtmlEditor.setValue(getDefaultHtml(pageName)); wbCssEditor.setValue(getDefaultCss()); wbJsEditor.setValue(getDefaultJs())
+  toast('Template inserted!'); wbRefreshPreview()
+}
+
+function getDefaultHtml(name='Page'){
+  return `<header>\n  <div class="header-inner">\n    <div class="logo">${esc(name)}</div>\n    <nav>\n      <a href="#about">About</a>\n      <a href="#programs">Programs</a>\n      <a href="#contact">Contact</a>\n    </nav>\n  </div>\n</header>\n\n<section class="hero">\n  <h1>Welcome to<br><span>${esc(name)}</span></h1>\n  <p>Excellence in education — shaping the leaders of tomorrow.</p>\n  <a href="#programs" class="cta-btn">Explore Programs</a>\n</section>\n\n<section id="about" class="section">\n  <h2>About Us</h2>\n  <p>We are committed to providing world-class education to students in Sierra Leone and beyond.</p>\n</section>\n\n<section id="programs" class="section alt">\n  <h2>Our Programs</h2>\n  <div class="cards">\n    <div class="prog-card"><div class="prog-icon">🎓</div><h3>Undergraduate</h3><p>4-year degree programs across all faculties.</p></div>\n    <div class="prog-card"><div class="prog-icon">📚</div><h3>Postgraduate</h3><p>Masters and PhD programs for advanced study.</p></div>\n    <div class="prog-card"><div class="prog-icon">🔬</div><h3>Research</h3><p>Cutting-edge research in science and technology.</p></div>\n  </div>\n</section>\n\n<section id="contact" class="section">\n  <h2>Contact Us</h2>\n  <div class="contact-grid">\n    <div>📍 Freetown, Sierra Leone</div>\n    <div>📞 +232 XX XXX XXXX</div>\n    <div>📧 info@college.edu.sl</div>\n    <div>🌐 www.college.edu.sl</div>\n  </div>\n</section>\n\n<footer>\n  <p>© ${new Date().getFullYear()} ${esc(name)}. All rights reserved.</p>\n</footer>`
+}
+
+function getDefaultCss(){
+  return `* { margin: 0; padding: 0; box-sizing: border-box; }\nbody { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #1E293B; }\nheader { background: #0F172A; padding: 16px 24px; position: sticky; top: 0; z-index: 100; }\n.header-inner { display: flex; align-items: center; justify-content: space-between; max-width: 1000px; margin: 0 auto; }\n.logo { color: #F59E0B; font-size: 20px; font-weight: 800; }\nnav a { color: #94A3B8; text-decoration: none; margin-left: 20px; font-size: 14px; font-weight: 600; }\nnav a:hover { color: #fff; }\n.hero { background: linear-gradient(135deg, #0F172A, #1E3A5F); padding: 80px 24px; text-align: center; }\n.hero h1 { font-size: 42px; font-weight: 900; color: #F8FAFC; line-height: 1.2; margin-bottom: 16px; }\n.hero h1 span { color: #F59E0B; }\n.hero p { font-size: 18px; color: #94A3B8; margin-bottom: 28px; }\n.cta-btn { display: inline-block; padding: 14px 32px; background: #F59E0B; color: #0F172A; text-decoration: none; border-radius: 12px; font-weight: 800; }\n.section { padding: 64px 24px; max-width: 1000px; margin: 0 auto; }\n.section.alt { background: #F8FAFC; max-width: 100%; padding: 64px 24px; }\n.section.alt .cards { max-width: 1000px; margin: 0 auto; }\n.section h2 { font-size: 28px; font-weight: 800; color: #0F172A; margin-bottom: 20px; }\n.section p { font-size: 16px; color: #475569; line-height: 1.7; }\n.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; margin-top: 24px; }\n.prog-card { background: #fff; border-radius: 16px; padding: 28px; border: 1px solid #E2E8F0; text-align: center; }\n.prog-icon { font-size: 36px; margin-bottom: 14px; }\n.prog-card h3 { font-size: 17px; font-weight: 700; color: #0F172A; margin-bottom: 8px; }\n.prog-card p { font-size: 13px; color: #64748B; }\n.contact-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 20px; }\n.contact-grid div { background: #F1F5F9; padding: 16px 20px; border-radius: 12px; font-size: 15px; font-weight: 600; }\nfooter { background: #0F172A; padding: 24px; text-align: center; color: #475569; font-size: 13px; }`
+}
+
+function getDefaultJs(){
+  return `document.querySelectorAll('a[href^="#"]').forEach(a => {\n  a.addEventListener('click', e => {\n    e.preventDefault()\n    const target = document.querySelector(a.getAttribute('href'))\n    if (target) target.scrollIntoView({ behavior: 'smooth' })\n  })\n})`
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  COLLEGE INFO TABS MANAGER
+// ════════════════════════════════════════════════════════════════════════
+let citCurrentCollegeId = null
+let citEditingId = null
+
+const CIT_ICONS = [
+  'information-circle-outline','school-outline','document-text-outline','people-outline',
+  'calendar-outline','map-outline','call-outline','mail-outline','globe-outline',
+  'book-outline','library-outline','home-outline','business-outline','trophy-outline',
+  'star-outline','heart-outline','camera-outline','image-outline','list-outline',
+  'grid-outline','newspaper-outline','chatbubble-outline','megaphone-outline','alert-circle-outline',
+  'checkmark-circle-outline','time-outline','location-outline','person-outline','card-outline'
+]
+
+function initCitIconPicker(){
+  const picker = document.getElementById('citIconPicker')
+  picker.innerHTML = CIT_ICONS.map(ic =>
+    `<button class="icon-pill" onclick="selectCitIcon('${ic}')" title="${ic}">${ic.replace(/-outline$/,'').replace(/-/g,' ')}</button>`
+  ).join('')
+}
+
+function selectCitIcon(icon){
+  document.getElementById('citIconInput').value = icon
+  document.querySelectorAll('#citIconPicker .icon-pill').forEach(p => p.classList.toggle('selected', p.title===icon))
+}
+
+function citIconPreview(){
+  const v = document.getElementById('citIconInput').value.trim()
+  document.querySelectorAll('#citIconPicker .icon-pill').forEach(p => p.classList.toggle('selected', p.title===v))
+}
+
+async function loadCitColleges(){
+  const list = document.getElementById('citTabsList')
+  list.innerHTML = `<div class="cit-no-college"><div class="cit-no-college-icon">🏛</div><h3>Select a college above</h3><p style="font-size:13px">Choose a college from the dropdown to view and manage its info tabs.</p></div>`
+}
+
+async function loadCitTabs(){
+  citCurrentCollegeId = document.getElementById('citCollegeSelect').value
+  const list = document.getElementById('citTabsList')
+  if(!citCurrentCollegeId){ list.innerHTML = `<div class="cit-no-college"><div class="cit-no-college-icon">🏛</div><h3>Select a college above</h3></div>`; return }
+  list.innerHTML = '<p style="color:#94A3B8;padding:20px">Loading tabs...</p>'
+  const { data: tabs, error } = await sb.from('college_info_tabs').select('*,college_pages(id,name)').eq('college_id', citCurrentCollegeId).order('order', { ascending: true })
+  if(error){ list.innerHTML = `<p style="color:#EF4444;padding:20px">Error: ${esc(error.message)}</p>`; return }
+  if(!tabs || !tabs.length){ list.innerHTML = `<div class="cit-empty"><div class="cit-empty-icon">📑</div><p style="font-size:14px;color:#64748B">No tabs yet for this college.<br>Click <strong>+ Add Tab</strong> to create the first one.</p></div>`; return }
+  list.innerHTML = tabs.map(tab => {
+    const linkedPage = tab.college_pages
+    const pageBadge = linkedPage ? `<span class="cit-tab-badge linked">🔗 ${esc(linkedPage.name)}</span>` : `<span style="font-size:11px;color:#D97706;background:#FEF3C7;padding:2px 8px;border-radius:20px;font-weight:700;margin-right:6px">⚠ No page linked</span>`
+    return `<div class="cit-tab-row">
+      <div class="cit-tab-drag">⠿</div>
+      <div class="cit-tab-icon-box">${getIconEmoji(tab.icon||'')}</div>
+      <div class="cit-tab-info">
+        <div class="cit-tab-label">${esc(tab.label)}</div>
+        <div class="cit-tab-meta">
+          <span class="cit-tab-badge ${tab.is_active?'active':'inactive'}">${tab.is_active?'● Active':'○ Hidden'}</span>
+          ${pageBadge}
+          Order ${tab.order}
+        </div>
+      </div>
+      <div class="cit-tab-actions">
+        <button class="btn-sm btn-edit" onclick="openCitModal('${tab.id}')">✏️ Edit</button>
+        <button class="btn-sm btn-reject" onclick="quickDeleteCitTab('${tab.id}')">🗑</button>
+      </div>
+    </div>`
+  }).join('')
+}
+
+function getIconEmoji(icon){
+  const map = { 'information-circle-outline':'ℹ️','school-outline':'🏫','document-text-outline':'📄','people-outline':'👥','calendar-outline':'📅','map-outline':'🗺️','call-outline':'📞','mail-outline':'✉️','globe-outline':'🌐','book-outline':'📚','library-outline':'📖','home-outline':'🏠','business-outline':'🏢','trophy-outline':'🏆','star-outline':'⭐','heart-outline':'❤️','camera-outline':'📷','image-outline':'🖼️','list-outline':'📋','grid-outline':'⚏','newspaper-outline':'📰','chatbubble-outline':'💬','megaphone-outline':'📣','alert-circle-outline':'⚠️','checkmark-circle-outline':'✅','time-outline':'⏰','location-outline':'📍','person-outline':'👤','card-outline':'💳' }
+  return map[icon] || '📄'
+}
+
+async function openCitModal(tabId){
+  if(!citCurrentCollegeId && !tabId){ toast('Select a college first','error'); return }
+  citEditingId = tabId
+  document.getElementById('citModalTitle').textContent = tabId ? 'Edit Tab' : 'Add Tab'
+  document.getElementById('citDeleteBtn').style.display = tabId ? 'block' : 'none'
+  document.getElementById('citEditId').value = tabId || ''
+  await loadCitPageOptions()
+  if(tabId){
+    const { data } = await sb.from('college_info_tabs').select('*').eq('id', tabId).single()
+    if(!data) return
+    document.getElementById('citLabelInput').value  = data.label || ''
+    document.getElementById('citIconInput').value   = data.icon || ''
+    document.getElementById('citOrderInput').value  = data.order || 0
+    document.getElementById('citActiveSelect').value = String(data.is_active !== false)
+    selectCitIcon(data.icon || '')
+    document.getElementById('citPageSelect').value = data.page_id || ''
+    updateCitPagePreview(data.page_id)
+  } else {
+    document.getElementById('citLabelInput').value  = ''
+    document.getElementById('citIconInput').value   = 'document-text-outline'
+    document.getElementById('citOrderInput').value  = '0'
+    document.getElementById('citActiveSelect').value = 'true'
+    selectCitIcon('document-text-outline')
+    document.getElementById('citPageSelect').value = ''
+    updateCitPagePreview(null)
+  }
+  document.getElementById('citModal').classList.remove('hidden')
+}
+
+async function loadCitPageOptions(){
+  const collegeId = citCurrentCollegeId || document.getElementById('citCollegeSelect').value
+  const sel = document.getElementById('citPageSelect')
+  sel.innerHTML = '<option value="">— No page linked —</option>'
+  if(!collegeId) return
+  const { data: pages } = await sb.from('college_pages').select('id,name').eq('college_id', collegeId).order('created_at')
+  if(pages) pages.forEach(p => sel.innerHTML += `<option value="${p.id}">${esc(p.name)}</option>`)
+}
+
+function onCitPageSelectChange(){ updateCitPagePreview(document.getElementById('citPageSelect').value) }
+
+async function updateCitPagePreview(pageId){
+  const preview = document.getElementById('citLinkedPagePreview')
+  if(!pageId){ preview.style.display='none'; return }
+  const sel = document.getElementById('citPageSelect')
+  const opt = sel.querySelector(`option[value="${pageId}"]`)
+  if(opt){ document.getElementById('citLinkedPageName').textContent = opt.textContent; document.getElementById('citLinkedPageCollege').textContent = 'Linked page — will render in app WebView'; preview.style.display='flex' }
+  else preview.style.display='none'
+}
+
+function closeCitModal(){ document.getElementById('citModal').classList.add('hidden'); citEditingId = null }
+
+async function saveCitTab(){
+  const label    = document.getElementById('citLabelInput').value.trim()
+  const icon     = document.getElementById('citIconInput').value.trim() || 'document-text-outline'
+  const order    = parseInt(document.getElementById('citOrderInput').value) || 0
+  const isActive = document.getElementById('citActiveSelect').value === 'true'
+  const pageId   = document.getElementById('citPageSelect').value || null
+  if(!label){ toast('Tab label is required','error'); return }
+  const collegeId = citCurrentCollegeId || document.getElementById('citCollegeSelect').value
+  if(!collegeId){ toast('No college selected','error'); return }
+  const payload = { college_id: collegeId, label, icon, order, is_active: isActive, page_id: pageId }
+  if(citEditingId){ const { error } = await sb.from('college_info_tabs').update(payload).eq('id', citEditingId); if(error){ toast('Error: '+error.message,'error'); return }; toast('Tab updated!') }
+  else { const { error } = await sb.from('college_info_tabs').insert(payload); if(error){ toast('Error: '+error.message,'error'); return }; toast('Tab created!') }
+  closeCitModal(); await loadCitTabs()
+}
+
+async function deleteCitTab(){
+  if(!citEditingId) return
+  if(!confirm('Delete this tab? This cannot be undone.')) return
+  const { error } = await sb.from('college_info_tabs').delete().eq('id', citEditingId)
+  if(error){ toast('Error: '+error.message,'error'); return }
+  toast('Tab deleted.'); closeCitModal(); await loadCitTabs()
+}
+
+async function quickDeleteCitTab(id){ if(!confirm('Delete this tab?')) return; await sb.from('college_info_tabs').delete().eq('id', id); toast('Tab deleted.'); await loadCitTabs() }
+
+// ════════════════════════════════════════════════════════════════════════
+//  SLIDESHOW MANAGER
+// ════════════════════════════════════════════════════════════════════════
+let slidesCurrentCollegeId = null
+let slideFileSelected = null
+
+async function loadSlidesColleges(){ /* already populated */ }
+
+async function loadSlidesList(){
+  slidesCurrentCollegeId = document.getElementById('slidesCollegeSelect').value
+  const uploadArea = document.getElementById('slidesUploadArea'), list = document.getElementById('slidesList')
+  if(!slidesCurrentCollegeId){ uploadArea.style.display='none'; list.innerHTML=''; return }
+  uploadArea.style.display='block'; list.innerHTML='<p style="color:#94A3B8;padding:10px">Loading slides...</p>'
+  const { data: slides } = await sb.from('college_slides').select('*').eq('college_id', slidesCurrentCollegeId).order('order', { ascending: true })
+  if(!slides||!slides.length){ list.innerHTML='<div class="empty-state"><div class="empty-icon">🖼</div>No slides uploaded yet for this college.</div>'; return }
+  list.innerHTML = `<div class="card" style="padding:16px">${slides.map(s=>`
+    <div class="slide-row">
+      ${s.image_url?`<img class="slide-thumb" src="${esc(s.image_url)}" onerror="this.style.display='none'" />`:`<div class="slide-thumb-ph">🖼</div>`}
+      <div class="slide-info"><div class="slide-title-txt">${esc(s.title||'(no title)')}</div><div class="slide-sub-txt">${esc(s.subtitle||'No subtitle')} · Order ${s.order} · ${s.is_active?'<span style="color:#059669">Active</span>':'<span style="color:#DC2626">Hidden</span>'}</div></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn-sm btn-edit" onclick="toggleSlideActive('${s.id}',${s.is_active})">${s.is_active?'Hide':'Show'}</button>
+        <button class="btn-sm btn-reject" onclick="deleteSlide('${s.id}')">Delete</button>
+      </div>
+    </div>`).join('')}</div>`
+}
+
+function previewSlideUpload(input){
+  slideFileSelected = input.files[0]; if(!slideFileSelected) return
+  const reader = new FileReader()
+  reader.onload = e => { document.getElementById('slidePreviewImg').src = e.target.result; document.getElementById('slidePreviewBox').style.display='block'; document.getElementById('slideUploadBtn').style.display='inline-block' }
+  reader.readAsDataURL(slideFileSelected)
+}
+
+async function uploadSlide(){
+  if(!slidesCurrentCollegeId){ toast('Select a college first','error'); return }
+  if(!slideFileSelected){ toast('Choose an image first','error'); return }
+  const title = document.getElementById('newSlideTitleInput').value.trim(), subtitle = document.getElementById('newSlideSubInput').value.trim()
+  toast('Uploading slide...','info')
+  const ext = slideFileSelected.name.split('.').pop(), path = `slides/${slidesCurrentCollegeId}/${Date.now()}.${ext}`
+  const { error: upErr } = await sb.storage.from('college-slides').upload(path, slideFileSelected, { upsert: false })
+  if(upErr){ toast('Upload failed: '+upErr.message,'error'); return }
+  const url = sb.storage.from('college-slides').getPublicUrl(path).data.publicUrl
+  const { data: existing } = await sb.from('college_slides').select('order').eq('college_id', slidesCurrentCollegeId).order('order', { ascending: false }).limit(1)
+  const newOrder = (existing?.[0]?.order ?? -1) + 1
+  const { error: dbErr } = await sb.from('college_slides').insert({ college_id: slidesCurrentCollegeId, image_url: url, title: title||null, subtitle: subtitle||null, order: newOrder, is_active: true })
+  if(dbErr){ toast('DB error: '+dbErr.message,'error'); return }
+  toast('Slide uploaded!')
+  document.getElementById('newSlideTitleInput').value=''; document.getElementById('newSlideSubInput').value=''; document.getElementById('slideFileInput').value=''; document.getElementById('slidePreviewBox').style.display='none'; document.getElementById('slideUploadBtn').style.display='none'; slideFileSelected = null
+  await loadSlidesList()
+}
+
+async function toggleSlideActive(id, current){ await sb.from('college_slides').update({ is_active: !current }).eq('id', id); toast(current?'Slide hidden.':'Slide shown!'); await loadSlidesList() }
+async function deleteSlide(id){ if(!confirm('Delete this slide?')) return; await sb.from('college_slides').delete().eq('id', id); toast('Slide deleted.'); await loadSlidesList() }
+
+// ════════════════════════════════════════════════════════════════════════
+//  COLLEGES MANAGEMENT
+// ════════════════════════════════════════════════════════════════════════
+async function addCollege(){
+  const name = document.getElementById('newCollegeName').value.trim(), short = document.getElementById('newCollegeShort').value.trim(), order = parseInt(document.getElementById('newCollegeOrder').value)||0
+  if(!name||!short){ toast('Please fill in college name and short name','error'); return }
+  const {error} = await sb.from('colleges').insert({name,short_name:short,display_order:order})
+  if(error){ toast('Error: '+error.message,'error'); return }
+  toast('College added!'); document.getElementById('newCollegeName').value=''; document.getElementById('newCollegeShort').value=''; document.getElementById('newCollegeOrder').value=''
+  await loadCollegesIntoSelects(); await loadCollegesList()
+}
+
+async function loadCollegesList(){
+  const {data:colleges} = await sb.from('colleges').select('*').order('display_order')
+  const list = document.getElementById('collegesList')
+  if(!colleges||!colleges.length){ list.innerHTML='<div class="empty-state"><div class="empty-icon">🏛</div>No colleges yet.</div>'; return }
+  const {data:classes} = await sb.from('classes').select('college_id')
+  const classCounts = {}; classes.forEach(c=>{ classCounts[c.college_id]=(classCounts[c.college_id]||0)+1 })
+  list.innerHTML = colleges.map(c=>{
+    const logoHtml = c.logo_url?`<img src="${esc(c.logo_url)}" class="college-logo" />`:`<div class="college-logo-placeholder">${esc(c.short_name||'?')}</div>`
+    return `<div class="college-row">${logoHtml}<div class="college-info"><div class="college-name">${esc(c.name)}</div><div class="college-meta">${esc(c.short_name)} · ${classCounts[c.id]||0} classes · Order: ${c.display_order||0}</div></div><div class="college-actions"><button class="btn-sm btn-edit" onclick="openEditCollege('${c.id}','${escAttr(c.name)}','${escAttr(c.short_name)}',${c.display_order||0})">Edit</button></div></div>`
+  }).join('')
+}
+
+function openEditCollege(id,name,short,order){ document.getElementById('editCollegeId').value=id; document.getElementById('editCollegeName').value=name; document.getElementById('editCollegeShort').value=short; document.getElementById('editCollegeOrder').value=order; document.getElementById('editCollegeModal').classList.remove('hidden') }
+async function saveCollege(){ const id=document.getElementById('editCollegeId').value,name=document.getElementById('editCollegeName').value.trim(),short=document.getElementById('editCollegeShort').value.trim(),order=parseInt(document.getElementById('editCollegeOrder').value)||0; if(!name||!short){ toast('Name and short name required','error'); return }; const {error}=await sb.from('colleges').update({name,short_name:short,display_order:order}).eq('id',id); if(error){ toast('Error: '+error.message,'error'); return }; toast('College updated!'); closeModal('editCollegeModal'); await loadCollegesIntoSelects(); await loadCollegesList() }
+async function deleteCollege(){ if(!confirm('Delete this college? All related data will also be deleted.')) return; const id=document.getElementById('editCollegeId').value; await sb.from('colleges').delete().eq('id',id); toast('College deleted.'); closeModal('editCollegeModal'); await loadCollegesIntoSelects(); await loadCollegesList() }
+
+// ════════════════════════════════════════════════════════════════════════
+//  UPLOAD MATERIAL
+// ════════════════════════════════════════════════════════════════════════
+function onTypeChange(){
+  const t=document.getElementById('typeSelect').value
+  document.getElementById('coverUploadSection').style.display = t==='book'?'block':'none'
+  document.getElementById('academicYearField').style.display = t==='book'?'none':'block'
+  document.getElementById('lecturerUploadField').style.display = t==='slide'?'block':'none'
+  if(t==='slide') populateLecturerDrop()
+}
+
+async function populateLecturerDrop(){
+  const courseId=document.getElementById('courseSelect').value; const sel=document.getElementById('lecturerUploadSelect')
+  if(!courseId){ sel.innerHTML='<option value="">Select a course first</option>'; return }
+  const {data}=await sb.from('lecturers').select('*').eq('course_id',courseId).order('name')
+  sel.innerHTML='<option value="">Select lecturer (optional)...</option>'
+  if(data) data.forEach(l=>sel.innerHTML+=`<option value="${l.id}">${esc(l.name)}</option>`)
+}
+
+function previewCover(input){
+  const file=input.files[0]; if(!file) return
+  const reader=new FileReader()
+  reader.onload=e=>{ const p=document.getElementById('uploadCoverPreview'); p.style.cssText=`width:80px;height:110px;border-radius:8px;border:1px solid #E5E7EB;background:url(${e.target.result}) center/cover`; p.textContent='' }
+  reader.readAsDataURL(file)
+}
+
+function loadLib(src){ return new Promise((res,rej)=>{ if(document.querySelector(`script[src="${src}"]`)){res();return}; const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=rej;document.head.appendChild(s) }) }
+
+async function extractText(file){
+  const ext=file.name.split('.').pop().toLowerCase()
+  if(ext==='pdf'){
+    await loadLib('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js')
+    pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
+    const pdf=await pdfjsLib.getDocument({data:await file.arrayBuffer()}).promise; let txt=''; const max=Math.min(pdf.numPages,80)
+    for(let i=1;i<=max;i++){ const pg=await pdf.getPage(i); const tc=await pg.getTextContent(); txt+=`\n--- Page ${i} ---\n`+tc.items.map(x=>x.str).join(' ') }
+    return txt.trim().slice(0,60000)
+  }
+  if(ext==='docx'){ await loadLib('https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js'); const r=await mammoth.extractRawText({arrayBuffer:await file.arrayBuffer()}); return r.value.slice(0,60000) }
+  if(ext==='pptx'){
+    await loadLib('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js')
+    const zip=await JSZip.loadAsync(await file.arrayBuffer()); let txt=''
+    const slides=Object.keys(zip.files).filter(n=>n.match(/ppt\/slides\/slide\d+\.xml$/)).sort()
+    for(let i=0;i<slides.length;i++){ const content=await zip.files[slides[i]].async('string'); const text=content.replace(/<a:t>/g,' ').replace(/<[^>]+>/g,'').replace(/\s+/g,' ').trim(); txt+=`\n--- Slide ${i+1} ---\n${text}` }
+    return txt.trim().slice(0,60000)
+  }
+  return null
+}
+
+async function uploadCoverToStorage(file,matId){ const ext=file.name.split('.').pop(); const path=`covers/${matId}.${ext}`; const {error}=await sb.storage.from('college-logos').upload(path,file,{upsert:true}); if(error) throw error; return sb.storage.from('college-logos').getPublicUrl(path).data.publicUrl }
+
+async function handleUpload(){
+  const courseId=document.getElementById('courseSelect').value, title=document.getElementById('titleInput').value.trim(), type=document.getElementById('typeSelect').value, year=document.getElementById('academicYearInput').value.trim(), premium=document.getElementById('premiumCheck').checked, file=document.getElementById('fileInput').files[0]
+  if(!courseId||!title||!file){ showMsg('Please fill all fields and select a file',true); return }
+  showMsg('Uploading file...')
+  const ext=file.name.split('.').pop().toLowerCase(), path=`${courseId}/${Date.now()}.${ext}`
+  const {error:upErr}=await sb.storage.from('materials').upload(path,file)
+  if(upErr){ showMsg('Upload failed: '+upErr.message,true); return }
+  const fileUrl=sb.storage.from('materials').getPublicUrl(path).data.publicUrl
+  let contentText=null; try{ contentText=await extractText(file) }catch(e){ console.log('Extraction failed',e) }
+  const lecId=type==='slide'?(document.getElementById('lecturerUploadSelect').value||null):null
+  const insert={course_id:courseId,uploaded_by:session.user.id,title,type,file_url:fileUrl,file_size:file.size,is_premium:premium,academic_year:(type!=='book'&&year)?year:null,status:'published',content_text:contentText}
+  if(lecId) insert.lecturer_id=lecId
+  const {data:matData,error:dbErr}=await sb.from('materials').insert(insert).select().single()
+  if(dbErr){ showMsg('DB error: '+dbErr.message,true); return }
+  const coverFile=document.getElementById('coverFileInput').files[0]
+  if(type==='book'&&coverFile&&matData){ try{ const cu=await uploadCoverToStorage(coverFile,matData.id); await sb.from('materials').update({cover_url:cu}).eq('id',matData.id) }catch(e){ console.log('Cover failed',e) } }
+  
+  // Auto-notify all users about new material
+  try {
+    await sb.rpc('notify_all_users', {
+      p_title:    `📄 New Material Available`,
+      p_body:     `"${title}" has just been uploaded. Tap to check it out!`,
+      p_type:     'material_upload',
+      p_sent_by:  session.user.id,
+      p_metadata: { source: 'material_upload', material_id: matData.id },
+    })
+  } catch(e) {
+    console.warn('Notification send failed:', e)
+  }
+
+  showMsg(contentText?'✅ Uploaded! AI text extracted.':'✅ Uploaded! (No text extracted)')
+  document.getElementById('titleInput').value=''; document.getElementById('academicYearInput').value=''; document.getElementById('fileInput').value=''; document.getElementById('coverFileInput').value=''
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  MATERIALS
+// ════════════════════════════════════════════════════════════════════════
+async function loadMaterialsFilters(){
+  const {data}=await sb.from('materials').select('academic_year').not('academic_year','is',null)
+  if(data){ const years=[...new Set(data.map(d=>d.academic_year))].sort((a,b)=>b.localeCompare(a)); const fy=document.getElementById('filterYear'); fy.innerHTML='<option value="">All Years</option>'; years.forEach(y=>fy.innerHTML+=`<option value="${esc(y)}">${esc(y)}</option>`) }
+  await loadMaterials()
+}
+
+async function loadMaterials(){
+  const fc=document.getElementById('filterCollege').value, fk=document.getElementById('filterClass').value, ft=document.getElementById('filterType').value, fy=document.getElementById('filterYear').value
+  const tbody=document.getElementById('materialsBody'); tbody.innerHTML='<tr><td colspan="9" style="text-align:center;padding:30px;color:#9CA3AF">Loading...</td></tr>'
+  let q=sb.from('materials').select('*,courses(id,name,code,class_id,classes(id,name,college_id,colleges(id,name)))').eq('status','published').order('created_at',{ascending:false})
+  if(ft) q=q.eq('type',ft); if(fy) q=q.eq('academic_year',fy)
+  const {data}=await q; let rows=data||[]
+  if(fk) rows=rows.filter(m=>m.courses?.class_id===fk)
+  else if(fc) rows=rows.filter(m=>m.courses?.classes?.college_id===fc)
+  document.getElementById('materialsCount').textContent=`Showing ${rows.length} material${rows.length!==1?'s':''}`
+  if(!rows.length){ tbody.innerHTML='<tr><td colspan="9" style="text-align:center;padding:40px;color:#9CA3AF">No materials found</td></tr>'; return }
+  tbody.innerHTML=rows.map(m=>{
+    const coverCell=m.type==='book'?(m.cover_url?`<img src="${esc(m.cover_url)}" style="width:30px;height:42px;border-radius:4px;object-fit:cover;border:1px solid #E5E7EB" />`:'<span style="color:#D1D5DB;font-size:11px">No cover</span>'):'<span style="color:#E5E7EB">—</span>'
+    const premBg=m.is_premium?'#FEF3C7':'#F3F4F6'; const premColor=m.is_premium?'#D97706':'#9CA3AF'
+    return `<tr>
+      <td class="material-title-cell" title="${escAttr(m.title)}">${esc(m.title)}</td>
+      <td><span class="badge-type badge-${m.type}">${fmtType(m.type)}</span></td>
+      <td style="color:#6B7280;font-size:12px">${esc(m.academic_year||'—')}</td>
+      <td style="color:#6B7280;font-size:12px">${esc(m.courses?.name||'—')}</td>
+      <td>${m.content_text?'<span class="ai-badge">✓ AI</span>':'<span class="no-ai-badge">None</span>'}</td>
+      <td>${coverCell}</td>
+      <td><button onclick="togglePremium('${m.id}',${m.is_premium})" style="padding:4px 12px;border-radius:20px;border:none;cursor:pointer;font-size:12px;font-weight:700;background:${premBg};color:${premColor}">${m.is_premium?'Premium':'Free'}</button></td>
+      <td style="color:#9CA3AF;font-size:12px">${fmtDate(m.created_at)}</td>
+      <td><div style="display:flex;gap:6px">
+        <button class="btn-sm btn-edit" data-id="${m.id}" data-title="${escAttr(m.title)}" data-type="${m.type}" data-year="${escAttr(m.academic_year||'')}" data-premium="${m.is_premium}" data-ai="${!!m.content_text}" data-cover="${escAttr(m.cover_url||'')}" onclick="openEditMat(this)">Edit</button>
+        <a href="${esc(m.file_url)}" target="_blank" class="btn-sm" style="background:#F3F4F6;color:#374151;text-decoration:none;padding:7px 12px">View</a>
+      </div></td>
+    </tr>`
+  }).join('')
+}
+
+function clearFilters(){ ['filterCollege','filterClass','filterType','filterYear'].forEach(id=>document.getElementById(id).value=''); loadMaterials() }
+async function togglePremium(id,current){ await sb.from('materials').update({is_premium:!current}).eq('id',id); toast(current?'Set to Free':'Set to Premium'); loadMaterials() }
+
+function openEditMat(btn){
+  editMatId=btn.dataset.id; document.getElementById('editMatId').value=editMatId; document.getElementById('editMatType').value=btn.dataset.type; document.getElementById('editMatTitle').value=btn.dataset.title; document.getElementById('editMatTypeSelect').value=btn.dataset.type; document.getElementById('editMatYear').value=btn.dataset.year; document.getElementById('editMatPremium').checked=btn.dataset.premium==='true'; document.getElementById('editAiStatus').innerHTML=btn.dataset.ai==='true'?'<span class="ai-badge">✓ AI text extracted</span>':'<span class="no-ai-badge">No AI text</span>'
+  const isBook=btn.dataset.type==='book'; document.getElementById('editCoverSection').style.display=isBook?'block':'none'
+  if(isBook){ const img=document.getElementById('editCoverImg'),ph=document.getElementById('editCoverPh'),db=document.getElementById('deleteCoverBtn'); if(btn.dataset.cover){ img.src=btn.dataset.cover; img.style.display='block'; ph.style.display='none'; db.style.display='block' } else{ img.style.display='none'; ph.style.display='flex'; db.style.display='none' } }
+  document.getElementById('editMaterialModal').classList.remove('hidden')
+}
+
+async function saveMaterial(){ const title=document.getElementById('editMatTitle').value.trim(),type=document.getElementById('editMatTypeSelect').value,year=document.getElementById('editMatYear').value.trim(),prem=document.getElementById('editMatPremium').checked; if(!title){ toast('Title cannot be empty','error'); return }; const {error}=await sb.from('materials').update({title,type,academic_year:year||null,is_premium:prem}).eq('id',editMatId); if(error){ toast('Error: '+error.message,'error'); return }; toast('Material updated!'); closeModal('editMaterialModal'); loadMaterials() }
+async function uploadEditCover(input){ const file=input.files[0]; if(!file) return; toast('Uploading cover...','info'); try{ const url=await uploadCoverToStorage(file,editMatId); await sb.from('materials').update({cover_url:url}).eq('id',editMatId); const img=document.getElementById('editCoverImg'); img.src=url+'?t='+Date.now(); img.style.display='block'; document.getElementById('editCoverPh').style.display='none'; document.getElementById('deleteCoverBtn').style.display='block'; toast('Cover updated!'); loadMaterials() }catch(e){ toast('Cover upload failed: '+e.message,'error') } }
+async function deleteCover(){ if(!confirm('Remove cover image?')) return; await sb.from('materials').update({cover_url:null}).eq('id',editMatId); document.getElementById('editCoverImg').style.display='none'; document.getElementById('editCoverPh').style.display='flex'; document.getElementById('deleteCoverBtn').style.display='none'; toast('Cover removed.'); loadMaterials() }
+async function reExtractText(){ const input=document.createElement('input'); input.type='file'; input.accept='.pdf,.docx,.pptx'; input.onchange=async()=>{ const file=input.files[0]; if(!file) return; try{ const txt=await extractText(file); if(!txt){ toast('Could not extract text','error'); return }; await sb.from('materials').update({content_text:txt}).eq('id',editMatId); toast('AI text updated!'); document.getElementById('editAiStatus').innerHTML='<span class="ai-badge">✓ AI text extracted</span>'; loadMaterials() }catch(e){ toast('Extraction failed: '+e.message,'error') } }; input.click() }
+async function deleteMaterial(){ if(!confirm('Delete this material?')) return; await sb.from('materials').delete().eq('id',editMatId); toast('Material deleted.'); closeModal('editMaterialModal'); loadMaterials() }
+
+// ════════════════════════════════════════════════════════════════════════
+//  USERS
+// ════════════════════════════════════════════════════════════════════════
+async function loadUsers(){
+  const {data:users}=await sb.from('profiles').select('*,colleges(name)').order('created_at',{ascending:false})
+  const {data:subs}=await sb.from('subscriptions').select('user_id').eq('status','active')
+  const premIds=new Set((subs||[]).map(s=>s.user_id))
+  allUsersCache=(users||[]).map(u=>({...u,_isPremium:premIds.has(u.id),_isVerified:!!u.is_verified||premIds.has(u.id)}))
+  document.getElementById('statTotal').textContent=allUsersCache.length; document.getElementById('statStudents').textContent=allUsersCache.filter(u=>u.role==='student').length; document.getElementById('statVerified').textContent=allUsersCache.filter(u=>u._isVerified).length; document.getElementById('statPremium').textContent=allUsersCache.filter(u=>u._isPremium).length
+  filterUsers()
+}
+
+function filterUsers(){
+  const search=(document.getElementById('userSearch')?.value||'').toLowerCase(), roleF=document.getElementById('userRoleFilter')?.value||'', verF=document.getElementById('userVerifiedFilter')?.value||''
+  let filtered=allUsersCache.filter(u=>{ const name=(u.full_name||'').toLowerCase(), college=(u.colleges?.name||'').toLowerCase(); if(search&&!name.includes(search)&&!college.includes(search)) return false; if(roleF&&u.role!==roleF) return false; if(verF==='verified'&&!u._isVerified) return false; if(verF==='unverified'&&u._isVerified) return false; return true })
+  document.getElementById('usersCount').textContent=`Showing ${filtered.length} of ${allUsersCache.length} users`
+  const COLORS={admin:{fg:'#1A56DB',bg:'#DBEAFE',border:'#93C5FD'},contributor:{fg:'#059669',bg:'#D1FAE5',border:'#6EE7B7'},lecturer:{fg:'#7C3AED',bg:'#EDE9FE',border:'#C4B5FD'},student:{fg:'#64748B',bg:'#F1F5F9',border:'#CBD5E1'}}
+  const EMOJI={admin:'🛡️',contributor:'✏️',lecturer:'🧑‍🏫',student:'🧑‍🎓'}
+  const list=document.getElementById('usersList')
+  if(!filtered.length){ list.innerHTML='<div class="empty-state"><div class="empty-icon">👥</div>No users found</div>'; return }
+  list.innerHTML=filtered.map(u=>{
+    const c=COLORS[u.role]||COLORS.student, initials=(u.full_name||'U').split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2)
+    const avatarHtml=u.avatar_url?`<img src="${esc(u.avatar_url)}" style="width:46px;height:46px;border-radius:50%;object-fit:cover;border:2px solid ${c.border};flex-shrink:0" />`:`<div class="user-avatar" style="background:${c.bg};color:${c.fg};border-color:${c.border}">${initials}</div>`
+    return `<div class="user-card">${avatarHtml}<div class="user-info"><div class="user-name-row"><span class="user-name">${esc(u.full_name||'No name')}</span>${u._isVerified?`<span class="verified-chip">✓ Verified</span>`:''}${u._isPremium?`<span class="premium-chip">⭐ Premium</span>`:''}</div><div class="user-meta">${esc(u.colleges?.name||'No college')} · Joined ${fmtDate(u.created_at)}</div></div><span class="role-pill ${u.role}">${EMOJI[u.role]||''} ${u.role}</span><div class="icon-btn" onclick="openEditUser('${u.id}')">✏️</div></div>`
+  }).join('')
+}
+
+async function openEditUser(userId){
+  const u=allUsersCache.find(x=>x.id===userId); if(!u) return
+  uemRole=u.role||'student'; uemVerified=u._isVerified; uemPremium=u._isPremium
+  document.getElementById('uemUserId').value=userId
+  const COLORS={admin:'#1A56DB',contributor:'#059669',lecturer:'#7C3AED',student:'#64748B'}
+  const initials=(u.full_name||'U').split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2)
+  const avatarEl=document.getElementById('uemAvatar')
+  if(u.avatar_url){ avatarEl.style.cssText=`width:64px;height:64px;border-radius:50%;border:3px solid #E2E8F0;background:url(${u.avatar_url}) center/cover;margin:0 auto 8px`; avatarEl.textContent='' }
+  else{ avatarEl.style.cssText=`width:64px;height:64px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;margin:0 auto 8px;border:3px solid #E2E8F0;background:#EFF6FF;color:${COLORS[u.role]||'#64748B'}`; avatarEl.textContent=initials }
+  document.getElementById('uemName').textContent=u.full_name||'No name'; document.getElementById('uemCollege').textContent=u.colleges?.name||'No college'
+  document.querySelectorAll('.uem-role').forEach(el=>el.classList.toggle('selected',el.dataset.role===uemRole))
+  const vt=document.getElementById('uemVerifiedToggle'); vt.className='toggle '+(uemVerified?'on':'off'); vt.innerHTML='<div class="toggle-knob"></div>'
+  const pt=document.getElementById('uemPremiumToggle'); pt.className='toggle '+(uemPremium?'on':'off'); pt.innerHTML='<div class="toggle-knob"></div>'
+  document.getElementById('uemPremiumSub').textContent=uemPremium?'Active subscription':'No active subscription'
+  document.getElementById('editUserModal').style.display='flex'
+}
+
+function closeEditUser(){ document.getElementById('editUserModal').style.display='none' }
+function selectRole(el){ document.querySelectorAll('.uem-role').forEach(o=>o.classList.remove('selected')); el.classList.add('selected'); uemRole=el.dataset.role }
+function toggleUem(btn, field){
+  if(field==='premium'){ uemPremium=!uemPremium; if(uemPremium){ uemVerified=true; const vt=document.getElementById('uemVerifiedToggle'); vt.className='toggle on'; vt.innerHTML='<div class="toggle-knob"></div>' }; btn.className='toggle '+(uemPremium?'on':'off'); btn.innerHTML='<div class="toggle-knob"></div>'; document.getElementById('uemPremiumSub').textContent=uemPremium?'Active subscription':'No active subscription' }
+  else{ uemVerified=!uemVerified; btn.className='toggle '+(uemVerified?'on':'off'); btn.innerHTML='<div class="toggle-knob"></div>' }
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  SAVE USER  — with plan-based expiry + revoke existing subs first
+// ════════════════════════════════════════════════════════════════════════
+async function saveUser(){
+  const userId = document.getElementById('uemUserId').value
+  if (!userId) return
+
+  const btn = document.querySelector('.uem-save')
+  btn.textContent = 'Saving...'; btn.disabled = true
+
+  try {
+    // 1. Update role + verified flag on profile
+    const { error: profileErr } = await sb
+      .from('profiles')
+      .update({ role: uemRole, is_verified: uemVerified })
+      .eq('id', userId)
+    if (profileErr) throw new Error('Profile update failed: ' + profileErr.message)
+
+    // 2. Grant or revoke premium
+    if (uemPremium) {
+      // Revoke any existing active/pending subs first (prevents duplicate active rows)
+      await sb.from('subscriptions').update({ status: 'revoked' })
+        .eq('user_id', userId).in('status', ['active', 'pending'])
+
+      // Insert fresh admin-granted subscription (10 year expiry)
+      const expiresAt = new Date(); expiresAt.setFullYear(expiresAt.getFullYear() + 10)
+      const { error: subErr } = await sb.from('subscriptions').insert({
+        user_id:        userId,
+        plan:           'yearly',
+        amount:         0,
+        status:         'active',
+        payment_method: 'admin_grant',
+        phone:          'admin',
+        confirmed_by:   session.user.id,
+        confirmed_at:   new Date().toISOString(),
+        expires_at:     expiresAt.toISOString(),
+        created_at:     new Date().toISOString(),
+      })
+      if (subErr) throw new Error('Subscription grant failed: ' + subErr.message)
+
+      // Premium always gets verified badge
+      await sb.from('profiles').update({ is_verified: true }).eq('id', userId)
+
+    } else {
+      // Revoke all active/pending subs
+      const { error: revokeErr } = await sb
+        .from('subscriptions').update({ status: 'revoked' })
+        .eq('user_id', userId).in('status', ['active', 'pending'])
+      if (revokeErr) throw new Error('Revoke failed: ' + revokeErr.message)
+    }
+
+    toast('User updated successfully!')
+    closeEditUser()
+    await loadUsers()
+
+  } catch (e) {
+    toast('Error: ' + e.message, 'error')
+    console.error('saveUser error:', e)
+  } finally {
+    btn.textContent = 'Save Changes'; btn.disabled = false
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  REQUESTS
+// ════════════════════════════════════════════════════════════════════════
+async function loadRequests(){
+  const {data}=await sb.from('contributor_requests').select('*,profiles(full_name)').eq('status','pending')
+  const list=document.getElementById('requestsList')
+  if(!data||!data.length){ list.innerHTML='<div class="empty-state"><div class="empty-icon">📋</div>No pending requests</div>'; return }
+  list.innerHTML=data.map(r=>`<div class="request-card"><div><p style="font-weight:700;color:#111827;margin-bottom:4px">${esc(r.profiles?.full_name||'Unknown')}</p><p style="font-size:13px;color:#6B7280">${esc(r.reason||'No reason provided')}</p></div><div style="display:flex;gap:8px"><button class="btn-sm btn-approve" onclick="approveRequest('${r.id}','${r.user_id}')">Approve</button><button class="btn-sm btn-reject" onclick="rejectRequest('${r.id}')">Reject</button></div></div>`).join('')
+}
+
+async function approveRequest(rid,uid){ await sb.from('profiles').update({role:'contributor'}).eq('id',uid); await sb.from('contributor_requests').update({status:'approved',reviewed_by:session.user.id}).eq('id',rid); toast('Approved!'); loadRequests() }
+async function rejectRequest(rid){ await sb.from('contributor_requests').update({status:'rejected',reviewed_by:session.user.id}).eq('id',rid); toast('Rejected.'); loadRequests() }
+
+// ════════════════════════════════════════════════════════════════════════
+//  PAYMENTS  — updated with fmtPayMethod + Monime type column + API fallback
+// ════════════════════════════════════════════════════════════════════════
+let payCurrentTab = 'pending'
+
+function switchPayTab(tab, btn){
+  payCurrentTab = tab
+  document.querySelectorAll('.pay-tab').forEach(t => t.classList.remove('active'))
+  btn.classList.add('active')
+  document.getElementById('payTabPending').style.display = tab === 'pending' ? 'block' : 'none'
+  document.getElementById('payTabAll').style.display     = tab === 'all'     ? 'block' : 'none'
+}
+
+async function loadPayments(){
+  const { data: all } = await sb
+    .from('subscriptions')
+    .select('*,profiles(full_name)')
+    .order('created_at', { ascending: false })
+
+  const rows    = all || []
+  const pending = rows.filter(r => r.status === 'pending')
+  const active  = rows.filter(r => r.status === 'active').length
+  const revenue = rows
+    .filter(r => ['active','expired'].includes(r.status))
+    .reduce((s, r) => s + (r.amount || 0), 0)
+
+  document.getElementById('payStatPending').textContent  = pending.length
+  document.getElementById('payStatActive').textContent   = active
+  document.getElementById('payStatRevenue').textContent  = `SLE ${revenue.toLocaleString()}`
+  document.getElementById('pendingCountBadge').textContent = pending.length
+
+  // ── Pending table ──────────────────────────────────────────────────────────
+  const pt = document.getElementById('pendingTbody')
+  if (!pending.length) {
+    pt.innerHTML = `<tr><td colspan="8" class="pay-empty"><div class="pay-empty-icon">✅</div>No pending payments — you're all caught up</td></tr>`
+  } else {
+    pt.innerHTML = pending.map(r => `
+      <tr>
+        <td style="color:#94A3B8;font-size:12px">${timeAgo(r.created_at)}</td>
+        <td style="color:#E2E8F0;font-weight:600">${esc(r.profiles?.full_name || 'Unknown user')}</td>
+        <td><strong style="color:#FBBF24">${esc(r.phone || '—')}</strong></td>
+        <td style="color:#CBD5E1">${cap(r.plan || '—').replace('_',' ')}</td>
+        <td style="color:#FCD34D;font-weight:700">SLE ${r.amount || 0}</td>
+        <td style="color:#94A3B8;font-size:12px">${fmtPayMethod(r.payment_method)}</td>
+        <td>
+          <span class="sub-badge ${r.monime_checkout_id ? 'active' : 'pending'}" style="font-size:10px">
+            ${r.monime_checkout_id ? '🔗 Monime' : '⏳ Manual'}
+          </span>
+        </td>
+        <td>
+          <button class="btn-approve-pay" onclick="approvePayment('${r.id}')">✓ Approve</button>
+          <button class="btn-reject-pay"  onclick="rejectPayment('${r.id}')"  style="margin-left:4px">✗ Reject</button>
+        </td>
+      </tr>`).join('')
+  }
+
+  // ── All subscriptions table ────────────────────────────────────────────────
+  const at = document.getElementById('allSubsTbody')
+  if (!rows.length) {
+    at.innerHTML = `<tr><td colspan="8" class="pay-empty"><div class="pay-empty-icon">📋</div>No subscriptions yet</td></tr>`
+  } else {
+    at.innerHTML = rows.map(r => `
+      <tr>
+        <td style="color:#94A3B8;font-size:12px">${fmtDate(r.created_at)}</td>
+        <td style="color:#E2E8F0">${esc(r.profiles?.full_name || '—')}</td>
+        <td><strong style="color:#E2E8F0">${esc(r.phone || '—')}</strong></td>
+        <td style="color:#CBD5E1">${cap((r.plan || '—').replace('_',' '))}</td>
+        <td style="color:#E2E8F0;font-weight:700">SLE ${r.amount || 0}</td>
+        <td style="color:#94A3B8;font-size:12px">${fmtPayMethod(r.payment_method)}</td>
+        <td><span class="sub-badge ${r.status}">${r.status}</span></td>
+        <td style="color:#64748B;font-size:12px">${r.expires_at ? fmtDate(r.expires_at) : '—'}</td>
+      </tr>`).join('')
+  }
+}
+
+async function approvePayment(id) {
+  if (!confirm("Approve this payment?\n\nMake sure you've received the money before approving.")) return
+
+  try {
+    const res = await fetch(`${API_URL}/api/approve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subscription_id: id, secret: 'studentshare_admin_2024' }),
+    })
+    const data = await res.json()
+    if (!res.ok || !data.success) throw new Error(data.error || 'API failed')
+    toast('✅ Approved! User now has premium access.')
+    loadPayments()
+    loadUsers()
+  } catch (e) {
+    // Fallback: approve directly via Supabase
+    console.warn('API approve failed, using Supabase fallback:', e.message)
+    try {
+      const { data: sub } = await sb.from('subscriptions').select('plan,user_id').eq('id', id).single()
+      const days = { monthly:30, academic_year:270, yearly:365 }[sub?.plan] || 30
+      const expiresAt = new Date(); expiresAt.setDate(expiresAt.getDate() + days)
+      const { error } = await sb.from('subscriptions').update({
+        status: 'active', confirmed_by: session.user.id,
+        confirmed_at: new Date().toISOString(), expires_at: expiresAt.toISOString()
+      }).eq('id', id)
+      if (error) throw error
+      await sb.from('profiles').update({ is_verified: true }).eq('id', sub.user_id)
+      toast('✅ Approved via fallback!')
+      loadPayments(); loadUsers()
+    } catch (fe) {
+      toast('Approve failed: ' + fe.message, 'error')
+    }
+  }
+}
+
+async function rejectPayment(id) {
+  if (!confirm('Reject this payment?')) return
+  const { error } = await sb.from('subscriptions').update({ status: 'rejected' }).eq('id', id)
+  if (error) { toast('Reject failed: ' + error.message, 'error'); return }
+  toast('Payment rejected.'); loadPayments()
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  LOGOS
+// ════════════════════════════════════════════════════════════════════════
+async function loadCollegeLogos(){
+  const {data}=await sb.from('colleges').select('*').order('display_order')
+  const list=document.getElementById('logosList')
+  list.innerHTML=(data||[]).map(c=>{
+    const avatar=c.logo_url?`<img src="${esc(c.logo_url)}" class="college-logo" />`:`<div class="college-logo-placeholder">${esc(c.short_name||'?')}</div>`
+    return `<div class="college-row">${avatar}<div class="college-info"><div class="college-name">${esc(c.name)}</div><div class="college-meta">${c.logo_url?'Logo uploaded':'No logo yet'}</div></div><div><input type="file" id="logo-${c.id}" accept="image/*" style="display:none" onchange="uploadLogo('${c.id}',this)" /><button class="btn-sm btn-edit" onclick="document.getElementById('logo-${c.id}').click()">${c.logo_url?'Update Logo':'Upload Logo'}</button></div></div>`
+  }).join('')
+}
+
+async function uploadLogo(collegeId,input){ const file=input.files[0]; if(!file) return; const path=`logos/${collegeId}.${file.name.split('.').pop()}`; toast('Uploading logo...','info'); const {error}=await sb.storage.from('college-logos').upload(path,file,{upsert:true}); if(error){ toast('Upload failed: '+error.message,'error'); return }; const url=sb.storage.from('college-logos').getPublicUrl(path).data.publicUrl; await sb.from('colleges').update({logo_url:url}).eq('id',collegeId); toast('Logo uploaded!'); loadCollegeLogos() }
+
+// ════════════════════════════════════════════════════════════════════════
+//  CLASSES
+// ════════════════════════════════════════════════════════════════════════
+async function loadClassesTab(){
+  const {data}=await sb.from('colleges').select('*').order('display_order')
+  const sel=document.getElementById('classCollegeSelect'); sel.innerHTML='<option value="">Select college...</option>'; data.forEach(c=>sel.innerHTML+=`<option value="${c.id}">${esc(c.name)}</option>`)
+  sel.onchange=async function(){ if(sel.value) await loadClassesList(sel.value); else document.getElementById('classesList').innerHTML='' }
+  document.getElementById('addClassBtn').onclick=async function(){ const name=document.getElementById('newClassName').value.trim(); if(!sel.value||!name){ toast('Select a college and enter a name','error'); return }; await sb.from('classes').insert({college_id:sel.value,name,display_order:99}); toast('Class added!'); document.getElementById('newClassName').value=''; await loadClassesList(sel.value) }
+}
+
+async function loadClassesList(collegeId){ const {data}=await sb.from('classes').select('*').eq('college_id',collegeId).order('display_order'); const list=document.getElementById('classesList'); if(!data||!data.length){ list.innerHTML='<div class="empty-state"><div class="empty-icon">🎓</div>No classes yet</div>'; return }; list.innerHTML=data.map(c=>`<div class="request-card"><div style="display:flex;align-items:center;gap:12px"><div style="width:44px;height:44px;border-radius:50%;background:#EFF6FF;display:flex;align-items:center;justify-content:center;font-weight:800;color:#1A56DB;font-size:11px;border:1px solid #DBEAFE">${esc(c.name.slice(0,4))}</div><input id="cn-${c.id}" value="${escAttr(c.name)}" style="font-weight:700;font-size:14px;border:1.5px solid #E5E7EB;border-radius:7px;padding:7px 11px;width:200px;outline:none" /></div><div style="display:flex;gap:8px"><button class="btn-sm btn-approve" onclick="saveClassName('${c.id}','${collegeId}')">Save</button><button class="btn-sm btn-reject" onclick="deleteClass('${c.id}','${collegeId}')">Delete</button></div></div>`).join('') }
+
+async function saveClassName(id,cid){ const name=document.getElementById('cn-'+id).value.trim(); if(!name) return; await sb.from('classes').update({name}).eq('id',id); toast('Class updated!'); loadClassesList(cid) }
+async function deleteClass(id,cid){ if(!confirm('Delete this class?')) return; await sb.from('classes').delete().eq('id',id); toast('Class deleted.'); loadClassesList(cid) }
+
+// ════════════════════════════════════════════════════════════════════════
+//  COURSES
+// ════════════════════════════════════════════════════════════════════════
+async function loadCoursesTab(){ const {data}=await sb.from('colleges').select('*').order('display_order'); ;['courseCollegeSelect','filterCourseCollege'].forEach(id=>{ const el=document.getElementById(id); el.innerHTML=id.startsWith('filter')?'<option value="">All Colleges</option>':'<option value="">Select college...</option>'; data.forEach(c=>el.innerHTML+=`<option value="${c.id}">${esc(c.name)}</option>`) }); document.getElementById('addCourseBtn').onclick=addCourse; await loadCoursesList() }
+async function loadCourseClasses(){ const cid=document.getElementById('courseCollegeSelect').value; const sel=document.getElementById('courseClassSelect'); sel.innerHTML='<option value="">Select class...</option>'; if(!cid){sel.disabled=true;return}; const {data}=await sb.from('classes').select('*').eq('college_id',cid).order('display_order'); data.forEach(c=>sel.innerHTML+=`<option value="${c.id}">${esc(c.name)}</option>`); sel.disabled=false }
+async function loadFilterCourseClasses(){ const cid=document.getElementById('filterCourseCollege').value; const sel=document.getElementById('filterCourseClass'); sel.innerHTML='<option value="">All Classes</option>'; if(!cid){await loadCoursesList();return}; const {data}=await sb.from('classes').select('*').eq('college_id',cid).order('display_order'); data.forEach(c=>sel.innerHTML+=`<option value="${c.id}">${esc(c.name)}</option>`); await loadCoursesList() }
+async function loadCoursesList(){ const fc=document.getElementById('filterCourseCollege').value, fk=document.getElementById('filterCourseClass').value; const list=document.getElementById('coursesList'); list.innerHTML='<p style="color:#9CA3AF;padding:20px">Loading...</p>'; let q=sb.from('courses').select('*,classes(id,name,college_id,colleges(id,name))').order('name'); if(fk) q=q.eq('class_id',fk); const {data}=await q; let courses=data||[]; if(!fk&&fc) courses=courses.filter(c=>c.classes?.colleges?.id===fc); document.getElementById('coursesCount').textContent=`${courses.length} course${courses.length!==1?'s':''} found`; if(!courses.length){ list.innerHTML='<div class="empty-state"><div class="empty-icon">📖</div>No courses found</div>'; return }; list.innerHTML=courses.map(c=>`<div class="request-card" style="margin-bottom:10px"><div style="flex:1;display:flex;align-items:center;gap:10px;flex-wrap:wrap"><input id="cname-${c.id}" value="${escAttr(c.name)}" style="font-weight:700;font-size:14px;border:1.5px solid #E5E7EB;border-radius:7px;padding:7px 11px;width:200px;outline:none" /><input id="ccode-${c.id}" value="${escAttr(c.code||'')}" placeholder="Code" style="font-size:13px;border:1.5px solid #E5E7EB;border-radius:7px;padding:7px 11px;width:110px;outline:none" /><span style="font-size:12px;color:#9CA3AF;background:#F3F4F6;padding:3px 10px;border-radius:20px">${esc(c.classes?.name||'?')} — ${esc(c.classes?.colleges?.name||'?')}</span></div><div style="display:flex;gap:8px"><button class="btn-sm btn-approve" onclick="saveCourse('${c.id}')">Save</button><button class="btn-sm btn-reject" onclick="deleteCourse('${c.id}')">Delete</button></div></div>`).join('') }
+async function addCourse(){ const cid=document.getElementById('courseClassSelect').value,name=document.getElementById('newCourseName').value.trim(),code=document.getElementById('newCourseCode').value.trim(); if(!cid||!name||!code){toast('Fill in all course fields','error');return}; await sb.from('courses').insert({class_id:cid,name,code}); toast('Course added!'); document.getElementById('newCourseName').value=''; document.getElementById('newCourseCode').value=''; await loadCoursesList() }
+async function saveCourse(id){ const name=document.getElementById('cname-'+id).value.trim(),code=document.getElementById('ccode-'+id).value.trim(); if(!name||!code){toast('Name and code required','error');return}; await sb.from('courses').update({name,code}).eq('id',id); toast('Course updated!') }
+async function deleteCourse(id){ if(!confirm('Delete this course?')) return; await sb.from('courses').delete().eq('id',id); toast('Course deleted.'); loadCoursesList() }
+
+// ════════════════════════════════════════════════════════════════════════
+//  LECTURERS
+// ════════════════════════════════════════════════════════════════════════
+async function loadLecturersTab(){ const {data}=await sb.from('colleges').select('*').order('display_order'); ;['lecturerCollegeSelect','filterLecCollege'].forEach(id=>{ const el=document.getElementById(id); el.innerHTML=id.startsWith('filter')?'<option value="">All Colleges</option>':'<option value="">Select college...</option>'; data.forEach(c=>el.innerHTML+=`<option value="${c.id}">${esc(c.name)}</option>`) }); await loadLecturersList() }
+async function onLecCollegeChange(){ const cid=document.getElementById('lecturerCollegeSelect').value; const csel=document.getElementById('lecturerClassSelect'),cour=document.getElementById('lecturerCourseSelect'); csel.innerHTML='<option value="">Select class...</option>'; cour.innerHTML='<option value="">Select course...</option>'; cour.disabled=true; if(!cid){csel.disabled=true;return}; const {data}=await sb.from('classes').select('*').eq('college_id',cid).order('display_order'); data.forEach(c=>csel.innerHTML+=`<option value="${c.id}">${esc(c.name)}</option>`); csel.disabled=false }
+async function onLecClassChange(){ const kid=document.getElementById('lecturerClassSelect').value; const csel=document.getElementById('lecturerCourseSelect'); csel.innerHTML='<option value="">Select course...</option>'; if(!kid){csel.disabled=true;return}; const {data}=await sb.from('courses').select('*').eq('class_id',kid).order('name'); data.forEach(c=>csel.innerHTML+=`<option value="${c.id}">${esc(c.name)} (${esc(c.code)})</option>`); csel.disabled=false }
+async function onFilterLecCollegeChange(){ const cid=document.getElementById('filterLecCollege').value; const fsel=document.getElementById('filterLecCourse'); fsel.innerHTML='<option value="">All Courses</option>'; if(cid){ const {data:cls}=await sb.from('classes').select('id').eq('college_id',cid); if(cls&&cls.length){ const {data:crs}=await sb.from('courses').select('id,name,code').in('class_id',cls.map(x=>x.id)).order('name'); crs.forEach(c=>fsel.innerHTML+=`<option value="${c.id}">${esc(c.name)} (${esc(c.code)})</option>`) } }; await loadLecturersList() }
+async function loadLecturersList(){ const fc=document.getElementById('filterLecCollege').value, fk=document.getElementById('filterLecCourse').value; const list=document.getElementById('lecturersList'); list.innerHTML='<p style="color:#9CA3AF;padding:20px">Loading...</p>'; let q=sb.from('lecturers').select('*,courses(id,name,code,class_id,classes(college_id,colleges(name)))').order('name'); if(fk) q=q.eq('course_id',fk); const {data}=await q; let lecs=data||[]; if(!fk&&fc) lecs=lecs.filter(l=>l.courses?.classes?.college_id===fc); document.getElementById('lecturersCount').textContent=`${lecs.length} lecturer${lecs.length!==1?'s':''} found`; if(!lecs.length){ list.innerHTML='<div class="empty-state"><div class="empty-icon">🧑‍🏫</div>No lecturers found</div>'; return }; list.innerHTML=lecs.map(l=>{ const initials=l.name.split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2); const av=l.photo_url?`<img src="${esc(l.photo_url)}" class="lec-avatar" />`:`<div class="lec-avatar-ph">${initials}</div>`; return `<div class="lecturer-row">${av}<div class="lec-info"><div class="lec-name">${esc(l.name)}</div><div class="lec-course">${esc(l.courses?.name||'—')} — ${esc(l.courses?.classes?.colleges?.name||'—')}</div></div><div style="display:flex;gap:8px"><button class="btn-sm btn-edit" data-id="${l.id}" data-name="${escAttr(l.name)}" data-photo="${escAttr(l.photo_url||'')}" data-course="${escAttr(l.courses?.name||'')}" onclick="openEditLec(this)">Edit</button><button class="btn-sm btn-reject" onclick="deleteLecById('${l.id}')">Delete</button></div></div>` }).join('') }
+function previewNewLecAvatar(input){ const r=new FileReader(); r.onload=e=>{ const p=document.getElementById('newLecAvatarPreview'); p.style.cssText=`width:46px;height:46px;border-radius:50%;border:2px solid #8B5CF6;background:url(${e.target.result}) center/cover;font-size:0`; p.textContent='' }; r.readAsDataURL(input.files[0]) }
+async function uploadLecPhotoToStorage(file,lecId){ const path=`lecturers/${lecId}.${file.name.split('.').pop()}`; const {error}=await sb.storage.from('college-logos').upload(path,file,{upsert:true}); if(error) throw error; return sb.storage.from('college-logos').getPublicUrl(path).data.publicUrl }
+async function addLecturer(){ const courseId=document.getElementById('lecturerCourseSelect').value, name=document.getElementById('newLecturerName').value.trim(); if(!courseId||!name){ toast('Select a course and enter a name','error'); return }; toast('Adding...','info'); const {data,error}=await sb.from('lecturers').insert({course_id:courseId,name}).select().single(); if(error){ toast('Error: '+error.message,'error'); return }; const photoFile=document.getElementById('newLecAvatarInput').files[0]; if(photoFile&&data){ try{ const url=await uploadLecPhotoToStorage(photoFile,data.id); await sb.from('lecturers').update({photo_url:url}).eq('id',data.id) }catch(e){} }; toast('Lecturer added!'); document.getElementById('newLecturerName').value=''; document.getElementById('newLecAvatarInput').value=''; const p=document.getElementById('newLecAvatarPreview'); p.style.cssText=''; p.textContent='👤'; await loadLecturersList() }
+function openEditLec(btn){ editLecId=btn.dataset.id; document.getElementById('editLecId').value=editLecId; document.getElementById('editLecName').value=btn.dataset.name; document.getElementById('editLecCourseBadge').innerHTML=`<span style="background:#EDE9FE;color:#7C3AED;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600">${esc(btn.dataset.course||'—')}</span>`; const img=document.getElementById('editLecAvatarImg'),ph=document.getElementById('editLecAvatarPh'),db=document.getElementById('deleteLecAvatarBtn'); if(btn.dataset.photo){ img.src=btn.dataset.photo; img.style.display='block'; ph.style.display='none'; db.style.display='inline-block' } else{ ph.textContent=btn.dataset.name.split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2); ph.style.display='flex'; img.style.display='none'; db.style.display='none' }; document.getElementById('editLecturerModal').classList.remove('hidden') }
+async function saveLecturer(){ const name=document.getElementById('editLecName').value.trim(); if(!name){toast('Name required','error');return}; await sb.from('lecturers').update({name}).eq('id',editLecId); toast('Lecturer updated!'); closeModal('editLecturerModal'); loadLecturersList() }
+async function uploadLecAvatar(input){ toast('Uploading...','info'); try{ const url=await uploadLecPhotoToStorage(input.files[0],editLecId); await sb.from('lecturers').update({photo_url:url}).eq('id',editLecId); const img=document.getElementById('editLecAvatarImg'); img.src=url+'?t='+Date.now(); img.style.display='block'; document.getElementById('editLecAvatarPh').style.display='none'; document.getElementById('deleteLecAvatarBtn').style.display='inline-block'; toast('Photo updated!'); loadLecturersList() }catch(e){ toast('Failed: '+e.message,'error') } }
+async function deleteLecAvatar(){ if(!confirm('Remove photo?')) return; await sb.from('lecturers').update({photo_url:null}).eq('id',editLecId); const name=document.getElementById('editLecName').value; document.getElementById('editLecAvatarPh').textContent=name.split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2); document.getElementById('editLecAvatarPh').style.display='flex'; document.getElementById('editLecAvatarImg').style.display='none'; document.getElementById('deleteLecAvatarBtn').style.display='none'; toast('Photo removed.'); loadLecturersList() }
+async function deleteLecturer(){ if(!confirm('Delete this lecturer?')) return; await sb.from('lecturers').delete().eq('id',editLecId); toast('Lecturer deleted.'); closeModal('editLecturerModal'); loadLecturersList() }
+async function deleteLecById(id){ if(!confirm('Delete this lecturer?')) return; await sb.from('lecturers').delete().eq('id',id); toast('Lecturer deleted.'); loadLecturersList() }
+
+// ════════════════════════════════════════════════════════════════════════
+//  FEATURE FLAGS
+// ════════════════════════════════════════════════════════════════════════
+async function loadFeatureFlags(){
+  const {data,error}=await sb.from('feature_flags').select('*').order('key')
+  const list=document.getElementById('flagsList')
+  if(error||!data){ list.innerHTML=`<div class="empty-state" style="color:#EF4444">Error: ${error?.message||'Unknown'}</div>`; return }
+  const META={ai_chat:{icon:'🤖',label:'AI Chat',desc:'AI assistant for all materials'},ai_chat_unlimited:{icon:'♾️',label:'Unlimited AI Chat',desc:'Remove the 5 messages/day cap'},downloads:{icon:'⬇️',label:'Downloads',desc:'Download materials to device'},offline_access:{icon:'📶',label:'Offline Access',desc:'Access files without internet'},bookmarks:{icon:'🔖',label:'Bookmarks',desc:'Save and bookmark materials'},quiz_generation:{icon:'📝',label:'Quiz Generation',desc:'AI-generated quizzes from materials'}}
+  list.innerHTML=data.map(flag=>{ const m=META[flag.key]||{icon:'🔧',label:flag.label||flag.key,desc:flag.description||''}; const bg=flag.is_enabled?'#EFF6FF':'#F1F5F9'; return `<div class="flag-card${flag.is_enabled?'':' disabled'}"><div class="flag-icon" style="background:${bg}">${m.icon}</div><div class="flag-info"><div class="flag-label">${esc(m.label)}</div><div class="flag-desc">${esc(m.desc)}</div><div class="flag-tags"><span class="flag-tag ${flag.is_premium_only?'premium':'free'}">${flag.is_premium_only?'⭐ Premium only':'✓ Free for all'}</span>${!flag.is_enabled?'<span class="flag-tag off">✕ Disabled</span>':''}</div></div><div class="flag-controls"><button class="flag-prem-btn ${flag.is_premium_only?'is-premium':'is-free'}" onclick="toggleFlagPremium('${flag.key}',${flag.is_premium_only})">${flag.is_premium_only?'⭐ Premium':'✓ Free'}</button><button class="toggle ${flag.is_enabled?'on':'off'}" onclick="toggleFlagEnabled('${flag.key}',${flag.is_enabled})"><div class="toggle-knob"></div></button></div></div>` }).join('')
+}
+
+async function toggleFlagEnabled(key,cur){ await sb.from('feature_flags').update({is_enabled:!cur}).eq('key',key); toast(`"${key}" ${cur?'disabled':'enabled'}`); loadFeatureFlags() }
+async function toggleFlagPremium(key,cur){ await sb.from('feature_flags').update({is_premium_only:!cur}).eq('key',key); toast(`"${key}" is now ${cur?'free for all':'premium only'}`); loadFeatureFlags() }
+
+</script>
+</body>
+</html>
