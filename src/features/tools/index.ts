@@ -1,0 +1,5 @@
+export { default as DeadlinesScreen } from './screens/DeadlinesScreen'
+export { default as GradeCalculatorScreen } from './screens/GradeCalculatorScreen'
+export { default as TutorialScreen } from './screens/TutorialScreen'
+export { default as QuizFlashcardsScreen } from './screens/QuizFlashcardsScreen'
+export { default as StudyPlannerScreen } from './screens/StudyPlannerScreen'

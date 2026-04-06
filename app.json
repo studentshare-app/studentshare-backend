@@ -7,7 +7,6 @@
     "icon": "./assets/images/icon.png",
     "scheme": "studentshare",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true
     },
@@ -16,7 +15,6 @@
         "foregroundImage": "./assets/images/icon.png",
         "backgroundColor": "#0F172A"
       },
-      "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "package": "com.koyaapps.StudentShare",
       "googleServicesFile": "./google-services.json"
@@ -50,16 +48,23 @@
         }
       ],
       "expo-web-browser",
-      "expo-audio"
+      "expo-audio",
+      "expo-asset",
+      "expo-secure-store",
+      "expo-sqlite"
     ],
     "experiments": {
       "typedRoutes": true,
-      "reactCompiler": true
+      "reactCompiler": false
     },
     "extra": {
       "router": {},
       "eas": {
         "projectId": "3ca4e0b4-196e-460d-b14f-8c95827d28cb"
+      },
+      "expoPublic": {
+        "supabaseUrl": "${EXPO_PUBLIC_SUPABASE_URL}",
+        "supabaseAnonKey": "${EXPO_PUBLIC_SUPABASE_ANON_KEY}"
       }
     },
     "owner": "studentshare",

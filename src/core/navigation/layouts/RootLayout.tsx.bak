@@ -1,0 +1,250 @@
+/**
+ * Root Layout – Auth + Sync + Offline + Realtime Ready
+ */
+
+import AsyncStorage from '@react-native-async-storage/async-storage'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { Slot, useRouter } from 'expo-router'
+import * as WebBrowser from 'expo-web-browser'
+import { useEffect, useRef, useState } from 'react'
+import { AppState, LogBox, View } from 'react-native'
+import { SafeAreaProvider } from 'react-native-safe-area-context'
+import { PremiumProvider } from '@/core/entitlements/PremiumProvider'
+import { supabase } from '@/core/api/supabase'
+import { DatabaseProvider } from '@/contexts/DatabaseContext'
+
+import NetInfo from '@react-native-community/netinfo'
+import { triggerSync } from '@/core/sync'
+import { processMaterialDownloads } from '@/core/sync/fileSyncService'
+import { startRealtime, stopRealtime } from '@/core/sync/realtimeService'
+
+WebBrowser.maybeCompleteAuthSession()
+LogBox.ignoreLogs(['setLayoutAnimationEnabledExperimental'])
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 1,
+      refetchOnWindowFocus: false,
+    },
+  },
+})
+
+type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated'
+
+const SUPABASE_SESSION_KEY =
+  'sb-' +
+  (process.env.EXPO_PUBLIC_SUPABASE_URL ?? '')
+    .replace('https://', '')
+    .replace('.supabase.co', '') +
+  '-auth-token'
+
+async function hasStoredRefreshToken(): Promise<boolean> {
+  try {
+    const raw = await AsyncStorage.getItem(SUPABASE_SESSION_KEY)
+    if (!raw) return false
+    const parsed = JSON.parse(raw)
+    return !!parsed?.currentSession?.refresh_token
+  } catch {
+    return false
+  }
+}
+
+export default function RootLayout() {
+  const router = useRouter()
+  const navigationRef = useNavigationContainerRef()
+
+  const [status, setStatus] = useState<AuthStatus>('loading')
+  const [navReady, setNavReady] = useState(false)
+
+  const navigatedRef = useRef(false)
+  const wasAuthRef = useRef(false)
+  const signOutTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const syncingRef = useRef(false)
+
+  // ─────────────────────────────────
+  // NAV READY
+  // ─────────────────────────────────
+  useEffect(() => {
+    if (navigationRef.isReady()) {
+      setNavReady(true)
+      return
+    }
+
+    const timeout = setTimeout(() => setNavReady(true), 5000)
+
+    const unsubscribe = navigationRef.addListener('state', () => {
+      if (navigationRef.isReady()) {
+        setNavReady(true)
+        unsubscribe()
+      }
+    })
+
+    return () => {
+      clearTimeout(timeout)
+      unsubscribe()
+    }
+  }, [navigationRef])
+
+  // ─────────────────────────────────
+  // AUTH CHECK
+  // ─────────────────────────────────
+  useEffect(() => {
+    const doSessionCheck = async (): Promise<AuthStatus> => {
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession()
+
+        if (error) {
+          const msg = error.message?.toLowerCase() ?? ''
+          const isHardError =
+            msg.includes('invalid') ||
+            msg.includes('jwt') ||
+            msg.includes('refresh')
+
+          if (isHardError) {
+            await supabase.auth.signOut().catch(() => {})
+            return 'unauthenticated'
+          }
+        }
+
+        if (session) return 'authenticated'
+
+        const hasRefresh = await hasStoredRefreshToken()
+        return hasRefresh ? 'authenticated' : 'unauthenticated'
+
+      } catch {
+        const hasRefresh = await hasStoredRefreshToken()
+        return hasRefresh ? 'authenticated' : 'unauthenticated'
+      }
+    }
+
+    doSessionCheck().then(setStatus)
+
+    const { data: { subscription } } =
+      supabase.auth.onAuthStateChange(async (event) => {
+        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+          wasAuthRef.current = true
+          navigatedRef.current = false
+          setStatus('authenticated')
+        }
+
+        if (event === 'SIGNED_OUT') {
+          if (signOutTimer.current) clearTimeout(signOutTimer.current)
+
+          signOutTimer.current = setTimeout(async () => {
+            const { data: { session: current } } =
+              await supabase.auth.getSession()
+
+            if (!current) {
+              const hasRefresh = await hasStoredRefreshToken()
+              if (!hasRefresh) {
+                setStatus('unauthenticated')
+              }
+            }
+          }, 300)
+        }
+      })
+
+    const appStateSub = AppState.addEventListener('change', (state) => {
+      if (state === 'active' && status === 'authenticated') {
+        runSync()
+      }
+    })
+
+    return () => {
+      subscription.unsubscribe()
+      appStateSub.remove()
+      if (signOutTimer.current) clearTimeout(signOutTimer.current)
+    }
+  }, [status])
+
+  // ─────────────────────────────────
+  // SYNC ENGINE
+  // ─────────────────────────────────
+  const runSync = async () => {
+    if (syncingRef.current) return
+    syncingRef.current = true
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const userId = session?.user?.id
+
+      if (!userId) return
+
+      await triggerSync(userId)
+      await processMaterialDownloads()
+
+    } catch (err) {
+      console.warn('Sync failed:', err)
+    } finally {
+      syncingRef.current = false
+    }
+  }
+
+  // ─────────────────────────────────
+  // START SYNC + REALTIME
+  // ─────────────────────────────────
+  useEffect(() => {
+    if (status !== 'authenticated') return
+
+    let unsubscribeNetInfo: any
+
+    const init = async () => {
+      await runSync()
+
+      const { data: { session } } = await supabase.auth.getSession()
+      const userId = session?.user?.id
+
+      if (userId) {
+        startRealtime(userId)
+      }
+    }
+
+    init()
+
+    unsubscribeNetInfo = NetInfo.addEventListener(state => {
+      if (state.isConnected) {
+        runSync()
+      }
+    })
+
+    return () => {
+      unsubscribeNetInfo && unsubscribeNetInfo()
+      stopRealtime()
+    }
+  }, [status])
+
+  // ─────────────────────────────────
+  // NAVIGATION
+  // ─────────────────────────────────
+  useEffect(() => {
+    if (status === 'loading') return
+    if (!navReady) return
+    if (navigatedRef.current) return
+
+    navigatedRef.current = true
+
+    if (status === 'authenticated') {
+      router.replace('/(tabs)/index')
+    } else {
+      router.replace('/(auth)/login')
+    }
+  }, [status, navReady, router])
+
+  // ─────────────────────────────────
+  // UI
+  // ─────────────────────────────────
+  return (
+    <DatabaseProvider>
+      <QueryClientProvider client={queryClient}>
+        <SafeAreaProvider>
+          <PremiumProvider>
+            <View style={{ flex: 1 }}>
+              <Slot />
+            </View>
+          </PremiumProvider>
+        </SafeAreaProvider>
+      </QueryClientProvider>
+    </DatabaseProvider>
+  )
+}

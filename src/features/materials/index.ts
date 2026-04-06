@@ -1,0 +1,6 @@
+export { default as MaterialsScreen } from './screens/MaterialsScreen'
+export { default as StudyMaterialsScreen } from './screens/StudyMaterialsScreen'
+export { default as BooksScreen } from './screens/BooksScreen'
+export { default as ViewerScreen } from './screens/ViewerScreen'
+export { default as BookmarksScreen } from './screens/BookmarksScreen'
+export { default as NewMaterialsScreen } from './screens/NewMaterialsScreen'
