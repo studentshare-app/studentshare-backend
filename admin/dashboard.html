@@ -357,7 +357,13 @@
     .request-card{background:#fff;border-radius:12px;padding:18px 20px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 1px 4px rgba(0,0,0,.06)}
     .empty-state{text-align:center;padding:48px;color:#6B7280;font-size:14px}
     .empty-icon{font-size:36px;margin-bottom:12px}
-  </style>
+  .component-tab { min-height:100%; padding: 0 10px; }
+.component-card { background:#fff; border-radius:12px; padding:16px 20px; margin-bottom:10px; display:flex; gap:14px; align-items:center; border:1px solid #E5E7EB; box-shadow:0 1px 4px rgba(0,0,0,0.05); }
+.comp-img { width: 60px; height: 60px; border-radius: 8px; object-fit: cover; background: #F3F4F6; }
+.comp-info { flex: 1; }
+.comp-title { font-size: 15px; font-weight: 700; color: #111827; margin-bottom: 4px; }
+.comp-meta { font-size: 12px; color: #6B7280; margin-bottom: 2px; }
+</style>
 </head>
 <body>
 
@@ -398,8 +404,15 @@
     <div class="nav-section">Customise</div>
     <button class="nav-btn" id="navCollegePage">🌐 Web Builder</button>
     <button class="nav-btn" id="navCollegeInfoTabs">📑 College Info Tabs</button>
-    <button class="nav-btn" id="navSlides">🖼 Slideshow</button>
-    <button class="nav-btn" id="navFlags">🚩 Feature Flags</button>
+
+<button class="nav-btn" id="navSlides">🖼 Slideshow</button>
+<button class="nav-btn" id="navNotices">📢 Notices</button>
+<button class="nav-btn" id="navEvents">📅 Events</button>
+<button class="nav-btn" id="navClubs">🎭 Clubs</button>
+<button class="nav-btn" id="navSpotlights">✨ Spotlights</button>
+<button class="nav-btn" id="navArticles">📰 Articles</button>
+<button class="nav-btn" id="navFlags">🚩 Feature Flags</button>
+
     <button class="logout-btn" id="logoutBtn">⬅ Log Out</button>
   </div>
 
@@ -881,6 +894,44 @@
       <div id="slidesList"></div>
     </div>
 
+    
+    <!-- COMPONENTS MANAGER (Notices, Events, Clubs, Spotlights) -->
+    <div id="noticesTab" class="hidden component-tab">
+      <h1 class="page-title">📢 Notices Manager</h1>
+      <div class="cit-toolbar">
+        <select class="componentCollegeSelect" onchange="loadComponentData('notices')"><option value="">Select a college...</option></select>
+        <button class="cit-add-btn" onclick="openNoticeModal()">+ Add Notice</button>
+      </div>
+      <div id="noticesList"></div>
+    </div>
+
+    <div id="eventsTab" class="hidden component-tab">
+      <h1 class="page-title">📅 Events Manager</h1>
+      <div class="cit-toolbar">
+        <select class="componentCollegeSelect" onchange="loadComponentData('events')"><option value="">Select a college...</option></select>
+        <button class="cit-add-btn" onclick="openEventModal()">+ Add Event</button>
+      </div>
+      <div id="eventsList"></div>
+    </div>
+
+    <div id="clubsTab" class="hidden component-tab">
+      <h1 class="page-title">🎭 Clubs Manager</h1>
+      <div class="cit-toolbar">
+        <select class="componentCollegeSelect" onchange="loadComponentData('clubs')"><option value="">Select a college...</option></select>
+        <button class="cit-add-btn" onclick="openClubModal()">+ Add Club</button>
+      </div>
+      <div id="clubsList"></div>
+    </div>
+
+    <div id="spotlightsTab" class="hidden component-tab">
+      <h1 class="page-title">✨ Spotlights Manager</h1>
+      <div class="cit-toolbar">
+        <select class="componentCollegeSelect" onchange="loadComponentData('spotlights')"><option value="">Select a college...</option></select>
+        <button class="cit-add-btn" onclick="openSpotlightModal()">+ Add Spotlight</button>
+      </div>
+      <div id="spotlightsList"></div>
+    </div>
+
     <!-- FEATURE FLAGS -->
     <div id="flagsTab" class="hidden">
       <h1 class="page-title">🚩 Feature Flags</h1>
@@ -1213,15 +1264,15 @@ window.onload = async function(){
   })
 
   // ── Nav map ──────────────────────────────────────────────────────────
-  const navMap = [
+const navMap = [
     ['navUpload','upload'],['navMaterials','materials'],['navUsers','users'],
     ['navRequests','requests'],['navPayments','payments'],
     ['navNotifications','notifications'],
     ['navColleges','colleges'],['navLogos','logos'],['navClasses','classes'],
     ['navCourses','courses'],['navLecturers','lecturers'],
     ['navCollegePage','collegePage'],['navCollegeInfoTabs','collegeInfoTabs'],
-    ['navSlides','slides'],['navFlags','flags']
-  ]
+    ['navSlides','slides'],['navNotices','notices'],['navEvents','events'],['navClubs','clubs'],['navSpotlights','spotlights'],['navArticles','articles'],['navFlags','flags']
+  ];
   navMap.forEach(([btnId,tab])=>{
     document.getElementById(btnId).addEventListener('click', function(){ switchTab(tab, this) })
   })
@@ -1287,7 +1338,7 @@ async function updatePendingBadge(){
 const ALL_TABS = [
   'upload','materials','users','requests','payments','notifications',
   'colleges','logos','classes','courses','lecturers',
-  'collegePage','collegeInfoTabs','slides','flags'
+  'collegePage','collegeInfoTabs','slides','articles','flags','notices','events','clubs','spotlights'
 ]
 
 function switchTab(tab, btn){
@@ -1316,6 +1367,7 @@ function switchTab(tab, btn){
   if(tab==='collegePage')    { loadWbColleges(); refreshWbCmEditors() }
   if(tab==='collegeInfoTabs') loadCitColleges()
   if(tab==='slides')         loadSlidesColleges()
+  if(['notices','events','clubs','spotlights'].includes(tab)) loadInfoTab(tab)
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -2133,9 +2185,9 @@ function filterUsers(){
   if(!filtered.length){ list.innerHTML='<div class="empty-state"><div class="empty-icon">👥</div>No users found</div>'; return }
   list.innerHTML=filtered.map(u=>{
     const c=COLORS[u.role]||COLORS.student, initials=(u.full_name||'U').split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2)
-    const avatarHtml=u.avatar_url?`<img src="${esc(u.avatar_url)}" style="width:46px;height:46px;border-radius:50%;object-fit:cover;border:2px solid ${c.border};flex-shrink:0" />`:`<div class="user-avatar" style="background:${c.bg};color:${c.fg};border-color:${c.border}">${initials}</div>`
-    return `<div class="user-card">${avatarHtml}<div class="user-info"><div class="user-name-row"><span class="user-name">${esc(u.full_name||'No name')}</span>${u._isVerified?`<span class="verified-chip">✓ Verified</span>`:''}${u._isPremium?`<span class="premium-chip">⭐ Premium</span>`:''}</div><div class="user-meta">${esc(u.colleges?.name||'No college')} · Joined ${fmtDate(u.created_at)}</div></div><span class="role-pill ${u.role}">${EMOJI[u.role]||''} ${u.role}</span><div class="icon-btn" onclick="openEditUser('${u.id}')">✏️</div></div>`
-  }).join('')
+   const avatarHtml=u.avatar_url?`<img src="${esc(u.avatar_url)}" style="width:46px;height:46px;border-radius:50%;object-fit:cover;border:2px solid ${c.border};flex-shrink:0" />`:`<div class="user-avatar" style="background:${c.bg};color:${c.fg};border-color:${c.border}">${initials}</div>`
+    return `<div class="user-card">${avatarHtml}<div class="user-info"><div class="user-name-row"><span class="user-name">${esc(u.full_name||'Unknown')}</span>${u._isVerified?'<span class="verified-chip">✓ Verified</span>':''}${u._isPremium?'<span class="premium-chip">⭐ Premium</span>':''}</div><div class="user-meta">${esc(u.colleges?.name||'No college')} · ${esc(u.email||'')} · Joined ${fmtDate(u.created_at)}</div></div><span class="role-pill ${u.role}">${EMOJI[u.role]||''} ${u.role}</span><div style="display:flex;gap:6px"><div class="icon-btn" onclick="openEditUser('${u.id}')">✏️</div><div class="icon-btn" style="border-color:#FECACA;color:#DC2626" onclick="deleteUser('${u.id}','${escAttr(u.full_name||'this user')}')">🗑</div></div></div>`
+  }).join('') 
 }
 
 async function openEditUser(userId){
@@ -2165,6 +2217,22 @@ function toggleUem(btn, field){
 // ════════════════════════════════════════════════════════════════════════
 //  SAVE USER  — with plan-based expiry + revoke existing subs first
 // ════════════════════════════════════════════════════════════════════════
+async function deleteUser(userId, userName) {
+  if (!confirm(`Delete "${userName}" permanently?\n\nThis removes their account, profile, subscriptions and all activity. This CANNOT be undone.`)) return
+
+  try {
+    const { error } = await sb.rpc('admin_delete_user', { 
+      target_user_id: userId 
+    })
+    if (error) throw error
+    toast(`"${userName}" deleted successfully.`)
+    await loadUsers()
+  } catch(e) {
+    toast('Delete failed: ' + e.message, 'error')
+    console.error('deleteUser error:', e)
+  }
+}
+
 async function saveUser(){
   const userId = document.getElementById('uemUserId').value
   if (!userId) return

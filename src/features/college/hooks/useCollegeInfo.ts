@@ -148,7 +148,7 @@ export function useCollegeInfo() {
       queryKey: ['collegeTabs', collegeId],
       enabled: !!collegeId,
       staleTime: 5 * 60 * 1000,
-      queryFn: async () => {
+      queryFn: async (): Promise<CollegeTab[]> => {
         const KEY = `college_info_tabs_${collegeId}`
         const cached = await readCache<CollegeTab[]>(KEY)
         const net = await NetInfo.fetch()

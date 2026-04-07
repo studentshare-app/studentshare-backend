@@ -1,58 +1,41 @@
 /**
- * app/notes/[id].tsx
+ * NoteDetailScreen.tsx
  * Note Editor + Viewer
  *
  * - id = 'new'  → blank note, auto-save on exit
  * - id = <uuid> → load existing note, edit in place
  * - Formatting toolbar: bold · italic · heading · bullets
  * - Course linker, color picker, star toggle in header
- * - Auto-saves to Supabase on blur / back navigation
- * - Offline: queues writes to AsyncStorage, syncs on reconnect
+ * - Auto-saves via WatermelonDB actions on blur / back navigation
  */
 
 import { Ionicons } from '@expo/vector-icons'
-import AsyncStorage from '@react-native-async-storage/async-storage'
-import { useQueryClient } from '@tanstack/react-query'
+import database from '@/database'
+import { createNote, updateNote } from '@/database/actions'
+import { useCourses, useNoteById, usePendingSyncCount } from '@/hooks/useLocalQueries'
+import { OfflineBanner } from '@/components/OfflineBanner'
+import { useNetworkStatus } from '@/hooks/useNetworkStatus'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-    ActivityIndicator,
-    Alert,
-    Animated,
-    KeyboardAvoidingView,
-    Platform,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  Animated,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useProfileSync } from '@/hooks/useProfileSync'
-import { supabase } from '@/lib/supabase'
-// ─────────────────────────────────────────────
-// Note type (duplicated here to avoid same-folder
-// import issues with Expo Router's file-based routing)
-// ─────────────────────────────────────────────
-type Note = {
-  id: string
-  user_id: string
-  title: string
-  body: string
-  color: string
-  is_starred: boolean
-  source: 'manual' | 'ai'
-  course_id: string | null
-  course_name?: string | null
-  is_deleted: boolean
-  created_at: string
-  updated_at: string
-}
 
 // ─────────────────────────────────────────────
-// Design tokens (mirror index.tsx)
+// Design tokens
 // ─────────────────────────────────────────────
 const C = {
   void:      '#08090C',
@@ -81,9 +64,6 @@ const NOTE_COLORS = [
   '#FF7B7B', '#5B8DEF', '#44D4A0', '#A78BFA',
   '#F0C060', '#38BDF8', '#FB923C', '#E879F9',
 ]
-
-const NOTES_CACHE_KEY = 'studentshare_notes_cache'
-const NOTES_QUEUE_KEY = 'studentshare_notes_queue'
 
 // ─────────────────────────────────────────────
 // Markdown formatting helpers
@@ -114,61 +94,12 @@ function insertAtLineStart(
   const lineStart = text.lastIndexOf('\n', selStart - 1) + 1
   const before    = text.slice(0, lineStart)
   const rest      = text.slice(lineStart)
-  // Toggle: if line already starts with marker, remove it
   if (rest.startsWith(marker)) {
     const newText = before + rest.slice(marker.length)
     return { newText, newStart: selStart - marker.length, newEnd: selStart - marker.length }
   }
   const newText = before + marker + rest
   return { newText, newStart: selStart + marker.length, newEnd: selStart + marker.length }
-}
-
-// ─────────────────────────────────────────────
-// Save to Supabase (upsert)
-// ─────────────────────────────────────────────
-async function saveNote(note: Partial<Note> & { user_id: string }): Promise<Note | null> {
-  const payload = {
-    user_id:    note.user_id,
-    title:      note.title      || '',
-    body:       note.body       || '',
-    color:      note.color      || '#FF7B7B',
-    is_starred: note.is_starred ?? false,
-    source:     note.source     || 'manual',
-    course_id:  note.course_id  || null,
-    is_deleted: false,
-    updated_at: new Date().toISOString(),
-  }
-
-  if (note.id && note.id !== 'new') {
-    const { data, error } = await supabase
-      .from('notes')
-      .update(payload)
-      .eq('id', note.id)
-      .select('id, user_id, title, body, color, is_starred, source, course_id, is_deleted, created_at, updated_at')
-      .single()
-    if (error) throw error
-    return data as Note
-  } else {
-    const { data, error } = await supabase
-      .from('notes')
-      .insert(payload)
-      .select('id, user_id, title, body, color, is_starred, source, course_id, is_deleted, created_at, updated_at')
-      .single()
-    if (error) throw error
-    return data as Note
-  }
-}
-
-async function queueOfflineWrite(note: Partial<Note> & { user_id: string }) {
-  try {
-    const raw = await AsyncStorage.getItem(NOTES_QUEUE_KEY)
-    const queue: any[] = raw ? JSON.parse(raw) : []
-    const existing = queue.findIndex(q => q.note_id === note.id)
-    const entry = { operation: 'upsert', note_id: note.id || 'new', payload: note, queued_at: Date.now() }
-    if (existing >= 0) queue[existing] = entry
-    else queue.push(entry)
-    await AsyncStorage.setItem(NOTES_QUEUE_KEY, JSON.stringify(queue))
-  } catch {}
 }
 
 // ─────────────────────────────────────────────
@@ -203,158 +134,78 @@ export default function NoteEditorScreen() {
   const { id } = useLocalSearchParams<{ id: string }>()
   const router = useRouter()
   const insets = useSafeAreaInsets()
-  const { userId, isOnline } = useProfileSync()
-  const queryClient = useQueryClient()
+  const { userId } = useProfileSync()
+  const { isOffline } = useNetworkStatus()
 
   const isNew = id === 'new'
 
-  const [title,     setTitle]     = useState('')
-  const [body,      setBody]      = useState('')
-  const [color,     setColor]     = useState('#FF7B7B')
-  const [isStarred, setIsStarred] = useState(false)
-  const [source,    setSource]    = useState<'manual' | 'ai'>('manual')
-  const [courseId,  setCourseId]  = useState<string | null>(null)
-  const [courseName,setCourseName]= useState<string | null>(null)
-  const [courses,   setCourses]   = useState<{ id: string; name: string }[]>([])
-  const [loading,   setLoading]   = useState(!isNew)
-  const [saving,    setSaving]    = useState(false)
-  const [noteId,    setNoteId]    = useState<string | null>(isNew ? null : id)
-  const [showColorPicker, setShowColorPicker] = useState(false)
-  const [showCoursePicker,setShowCoursePicker]= useState(false)
+  const { note: noteFromDb, loading: loadingNote } = useNoteById(id)
+  const { records: courseRecords } = useCourses()
 
-  const bodyRef        = useRef<TextInput>(null)
-  const selStart       = useRef(0)
-  const selEnd         = useRef(0)
-  const isDirty        = useRef(false)
-  const savedOnce      = useRef(false)
-  const debounceTimer  = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const latestTitle    = useRef('')
-  const latestBody     = useRef('')
-  const latestColor    = useRef('#FF7B7B')
-  const latestStarred  = useRef(false)
-  const latestCourseId = useRef<string | null>(null)
-  const latestNoteId   = useRef<string | null>(null)
+  const [title,          setTitle]          = useState('')
+  const [body,           setBody]           = useState('')
+  const [color,          setColor]          = useState('#FF7B7B')
+  const [isStarred,      setIsStarred]      = useState(false)
+  const [source,         setSource]         = useState<'manual' | 'ai'>('manual')
+  const [courseId,       setCourseId]       = useState<string | null>(null)
+  const [courseName,     setCourseName]     = useState<string | null>(null)
+  const [saving,         setSaving]         = useState(false)
+  const [showColorPicker,  setShowColorPicker]  = useState(false)
+  const [showCoursePicker, setShowCoursePicker] = useState(false)
 
-  // Keep latest-value refs in sync so the debounce callback always
-  // has fresh data without needing to be re-created on every keystroke
-  latestTitle.current    = title
-  latestBody.current     = body
-  latestColor.current    = color
-  latestStarred.current  = isStarred
-  latestCourseId.current = courseId
-  latestNoteId.current   = noteId
+  const bodyRef       = useRef<TextInput>(null)
+  const selStart      = useRef(0)
+  const selEnd        = useRef(0)
+  const isDirty       = useRef(false)
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Load existing note
+  // ── Sync local state with reactive record ────────────────────────────────
   useEffect(() => {
-    if (isNew) { setLoading(false); return }
-    const load = async () => {
-      // Try cache first
-      try {
-        const raw = await AsyncStorage.getItem(NOTES_CACHE_KEY)
-        if (raw) {
-          const cached: Note[] = JSON.parse(raw)
-          const found = cached.find(n => n.id === id)
-          if (found) {
-            setTitle(found.title)
-            setBody(found.body)
-            setColor(found.color)
-            setIsStarred(found.is_starred)
-            setSource(found.source)
-            setCourseId(found.course_id)
-            setCourseName(found.course_name || null)
-            setLoading(false)
-          }
-        }
-      } catch {}
-
-      // Then fetch fresh from Supabase
-      try {
-        const { data } = await supabase
-          .from('notes')
-          .select('id, user_id, title, body, color, is_starred, source, course_id, is_deleted, created_at, updated_at, courses(name)')
-          .eq('id', id)
-          .single()
-        if (data) {
-          setTitle((data as any).title)
-          setBody((data as any).body)
-          setColor((data as any).color)
-          setIsStarred((data as any).is_starred)
-          setSource((data as any).source)
-          setCourseId((data as any).course_id)
-          setCourseName((data as any).courses?.name || null)
-        }
-      } catch {}
-      setLoading(false)
+    if (noteFromDb) {
+      setTitle(noteFromDb.title || '')
+      setBody(noteFromDb.body || '')
+      setColor(noteFromDb.color || '#FF7B7B')
+      setIsStarred(noteFromDb.isStarred ?? false)
+      setSource(noteFromDb.source || 'manual')
+      setCourseId(noteFromDb.courseId || null)
+      isDirty.current = false
     }
-    load()
-  }, [id, isNew])
+  }, [noteFromDb])
 
-  // Load courses for picker
+  // ── Sync course name ─────────────────────────────────────────────────────
   useEffect(() => {
-    if (!userId) return
-    supabase.from('courses').select('id, name').limit(30)
-      .then(({ data }: { data: any }) => setCourses(data || []))
-  }, [userId])
+    if (courseId && courseRecords.length > 0) {
+      const c = courseRecords.find((r: any) => r.id === courseId)
+      if (c) setCourseName(c.name)
+    } else if (!courseId) {
+      setCourseName(null)
+    }
+  }, [courseId, courseRecords])
 
-  // ── Core save function — always uses latest refs, stable identity ──
+  // ── Core save function ───────────────────────────────────────────────────
   const handleSave = useCallback(async (opts?: { silent?: boolean }) => {
     if (!userId) return
-    const currentTitle = latestTitle.current
-    const currentBody  = latestBody.current
-    if (!currentTitle.trim() && !currentBody.trim()) return
+    if (!title.trim() && !body.trim()) return
 
     setSaving(true)
-    const payload = {
-      id:         latestNoteId.current || undefined,
-      user_id:    userId,
-      title:      currentTitle.trim() || 'Untitled',
-      body:       currentBody,
-      color:      latestColor.current,
-      is_starred: latestStarred.current,
-      source,
-      course_id:  latestCourseId.current,
-    }
-
     try {
-      if (isOnline) {
-        const saved = await saveNote(payload)
-        if (saved) {
-          latestNoteId.current = saved.id
-          setNoteId(saved.id)
-          savedOnce.current = true
-          isDirty.current   = false
-          const raw = await AsyncStorage.getItem(NOTES_CACHE_KEY).catch(() => null)
-          const cached: Note[] = raw ? JSON.parse(raw) : []
-          const idx = cached.findIndex(n => n.id === saved.id)
-          const updated = { ...saved, course_name: courseName }
-          if (idx >= 0) cached[idx] = updated
-          else cached.unshift(updated)
-          await AsyncStorage.setItem(NOTES_CACHE_KEY, JSON.stringify(cached)).catch(() => {})
-
-          queryClient.setQueryData<Note[]>(['notes', userId], prev => {
-            const next = prev ? [...prev] : []
-            const existingIndex = next.findIndex(n => n.id === saved.id)
-            if (existingIndex >= 0) {
-              next[existingIndex] = updated
-            } else {
-              next.unshift(updated)
-            }
-            return next
-          })
+      if (noteFromDb) {
+        await updateNote(noteFromDb, userId, { title, body, color, isStarred, courseId: courseId ?? undefined })
+      } else if (isNew) {
+        const newNote = await createNote(userId, { title, body, color, source, courseId: courseId ?? undefined })
+        if (newNote) {
+          router.setParams({ id: (newNote as any).id })
         }
-      } else {
-        await queueOfflineWrite(payload)
-        isDirty.current = false
-        if (!opts?.silent) Alert.alert('Saved offline', 'Your note will sync when you reconnect.')
       }
+      isDirty.current = false
     } catch (e: any) {
       if (!opts?.silent) Alert.alert('Save failed', e?.message || 'Could not save note.')
     } finally {
       setSaving(false)
     }
-  }, [userId, source, courseName, isOnline])
+  }, [userId, title, body, color, isStarred, source, courseId, noteFromDb, isNew])
 
-  // Mark dirty + schedule debounced auto-save (1.5s after last keystroke)
+  // ── Debounced auto-save ───────────────────────────────────────────────────
   useEffect(() => {
     isDirty.current = true
     if (debounceTimer.current) clearTimeout(debounceTimer.current)
@@ -366,7 +217,7 @@ export default function NoteEditorScreen() {
     }
   }, [title, body, color, isStarred, courseId])
 
-  // Save on unmount
+  // ── Save on unmount ───────────────────────────────────────────────────────
   useEffect(() => {
     return () => {
       if (debounceTimer.current) clearTimeout(debounceTimer.current)
@@ -374,7 +225,7 @@ export default function NoteEditorScreen() {
     }
   }, [handleSave])
 
-  // ── Formatting actions ───────────────────────
+  // ── Formatting actions ────────────────────────────────────────────────────
   function applyFormat(type: 'bold' | 'italic' | 'h2' | 'bullet') {
     const s = selStart.current
     const e = selEnd.current
@@ -387,12 +238,11 @@ export default function NoteEditorScreen() {
       case 'bullet': result = insertAtLineStart(body, s, '- ');  break
     }
 
-    setBody(result.newText)
-    // Re-focus and restore selection after state update
+    setBody(result!.newText)
     setTimeout(() => {
       bodyRef.current?.focus()
       bodyRef.current?.setNativeProps({
-        selection: { start: result.newStart, end: result.newEnd },
+        selection: { start: result!.newStart, end: result!.newEnd },
       })
     }, 50)
   }
@@ -401,16 +251,11 @@ export default function NoteEditorScreen() {
     if (isDirty.current && (title.trim() || body.trim())) {
       await handleSave({ silent: true })
     }
-
-    // Ensure notes list refreshes immediately after returning
-    if (userId) {
-      queryClient.invalidateQueries({ queryKey: ['notes', userId] })
-    }
-
     router.back()
-  }, [handleSave, router, title, body, queryClient, userId])
+  }, [handleSave, router, title, body])
 
-  if (loading) {
+  // ── Loading ───────────────────────────────────────────────────────────────
+  if (loadingNote) {
     return (
       <View style={[s.container, { justifyContent: 'center', alignItems: 'center' }]}>
         <ActivityIndicator color={C.coral} />
@@ -418,14 +263,15 @@ export default function NoteEditorScreen() {
     )
   }
 
-  const accentDim = color + '12'
-
   return (
     <KeyboardAvoidingView
       style={s.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={0}
     >
+      {/* Offline banner */}
+      {isOffline && <OfflineBanner />}
+
       {/* Header */}
       <View style={[s.header, { paddingTop: insets.top + 8 }]}>
         <TouchableOpacity onPress={handleBack} style={s.headerBtn} activeOpacity={0.8}>
@@ -440,7 +286,7 @@ export default function NoteEditorScreen() {
             activeOpacity={0.85}
           />
 
-          {/* Source badge */}
+          {/* AI badge */}
           {source === 'ai' && (
             <View style={s.aiBadge}>
               <Text allowFontScaling={false} style={s.aiBadgeText}>✦ AI</Text>
@@ -449,12 +295,12 @@ export default function NoteEditorScreen() {
 
           {/* Course pill */}
           <TouchableOpacity
-            style={[s.coursePill, courseId && { backgroundColor: C.sapphDim, borderColor: C.sapphire + '35' }]}
+            style={[s.coursePill, courseId ? { backgroundColor: C.sapphDim, borderColor: C.sapphire + '35' } : undefined]}
             onPress={() => { setShowCoursePicker(p => !p); setShowColorPicker(false) }}
             activeOpacity={0.8}
           >
             <Ionicons name="book-outline" size={11} color={courseId ? C.sapphire : C.textMute} />
-            <Text style={[s.coursePillText, courseId && { color: C.sapphire }]} numberOfLines={1}>
+            <Text style={[s.coursePillText, courseId ? { color: C.sapphire } : undefined]} numberOfLines={1}>
               {courseName || 'Course'}
             </Text>
           </TouchableOpacity>
@@ -462,11 +308,7 @@ export default function NoteEditorScreen() {
 
         <View style={s.headerRight}>
           {/* Star */}
-          <TouchableOpacity
-            style={s.headerBtn}
-            onPress={() => setIsStarred(p => !p)}
-            activeOpacity={0.8}
-          >
+          <TouchableOpacity style={s.headerBtn} onPress={() => setIsStarred(p => !p)} activeOpacity={0.8}>
             <Ionicons
               name={isStarred ? 'star' : 'star-outline'}
               size={20}
@@ -476,7 +318,7 @@ export default function NoteEditorScreen() {
 
           {/* Save */}
           <TouchableOpacity
-            style={[s.saveBtn, saving && { opacity: 0.6 }]}
+            style={[s.saveBtn, saving ? { opacity: 0.6 } : undefined]}
             onPress={() => handleSave()}
             disabled={saving}
             activeOpacity={0.88}
@@ -495,7 +337,7 @@ export default function NoteEditorScreen() {
           {NOTE_COLORS.map(c => (
             <TouchableOpacity
               key={c}
-              style={[s.colorPickerDot, { backgroundColor: c }, color === c && s.colorPickerDotActive]}
+              style={[s.colorPickerDot, { backgroundColor: c }, color === c ? s.colorPickerDotActive : undefined]}
               onPress={() => { setColor(c); setShowColorPicker(false) }}
               activeOpacity={0.85}
             >
@@ -514,18 +356,18 @@ export default function NoteEditorScreen() {
           keyboardShouldPersistTaps="always"
         >
           <TouchableOpacity
-            style={[s.courseOption, !courseId && s.courseOptionActive]}
+            style={[s.courseOption, !courseId ? s.courseOptionActive : undefined]}
             onPress={() => { setCourseId(null); setCourseName(null); setShowCoursePicker(false) }}
           >
-            <Text style={[s.courseOptionText, !courseId && { color: C.sapphire }]}>No course</Text>
+            <Text style={[s.courseOptionText, !courseId ? { color: C.sapphire } : undefined]}>No course</Text>
           </TouchableOpacity>
-          {courses.map(c => (
+          {courseRecords.map(c => (
             <TouchableOpacity
               key={c.id}
-              style={[s.courseOption, courseId === c.id && s.courseOptionActive]}
+              style={[s.courseOption, courseId === c.id ? s.courseOptionActive : undefined]}
               onPress={() => { setCourseId(c.id); setCourseName(c.name); setShowCoursePicker(false) }}
             >
-              <Text style={[s.courseOptionText, courseId === c.id && { color: C.sapphire }]}
+              <Text style={[s.courseOptionText, courseId === c.id ? { color: C.sapphire } : undefined]}
                 numberOfLines={1}>{c.name}</Text>
             </TouchableOpacity>
           ))}
@@ -542,7 +384,6 @@ export default function NoteEditorScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        {/* Title */}
         <TextInput
           style={s.titleInput}
           placeholder="Note title…"
@@ -555,10 +396,8 @@ export default function NoteEditorScreen() {
           multiline={false}
         />
 
-        {/* Divider */}
         <View style={s.divider} />
 
-        {/* Body */}
         <TextInput
           ref={bodyRef}
           style={s.bodyInput}
@@ -601,15 +440,15 @@ export default function NoteEditorScreen() {
 const s = StyleSheet.create({
   container:  { flex: 1, backgroundColor: C.void },
 
-  header:         { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 10, gap: 8 },
-  headerBtn:      { width: 36, height: 36, borderRadius: 11, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, justifyContent: 'center', alignItems: 'center' },
-  headerMeta:     { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0 },
-  headerRight:    { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  header:      { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 10, gap: 8 },
+  headerBtn:   { width: 36, height: 36, borderRadius: 11, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, justifyContent: 'center', alignItems: 'center' },
+  headerMeta:  { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0 },
+  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
 
-  colorDotBtn:    { width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: 'rgba(255,255,255,0.25)', flexShrink: 0 },
+  colorDotBtn:  { width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: 'rgba(255,255,255,0.25)', flexShrink: 0 },
 
-  aiBadge:        { backgroundColor: C.lavDim, borderWidth: 1, borderColor: C.lavender + '30', borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2 },
-  aiBadgeText:    { fontSize: 10, fontWeight: '700', color: C.lavender },
+  aiBadge:     { backgroundColor: C.lavDim, borderWidth: 1, borderColor: C.lavender + '30', borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2 },
+  aiBadgeText: { fontSize: 10, fontWeight: '700', color: C.lavender },
 
   coursePill:     { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 100, paddingHorizontal: 10, paddingVertical: 5, maxWidth: 140 },
   coursePillText: { fontSize: 11, fontWeight: '600', color: C.textMute, flexShrink: 1 },
@@ -617,27 +456,26 @@ const s = StyleSheet.create({
   saveBtn:     { backgroundColor: C.coral, borderRadius: 11, paddingHorizontal: 16, paddingVertical: 8 },
   saveBtnText: { fontSize: 13, fontWeight: '800', color: C.void },
 
-  colorPickerRow: { flexDirection: 'row', gap: 10, paddingHorizontal: 18, paddingVertical: 12, backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border },
-  colorPickerDot: { width: 28, height: 28, borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
+  colorPickerRow:       { flexDirection: 'row', gap: 10, paddingHorizontal: 18, paddingVertical: 12, backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border },
+  colorPickerDot:       { width: 28, height: 28, borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
   colorPickerDotActive: { borderWidth: 2.5, borderColor: '#fff' },
 
-  courseDropdown:    { maxHeight: 180, backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border, paddingHorizontal: 16, paddingVertical: 8 },
-  courseOption:      { paddingVertical: 10, paddingHorizontal: 10, borderRadius: 10 },
-  courseOptionActive:{ backgroundColor: C.sapphDim },
-  courseOptionText:  { fontSize: 13, fontWeight: '600', color: C.textSub },
+  courseDropdown:     { maxHeight: 180, backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border, paddingHorizontal: 16, paddingVertical: 8 },
+  courseOption:       { paddingVertical: 10, paddingHorizontal: 10, borderRadius: 10 },
+  courseOptionActive: { backgroundColor: C.sapphDim },
+  courseOptionText:   { fontSize: 13, fontWeight: '600', color: C.textSub },
 
-  accentBar:   { height: 2, width: '100%' },
+  accentBar:    { height: 2, width: '100%' },
+  scroll:       { flex: 1 },
+  scrollContent:{ padding: 20, paddingBottom: 40 },
 
-  scroll:        { flex: 1 },
-  scrollContent: { padding: 20, paddingBottom: 40 },
+  titleInput: { fontSize: 24, fontWeight: '800', color: C.text, letterSpacing: -0.6, lineHeight: 30, marginBottom: 14 },
+  divider:    { height: 1, backgroundColor: C.border, marginBottom: 16 },
+  bodyInput:  { fontSize: 15, color: C.textSub, lineHeight: 24, minHeight: 300 },
 
-  titleInput:  { fontSize: 24, fontWeight: '800', color: C.text, letterSpacing: -0.6, lineHeight: 30, marginBottom: 14 },
-  divider:     { height: 1, backgroundColor: C.border, marginBottom: 16 },
-  bodyInput:   { fontSize: 15, color: C.textSub, lineHeight: 24, minHeight: 300 },
-
-  toolbar:      { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 14, paddingTop: 10, backgroundColor: C.surface, borderTopWidth: 1, borderTopColor: C.border },
-  toolbarSpacer:{ flex: 1 },
-  wordCount:    { fontSize: 11, color: C.textMute, paddingRight: 4 },
+  toolbar:       { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 14, paddingTop: 10, backgroundColor: C.surface, borderTopWidth: 1, borderTopColor: C.border },
+  toolbarSpacer: { flex: 1 },
+  wordCount:     { fontSize: 11, color: C.textMute, paddingRight: 4 },
 })
 
 const tb = StyleSheet.create({

@@ -5,8 +5,8 @@
  */
 
 import { StyleSheet, View } from 'react-native'
-import { C } from '../../lib/colors'
-import type { LeaderboardEntry } from '../../lib/leaderboard'
+import { C } from '../../src/lib/colors'
+import type { LeaderboardEntry } from '../../src/lib/leaderboard'
 
 type Props = { entry: LeaderboardEntry; width?: number }
 

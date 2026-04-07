@@ -4,7 +4,7 @@
  */
 
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
-import { C } from '../../lib/colors'
+import { C } from '../../src/lib/colors'
 
 export type LeaderTab = 'all_campus' | 'weekly_gainers' | 'colleges'
 

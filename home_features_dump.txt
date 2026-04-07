@@ -1,0 +1,1960 @@
+﻿
+
+// ===== features/home/hooks/useHomeDashboard.ts =====
+import AsyncStorage from '@react-native-async-storage/async-storage'
+import { useQuery, type QueryClient } from '@tanstack/react-query'
+import { useCallback, useEffect, useState } from 'react'
+import { DASHBOARD_CACHE_KEY } from '@/features/home/constants'
+import { fetchDashboard, safeParseDashboard } from '@/features/home/api/home'
+
+export function useHomeDashboard({
+  userId,
+  queryClient,
+}: {
+  userId: string | null
+  queryClient: QueryClient
+}) {
+  const [cacheReady, setCacheReady] = useState(false)
+  const [cachedDashboard, setCachedDashboard] = useState<any>(null)
+
+  useEffect(() => {
+    AsyncStorage.getItem(DASHBOARD_CACHE_KEY)
+      .then(raw => {
+        const parsed = safeParseDashboard(raw)
+        if (parsed) setCachedDashboard(parsed)
+      })
+      .catch(() => {})
+      .finally(() => setCacheReady(true))
+  }, [])
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['dashboard', userId],
+    queryFn: async () => {
+      const fresh = await fetchDashboard(userId!)
+      if (fresh) {
+        const toCache = { ...fresh, profile: { ...fresh.profile } }
+        void AsyncStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify(toCache)).catch(() => {})
+      }
+      return fresh
+    },
+    enabled: !!userId && cacheReady,
+    staleTime: 2 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
+    placeholderData: cachedDashboard ?? undefined,
+    retry: (n: number) => n < 1,
+  })
+
+  const effectiveData = data ?? cachedDashboard
+
+  // â”€â”€ Stable reference â€” safe to use as useFocusEffect dep â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const refreshDashboard = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['dashboard', userId] })
+  }, [queryClient, userId])
+
+  return {
+    cacheReady,
+    isLoading,
+    effectiveData,
+    profile: effectiveData?.profile ?? null,
+    recentMaterials: effectiveData?.materials ?? [],
+    stats: effectiveData?.stats ?? { total: 0, courses: 0 },
+    classId: effectiveData?.profile?.class_id ?? null,
+    collegeId: effectiveData?.profile?.college_id ?? null,
+    collegeName: effectiveData?.profile?.college?.name ?? undefined,
+    refreshDashboard,
+  }
+}
+
+// ===== features/home/hooks/useAnnouncements.ts =====
+import AsyncStorage from '@react-native-async-storage/async-storage'
+import { useQuery, type QueryClient } from '@tanstack/react-query'
+import { useCallback, useEffect, useState } from 'react'
+import { supabase } from '@/core/api/supabase'
+import { ANNOUNCEMENTS_KEY } from '@/features/home/constants'
+import { fetchAnnouncements, safeParseAnnouncements } from '@/features/home/api/home'
+import type { Announcement } from '@/features/home/types'
+
+export function useAnnouncements({
+  userId,
+  classId,
+  collegeId,
+  queryClient,
+}: {
+  userId: string | null
+  classId: string | null
+  collegeId: string | null
+  queryClient: QueryClient
+}) {
+  const [cachedAnnouncements, setCachedAnnouncements] = useState<Announcement[]>([])
+  const [showAnnouncements, setShowAnnouncements] = useState(false)
+
+  useEffect(() => {
+    AsyncStorage.getItem(ANNOUNCEMENTS_KEY)
+      .then(raw => {
+        const parsed = safeParseAnnouncements(raw)
+        if (parsed.length) setCachedAnnouncements(parsed)
+      })
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    if (!userId) return
+    const ch = supabase.channel(`announcements-rt-${userId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'announcements' }, () => {
+        void AsyncStorage.removeItem(ANNOUNCEMENTS_KEY).catch(() => {})
+        queryClient.invalidateQueries({ queryKey: ['announcements', classId, collegeId] })
+      })
+      .subscribe()
+
+    return () => { supabase.removeChannel(ch) }
+  }, [userId, classId, collegeId, queryClient])
+
+  const { data: announcements = cachedAnnouncements } = useQuery({
+    queryKey: ['announcements', classId, collegeId],
+    queryFn: async () => {
+      const fresh = await fetchAnnouncements(classId, collegeId)
+      void AsyncStorage.setItem(ANNOUNCEMENTS_KEY, JSON.stringify(fresh)).catch(() => {})
+      return fresh
+    },
+    enabled: !!userId && !!(classId || collegeId),
+    staleTime: 0,
+    gcTime: 10 * 60 * 1000,
+    placeholderData: cachedAnnouncements.length > 0 ? cachedAnnouncements : undefined,
+  })
+
+  useEffect(() => {
+    if (announcements.some(a => a.priority === 'high')) {
+      setShowAnnouncements(true)
+    }
+  }, [announcements])
+
+  const queryKey = ['announcements', classId, collegeId] as const
+
+  // â”€â”€ Stable references â€” safe to use as useFocusEffect deps â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const refreshAnnouncements = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['announcements', classId, collegeId] })
+    void AsyncStorage.removeItem(ANNOUNCEMENTS_KEY).catch(() => {})
+  }, [queryClient, classId, collegeId])
+
+  const applyOptimisticAnnouncements = useCallback(
+    (updater: (items: Announcement[]) => Announcement[]) => {
+      queryClient.setQueryData<Announcement[]>(queryKey, prev => updater(prev ?? []))
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [queryClient, classId, collegeId]
+  )
+
+  return {
+    announcements,
+    showAnnouncements,
+    setShowAnnouncements,
+    announcementQueryKey: queryKey,
+    refreshAnnouncements,
+    applyOptimisticAnnouncements,
+  }
+}
+
+// ===== features/home/hooks/useStudyPlannerSnapshot.ts =====
+/**
+ * features/home/hooks/useStudyPlannerSnapshot.ts
+ *
+ * Reads study planner data from AsyncStorage (same keys the study planner writes)
+ * and exposes derived values the home screen needs:
+ *   - weeklyHours      â†’ total scheduled hours this week (from TimeBlocks)
+ *   - weeklyGoalHours  â†’ user's weekly hour target (from StudyGoals)
+ *   - todayBlocks      â†’ time blocks for today, sorted by startTime
+ *   - isLoaded         â†’ false until the first AsyncStorage read completes
+ *
+ * Refreshes automatically whenever the home screen gains focus â€” call
+ * `refresh()` inside useFocusEffect.
+ */
+
+import AsyncStorage from '@react-native-async-storage/async-storage'
+import { useCallback, useEffect, useRef, useState } from 'react'
+
+// â”€â”€â”€ Storage keys (must match study-planner.tsx) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const KEYS = {
+  BLOCKS: 'ss_planner_blocks',
+  GOALS:  'ss_study_goals',
+} as const
+
+// â”€â”€â”€ Minimal types (mirrors study-planner.tsx) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+type BlockType = 'lecture' | 'revision' | 'practice' | 'assignment' | 'other'
+
+export type PlannerBlock = {
+  id: string
+  subject: string
+  type: BlockType
+  date: string        // 'YYYY-MM-DD'
+  startTime: string   // 'HH:MM'
+  endTime: string     // 'HH:MM'
+  color: string
+}
+
+type StudyGoals = {
+  weekly_hours: number
+  weekly_tasks: number
+  daily_pomodoros: number
+  streak_target: number
+}
+
+// â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function todayISO(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function getWeekDays(ref: Date): Date[] {
+  const day  = ref.getDay()
+  const diff = day === 0 ? -6 : 1 - day
+  const mon  = new Date(ref)
+  mon.setDate(ref.getDate() + diff)
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(mon)
+    d.setDate(mon.getDate() + i)
+    return d
+  })
+}
+
+function toISO(d: Date): string {
+  return d.toISOString().slice(0, 10)
+}
+
+function blockDurationMins(b: PlannerBlock): number {
+  const [sh, sm] = b.startTime.split(':').map(Number)
+  const [eh, em] = b.endTime.split(':').map(Number)
+  return (eh * 60 + em) - (sh * 60 + sm)
+}
+
+function getWeeklyBlockHours(blocks: PlannerBlock[]): number {
+  const week = getWeekDays(new Date()).map(toISO)
+  return blocks
+    .filter(b => week.includes(b.date))
+    .reduce((sum, b) => sum + blockDurationMins(b) / 60, 0)
+}
+
+// â”€â”€â”€ Block type display labels â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+export const BLOCK_TYPE_LABELS: Record<BlockType, string> = {
+  lecture:    'Lecture',
+  revision:   'Revision',
+  practice:   'Practice',
+  assignment: 'Assignment',
+  other:      'Other',
+}
+
+// â”€â”€â”€ Derived schedule item shape (what HomeScreen consumes) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+export type HomeScheduleItem = {
+  id: string
+  hour: string        // e.g. '10'
+  period: string      // 'AM' | 'PM'
+  title: string
+  meta: string        // e.g. 'Lecture Â· 1h 30m'
+  tagLabel: string    // 'Live now' | 'Done' | 'Upcoming'
+  tagColor: string
+  tagBg: string
+  dotColor: string
+  color: string
+  cancelled: boolean
+}
+
+function formatDuration(mins: number): string {
+  if (mins < 60) return `${mins}m`
+  const h = Math.floor(mins / 60)
+  const m = mins % 60
+  return m === 0 ? `${h}h` : `${h}h ${m}m`
+}
+
+function deriveScheduleItem(block: PlannerBlock): HomeScheduleItem {
+  const [hStr, mStr] = block.startTime.split(':')
+  const h24  = parseInt(hStr, 10)
+  const h12  = h24 === 0 ? 12 : h24 > 12 ? h24 - 12 : h24
+  const period = h24 < 12 ? 'AM' : 'PM'
+
+  const nowMins  = new Date().getHours() * 60 + new Date().getMinutes()
+  const [sh, sm] = block.startTime.split(':').map(Number)
+  const [eh, em] = block.endTime.split(':').map(Number)
+  const startMins = sh * 60 + sm
+  const endMins   = eh * 60 + em
+  const durMins   = blockDurationMins(block)
+
+  let tagLabel: string
+  let tagColor: string
+  let tagBg: string
+
+  if (nowMins >= startMins && nowMins < endMins) {
+    tagLabel = 'Live now'
+    tagColor = '#FB923C'   // C.orange
+    tagBg    = '#2A1208'   // C.orangeDim
+  } else if (nowMins >= endMins) {
+    tagLabel = 'Done'
+    tagColor = '#4A5168'   // C.textMute
+    tagBg    = '#161A22'   // C.raised
+  } else {
+    tagLabel = 'Upcoming'
+    tagColor = '#5B8DEF'   // C.sapphire
+    tagBg    = '#0D1A35'   // C.sapphDim
+  }
+
+  return {
+    id:       block.id,
+    hour:     String(h12).padStart(2, '0'),
+    period,
+    title:    block.subject,
+    meta:     `${BLOCK_TYPE_LABELS[block.type]} Â· ${formatDuration(durMins)}`,
+    tagLabel,
+    tagColor,
+    tagBg,
+    dotColor: block.color,
+    color:    block.color,
+    cancelled: false,
+  }
+}
+
+// â”€â”€â”€ Hook â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const DEFAULT_GOAL_HOURS = 25
+
+export type StudyPlannerSnapshot = {
+  weeklyHours:     number
+  weeklyGoalHours: number
+  todayBlocks:     HomeScheduleItem[]
+  isLoaded:        boolean
+  refresh:         () => Promise<void>
+}
+
+export function useStudyPlannerSnapshot(): StudyPlannerSnapshot {
+  const [weeklyHours,     setWeeklyHours]     = useState(0)
+  const [weeklyGoalHours, setWeeklyGoalHours] = useState(DEFAULT_GOAL_HOURS)
+  const [todayBlocks,     setTodayBlocks]     = useState<HomeScheduleItem[]>([])
+  const [isLoaded,        setIsLoaded]        = useState(false)
+
+  // Use a ref so the function identity never changes between renders,
+  // breaking the useEffect â†’ setState â†’ re-render â†’ useEffect loop.
+  const loadingRef   = useRef(false)
+  const isLoadedRef  = useRef(false)
+
+  // Stable function stored in a ref â€” never recreated, never a useEffect dep.
+  const refreshRef = useRef(async () => {
+    if (loadingRef.current) return
+    loadingRef.current = true
+    try {
+      const [rawBlocks, rawGoals] = await Promise.all([
+        AsyncStorage.getItem(KEYS.BLOCKS),
+        AsyncStorage.getItem(KEYS.GOALS),
+      ])
+
+      const blocks: PlannerBlock[] = rawBlocks ? JSON.parse(rawBlocks) : []
+      const goals: StudyGoals      = rawGoals
+        ? JSON.parse(rawGoals)
+        : { weekly_hours: DEFAULT_GOAL_HOURS } as StudyGoals
+
+      const today  = todayISO()
+      const sorted = blocks
+        .filter(b => b.date === today)
+        .sort((a, b) => a.startTime.localeCompare(b.startTime))
+
+      setWeeklyHours(getWeeklyBlockHours(blocks))
+      setWeeklyGoalHours(goals.weekly_hours ?? DEFAULT_GOAL_HOURS)
+      setTodayBlocks(sorted.map(deriveScheduleItem))
+    } catch {
+      // silently fail â€” stale data remains on screen
+    } finally {
+      loadingRef.current = false
+      // Only flip isLoaded once â€” subsequent refreshes must not re-set it
+      // because that would trigger a re-render that re-runs this function.
+      if (!isLoadedRef.current) {
+        isLoadedRef.current = true
+        setIsLoaded(true)
+      }
+    }
+  })
+
+  // Stable callback wrapper exposed to consumers (useFocusEffect etc.)
+  const refresh = useCallback(() => refreshRef.current(), [])
+
+  // Run once on mount â€” empty deps, no loop possible.
+  useEffect(() => { refreshRef.current() }, [])
+
+  return { weeklyHours, weeklyGoalHours, todayBlocks, isLoaded, refresh }
+}
+
+// ===== features/home/hooks/useDeadlines.ts =====
+import AsyncStorage from '@react-native-async-storage/async-storage'
+import { Alert } from 'react-native'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { DEADLINES_KEY } from '@/features/home/constants'
+import { sortDeadlines } from '@/features/home/api/home'
+import type { Deadline } from '@/features/home/types'
+
+export function useDeadlines() {
+  const [deadlines, setDeadlines] = useState<Deadline[]>([])
+  const [deadlinesLoaded, setDeadlinesLoaded] = useState(false)
+
+  useEffect(() => {
+    AsyncStorage.getItem(DEADLINES_KEY)
+      .then(raw => {
+        if (!raw) return
+        try {
+          const parsed = JSON.parse(raw)
+          if (Array.isArray(parsed)) setDeadlines(parsed)
+        } catch {}
+      })
+      .catch(() => {})
+      .finally(() => setDeadlinesLoaded(true))
+  }, [])
+
+  useEffect(() => {
+    if (!deadlinesLoaded) return
+    AsyncStorage.setItem(DEADLINES_KEY, JSON.stringify(deadlines)).catch(() => {
+      Alert.alert('Storage Warning', 'Deadlines could not be saved locally.')
+    })
+  }, [deadlines, deadlinesLoaded])
+
+  const addDeadline = useCallback((deadline: Omit<Deadline, 'id'>) => {
+    setDeadlines(prev => [...prev, { ...deadline, id: Date.now().toString() }])
+  }, [])
+
+  const removeDeadline = useCallback((id: string) => {
+    setDeadlines(prev => prev.filter(deadline => deadline.id !== id))
+  }, [])
+
+  const sortedDeadlines = useMemo(() => sortDeadlines(deadlines), [deadlines])
+
+  return {
+    deadlines,
+    sortedDeadlines,
+    addDeadline,
+    removeDeadline,
+    setDeadlines,
+  }
+}
+
+
+// ===== features/home/hooks/useAvatarUpload.ts =====
+import AsyncStorage from '@react-native-async-storage/async-storage'
+import { type QueryClient } from '@tanstack/react-query'
+import * as ImagePicker from 'expo-image-picker'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Alert, Linking } from 'react-native'
+import { supabase } from '@/core/api/supabase'
+import {
+  AVATAR_LOCK_KEY,
+  AVATAR_LOCK_TTL_MS,
+  AVATAR_QUEUE_KEY,
+  DASHBOARD_CACHE_KEY,
+  MAX_AVATAR_BYTES,
+} from '@/features/home/constants'
+import { base64ToBytes, retryPendingAvatarUpload } from '@/features/home/api/home'
+import type { PendingAvatarUpload } from '@/features/home/types'
+import { lockAvatarRefetch } from '@/hooks/useProfileSync'
+
+async function updateCachedAvatar(userId: string, avatarUrl: string) {
+  const cached = await AsyncStorage.getItem(DASHBOARD_CACHE_KEY)
+    .then(raw => (raw ? JSON.parse(raw) : null))
+    .catch(() => null)
+
+  if (!cached) return
+
+  await AsyncStorage.setItem(
+    DASHBOARD_CACHE_KEY,
+    JSON.stringify({ ...cached, profile: { ...cached.profile, avatar_url: avatarUrl } })
+  ).catch(() => {})
+}
+
+export function useAvatarUpload({
+  userId,
+  isOnline,
+  queryClient,
+}: {
+  userId: string | null
+  isOnline: boolean
+  queryClient: QueryClient
+}) {
+  const [uploadingAvatar, setUploadingAvatar] = useState(false)
+  const avatarRetryRanRef = useRef(false)
+
+  useEffect(() => {
+    if (userId && isOnline && !avatarRetryRanRef.current) {
+      avatarRetryRanRef.current = true
+      retryPendingAvatarUpload(queryClient).catch(() => {})
+    }
+    if (!isOnline) avatarRetryRanRef.current = false
+  }, [userId, isOnline, queryClient])
+
+  const pickAndUploadAvatar = useCallback(async () => {
+    if (!userId) return
+
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync()
+    if (!permission.granted) {
+      Alert.alert(
+        'Photo access required',
+        'Please allow photo library access in Settings to change your profile picture.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Open Settings', onPress: () => Linking.openSettings() },
+        ]
+      )
+      return
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'] as any,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+      base64: true,
+    })
+    if (result.canceled) return
+
+    const asset = result.assets[0]
+    const fileSizeBytes = asset.fileSize ?? 0
+    if (fileSizeBytes > MAX_AVATAR_BYTES) {
+      Alert.alert('Image too large', `Please choose an image under 5 MB. (~${(fileSizeBytes / 1_048_576).toFixed(1)} MB)`)
+      return
+    }
+
+    const rawExt = asset.uri.split('.').pop()?.toLowerCase() ?? 'jpg'
+    const fileExt = ['heic', 'heif'].includes(rawExt) ? 'jpg' : rawExt
+    const timestamp = Date.now()
+    const fileName = `${userId}.${fileExt}`
+
+    setUploadingAvatar(true)
+    try {
+      if (!isOnline) {
+        const pending: PendingAvatarUpload = {
+          localUri: asset.uri,
+          base64: asset.base64 ?? undefined,
+          fileExt,
+          userId,
+          queuedAt: timestamp,
+          retryCount: 0,
+        }
+        await AsyncStorage.setItem(AVATAR_QUEUE_KEY, JSON.stringify(pending)).catch(() => {})
+        const localUrl = `${asset.uri}?local=${timestamp}`
+        queryClient.setQueryData(['dashboard', userId], (old: any) =>
+          old ? { ...old, profile: { ...old.profile, avatar_url: localUrl } } : old
+        )
+        await updateCachedAvatar(userId, localUrl)
+        Alert.alert('Saved offline', "You're offline. Your photo will upload when you reconnect.")
+        return
+      }
+
+      const b64 = asset.base64
+      if (!b64) throw new Error('Picker did not return image data.')
+
+      const byteArray = base64ToBytes(b64)
+      const { error: uploadError } = await supabase.storage
+        .from('avatars')
+        .upload(fileName, byteArray, { contentType: `image/${fileExt}`, upsert: true })
+      if (uploadError) throw uploadError
+
+      const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(fileName)
+      const newUrl = `${urlData.publicUrl}?t=${timestamp}`
+
+      await supabase
+        .from('profiles')
+        .update({ avatar_url: urlData.publicUrl, updated_at: new Date().toISOString() })
+        .eq('id', userId)
+
+      lockAvatarRefetch()
+      await AsyncStorage.setItem(AVATAR_LOCK_KEY, String(timestamp)).catch(() => {})
+      queryClient.setQueryData(['dashboard', userId], (old: any) =>
+        old
+          ? {
+              ...old,
+              profile: { ...old.profile, avatar_url: newUrl },
+              materials: old.materials ?? [],
+              stats: old.stats ?? {},
+            }
+          : old
+      )
+      await updateCachedAvatar(userId, newUrl)
+
+      setTimeout(async () => {
+        const lockTime = await AsyncStorage.getItem(AVATAR_LOCK_KEY)
+          .then(v => (v ? Number(v) : 0))
+          .catch(() => 0)
+        if (Date.now() - lockTime < AVATAR_LOCK_TTL_MS) return
+        queryClient.invalidateQueries({ queryKey: ['dashboard', userId] })
+      }, AVATAR_LOCK_TTL_MS)
+
+      Alert.alert('Done', 'Profile picture updated!')
+    } catch (err: any) {
+      Alert.alert(
+        'Upload failed',
+        err?.message || err?.error_description || JSON.stringify(err) || 'Could not upload profile picture.'
+      )
+    } finally {
+      setUploadingAvatar(false)
+    }
+  }, [isOnline, queryClient, userId])
+
+  return {
+    uploadingAvatar,
+    pickAndUploadAvatar,
+  }
+}
+
+
+// ===== features/home/components/HomeShell.tsx =====
+import { Ionicons } from '@expo/vector-icons'
+import { LinearGradient } from 'expo-linear-gradient'
+import React, { Component, type ErrorInfo, type ReactNode, useRef } from 'react'
+import {
+  Animated,
+  Pressable,
+  StyleProp,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+  ViewStyle,
+} from 'react-native'
+import { C } from '@/lib/colors'
+
+type ErrorBoundaryState = { hasError: boolean; message: string }
+
+export class HomeErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryState> {
+  constructor(props: { children: ReactNode }) {
+    super(props)
+    this.state = { hasError: false, message: '' }
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, message: error.message }
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('[HomeScreen Error]', error, info)
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <View style={styles.errorScreen}>
+          <View style={styles.errorIconBox}>
+            <Ionicons name="warning-outline" size={32} color={C.coral} />
+          </View>
+          <Text maxFontSizeMultiplier={1.3} style={styles.errorTitle}>Something went wrong</Text>
+          <Text maxFontSizeMultiplier={1.3} style={styles.errorSub}>{this.state.message}</Text>
+          <TouchableOpacity style={styles.errorBtn} onPress={() => this.setState({ hasError: false, message: '' })}>
+            <Text maxFontSizeMultiplier={1.3} style={styles.errorBtnText}>Try Again</Text>
+          </TouchableOpacity>
+        </View>
+      )
+    }
+
+    return this.props.children
+  }
+}
+
+export function OfflineBanner() {
+  return (
+    <View style={styles.offlineBanner}>
+      <Ionicons name="cloud-offline-outline" size={13} color={C.gold} />
+      <Text maxFontSizeMultiplier={1.3} style={styles.offlineText}>Offline - showing cached data</Text>
+    </View>
+  )
+}
+
+export function ScalePress({
+  children,
+  onPress,
+  style,
+}: {
+  children: ReactNode
+  onPress?: () => void
+  style?: StyleProp<ViewStyle>
+}) {
+  const scale = useRef(new Animated.Value(1)).current
+  const onIn = () => Animated.spring(scale, { toValue: 0.96, useNativeDriver: true, speed: 40, bounciness: 0 }).start()
+  const onOut = () => Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 40, bounciness: 4 }).start()
+
+  return (
+    <Pressable onPress={onPress} onPressIn={onIn} onPressOut={onOut}>
+      <Animated.View style={[style, { transform: [{ scale }] }]}>{children}</Animated.View>
+    </Pressable>
+  )
+}
+
+export function TagChip({ label, color, bg }: { label: string; color: string; bg: string }) {
+  return (
+    <View style={[styles.tagChip, { backgroundColor: bg, borderColor: `${color}30` }]}>
+      <Text allowFontScaling={false} style={[styles.tagChipText, { color }]}>{label}</Text>
+    </View>
+  )
+}
+
+export function MetaVerifiedBadge({ size = 20 }: { size?: number }) {
+  return (
+    <View style={[styles.metaBadgeWrap, { width: size, height: size, borderRadius: size * 0.32 }]}>
+      <LinearGradient
+        colors={['#1877F2', '#0A5CD8']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={[StyleSheet.absoluteFill, { borderRadius: size * 0.32 }]}
+      />
+      <Ionicons name="checkmark" size={size * 0.58} color="#fff" style={{ fontWeight: '900' }} />
+    </View>
+  )
+}
+
+export function SectionHead({
+  title,
+  link = 'See all',
+  onLink,
+}: {
+  title: string
+  link?: string
+  onLink?: () => void
+}) {
+  return (
+    <View style={styles.sectionHead}>
+      <View style={styles.sectionLabelRow}>
+        <View style={styles.sectionOrangeLine} />
+        <Text maxFontSizeMultiplier={1.3} style={styles.sectionTitle}>{title.toUpperCase()}</Text>
+      </View>
+      {onLink && (
+        <TouchableOpacity onPress={onLink} activeOpacity={0.7}>
+          <Text maxFontSizeMultiplier={1.3} style={styles.sectionLink}>{link}</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  )
+}
+
+export function QuickActionItem({
+  label,
+  emoji,
+  color,
+  bg,
+  borderColor,
+  badge,
+  onPress,
+}: {
+  label: string
+  emoji: string
+  color: string
+  bg: string
+  borderColor: string
+  badge?: string | number
+  onPress: () => void
+}) {
+  return (
+    <TouchableOpacity style={styles.qaItem} onPress={onPress} activeOpacity={0.75}>
+      <View style={[styles.qaIcon, { backgroundColor: bg, borderColor }]}>
+        <Text style={styles.qaEmoji}>{emoji}</Text>
+        {badge ? (
+          <View style={styles.qaBadge}>
+            <Text allowFontScaling={false} style={styles.qaBadgeText}>{badge}</Text>
+          </View>
+        ) : null}
+      </View>
+      <Text maxFontSizeMultiplier={1.3} style={styles.qaLabel} numberOfLines={2}>{label}</Text>
+    </TouchableOpacity>
+  )
+}
+
+const styles = StyleSheet.create({
+  errorScreen: { flex: 1, backgroundColor: C.void, justifyContent: 'center', alignItems: 'center', gap: 14, padding: 32 },
+  errorIconBox: { width: 72, height: 72, borderRadius: 22, backgroundColor: C.coralDim, justifyContent: 'center', alignItems: 'center', marginBottom: 4 },
+  errorTitle: { fontSize: 18, fontWeight: '800', color: C.text, letterSpacing: -0.3 },
+  errorSub: { fontSize: 13, color: C.textMute, textAlign: 'center', lineHeight: 20 },
+  errorBtn: { marginTop: 8, backgroundColor: C.orange, borderRadius: 14, paddingHorizontal: 28, paddingVertical: 13 },
+  errorBtnText: { fontSize: 14, fontWeight: '700', color: '#fff' },
+  offlineBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: 'rgba(223,168,60,0.12)', borderBottomWidth: 1, borderBottomColor: `${C.gold}30`, paddingVertical: 8 },
+  offlineText: { fontSize: 12, fontWeight: '600', color: C.gold },
+  tagChip: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1 },
+  tagChipText: { fontSize: 10, fontWeight: '700', letterSpacing: 0.4, textTransform: 'uppercase' },
+  metaBadgeWrap: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#1877F2',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.5,
+    shadowRadius: 6,
+    elevation: 4,
+    overflow: 'hidden',
+  },
+  sectionHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  sectionLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  sectionOrangeLine: { width: 14, height: 1, backgroundColor: C.orange, opacity: 0.7 },
+  sectionTitle: { fontSize: 9.5, fontWeight: '700', color: C.textMute, letterSpacing: 2.8 },
+  sectionLink: { fontSize: 10.5, fontWeight: '600', color: C.orange, letterSpacing: 0.3 },
+  qaItem: { width: '25%', alignItems: 'center', gap: 9, paddingVertical: 16, paddingHorizontal: 6, borderRadius: 18 },
+  qaIcon: { width: 54, height: 54, borderRadius: 18, borderWidth: 1, justifyContent: 'center', alignItems: 'center', position: 'relative' },
+  qaEmoji: { fontSize: 23 },
+  qaBadge: { position: 'absolute', top: -4, right: -4, minWidth: 17, height: 17, borderRadius: 6, backgroundColor: C.orange, borderWidth: 2, borderColor: C.void, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 3 },
+  qaBadgeText: { fontSize: 8, fontWeight: '800', color: '#fff' },
+  qaLabel: { fontSize: 10.5, fontWeight: '600', color: C.textSub, textAlign: 'center', lineHeight: 14, letterSpacing: 0.1 },
+})
+
+
+// ===== features/home/components/HomeRows.tsx =====
+import { Ionicons } from '@expo/vector-icons'
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native'
+import { isOverdue } from '@/features/home/api/home'
+import { ScalePress, TagChip } from '@/features/home/components/HomeShell'
+import { C } from '@/lib/colors'
+import type { DashCard, Deadline, Material, ScheduleItem, IoniconName } from '@/features/home/types'
+
+const DASH_CARD_HEIGHT = 150
+
+export function DashCardItem({ card, cardWidth }: { card: DashCard; cardWidth: number }) {
+  return (
+    <ScalePress onPress={card.onPress} style={{ width: cardWidth }}>
+      <View style={[styles.dashCard, { borderColor: card.borderColor, height: DASH_CARD_HEIGHT, width: cardWidth }]}>
+        <View style={[styles.dashCardGlow, { backgroundColor: card.glowColor }]} />
+        <View style={styles.dashCardTop}>
+          <View style={[styles.dashCardIcon, { backgroundColor: card.badgeBg }]}>
+            <Text style={styles.dashCardEmoji}>{card.emoji}</Text>
+          </View>
+          <View style={styles.dashCardArrow}>
+            <Text style={styles.dashCardArrowText}>â†—</Text>
+          </View>
+        </View>
+        <View>
+          <Text maxFontSizeMultiplier={1.3} style={styles.dashCardTitle} numberOfLines={1}>{card.title}</Text>
+          <Text maxFontSizeMultiplier={1.3} style={styles.dashCardSub} numberOfLines={1}>{card.sub}</Text>
+          <View style={[styles.dashCardBadge, { backgroundColor: card.badgeBg }]}>
+            <Text allowFontScaling={false} style={[styles.dashCardBadgeText, { color: card.badgeColor }]} numberOfLines={1}>
+              {card.badgeLabel}
+            </Text>
+          </View>
+        </View>
+      </View>
+    </ScalePress>
+  )
+}
+
+export function ScheduleRow({ item, isLast }: { item: ScheduleItem; isLast: boolean }) {
+  return (
+    <View style={[styles.schedItem, item.cancelled && styles.schedItemCancelled, isLast && { borderBottomWidth: 0 }]}>
+      <View style={styles.schedTime}>
+        <Text maxFontSizeMultiplier={1.3} style={[styles.schedTimeVal, item.cancelled && { color: C.textMute }]}>
+          {item.hour}
+        </Text>
+        <Text allowFontScaling={false} style={styles.schedTimePeriod}>{item.period}</Text>
+      </View>
+      <View style={styles.schedDotWrap}>
+        <View style={[styles.schedDot, { backgroundColor: item.dotColor, shadowColor: item.dotColor }]} />
+        {!isLast && <View style={styles.schedLine} />}
+      </View>
+      <View style={styles.schedContent}>
+        <Text maxFontSizeMultiplier={1.3} style={[styles.schedTitle, item.cancelled && styles.schedTitleStrike]} numberOfLines={1}>
+          {item.title}
+        </Text>
+        <Text maxFontSizeMultiplier={1.3} style={styles.schedMeta} numberOfLines={1}>{item.meta}</Text>
+        <View style={[styles.schedTag, { backgroundColor: item.tagBg }]}>
+          <Text allowFontScaling={false} style={[styles.schedTagText, { color: item.tagColor }]}>{item.tagLabel}</Text>
+        </View>
+      </View>
+    </View>
+  )
+}
+
+export function MaterialRow({
+  mat,
+}: {
+  mat: Material & { typeColor: string; typeBg: string; typeLabel: string; icon: IoniconName }
+}) {
+  return (
+    <ScalePress>
+      <View style={styles.matRow}>
+        <View style={[styles.matAccentLine, { backgroundColor: mat.typeColor }]} />
+        <View style={[styles.matIconBox, { backgroundColor: mat.typeBg, borderColor: `${mat.typeColor}20` }]}>
+          <Ionicons name={mat.icon} size={18} color={mat.typeColor} />
+        </View>
+        <View style={styles.matContent}>
+          <Text maxFontSizeMultiplier={1.3} style={styles.matTitle} numberOfLines={2}>{mat.title}</Text>
+          <View style={styles.matMeta}>
+            <TagChip label={mat.typeLabel} color={mat.typeColor} bg={mat.typeBg} />
+            {mat.courses?.name && <Text style={styles.matCourse}>{mat.courses.name}</Text>}
+          </View>
+        </View>
+        <Ionicons name="chevron-forward" size={14} color={C.textMute} />
+      </View>
+    </ScalePress>
+  )
+}
+
+export function DeadlineChip({ d, onRemove }: { d: Deadline; onRemove: () => void }) {
+  const urgent = isOverdue(d.due_date)
+
+  return (
+    <View style={[styles.deadlineChip, urgent && { backgroundColor: C.coralDim, borderColor: `${C.coral}30` }]}>
+      <View style={[styles.deadlineChipDot, { backgroundColor: urgent ? C.coral : d.color }]} />
+      <View style={{ flex: 1 }}>
+        <Text maxFontSizeMultiplier={1.3} style={styles.deadlineChipTitle} numberOfLines={1}>{d.title}</Text>
+        <Text maxFontSizeMultiplier={1.3} style={[styles.deadlineChipDue, urgent && { color: C.coral }]}>Due {d.due_date}</Text>
+      </View>
+      <TouchableOpacity onPress={onRemove} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+        <Ionicons name="close-circle" size={16} color={C.textMute} />
+      </TouchableOpacity>
+    </View>
+  )
+}
+
+const styles = StyleSheet.create({
+  dashCard: { backgroundColor: C.surface, borderRadius: 20, borderWidth: 1, padding: 20, paddingBottom: 18, justifyContent: 'space-between', position: 'relative', overflow: 'hidden' },
+  dashCardGlow: { position: 'absolute', top: -30, right: -30, width: 100, height: 100, borderRadius: 50, opacity: 0.5 },
+  dashCardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+  dashCardIcon: { width: 44, height: 44, borderRadius: 14, justifyContent: 'center', alignItems: 'center', zIndex: 1 },
+  dashCardEmoji: { fontSize: 20 },
+  dashCardArrow: { width: 26, height: 26, borderRadius: 9, borderWidth: 1, borderColor: C.border, justifyContent: 'center', alignItems: 'center', zIndex: 1 },
+  dashCardArrowText: { fontSize: 11, color: C.textMute },
+  dashCardTitle: { fontSize: 15, fontWeight: '700', fontFamily: 'serif', color: C.text, marginBottom: 4, letterSpacing: -0.2, lineHeight: 19, zIndex: 1 },
+  dashCardSub: { fontSize: 11, color: C.textSub, zIndex: 1 },
+  dashCardBadge: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, marginTop: 6, alignSelf: 'flex-start', zIndex: 1 },
+  dashCardBadgeText: { fontSize: 10, fontWeight: '700' },
+
+  schedItem: { flexDirection: 'row', gap: 14, alignItems: 'flex-start', paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: C.border } as const,
+  schedItemCancelled: { opacity: 0.4 },
+  schedTime: { width: 48, alignItems: 'center', paddingTop: 3, flexShrink: 0 },
+  schedTimeVal: { fontSize: 15, fontWeight: '700', fontFamily: 'serif', color: C.text, lineHeight: 18, textAlign: 'center' },
+  schedTimePeriod: { fontSize: 9, fontWeight: '600', letterSpacing: 1, color: C.textMute, textAlign: 'center', marginTop: 1 },
+  schedDotWrap: { alignItems: 'center', paddingTop: 5, flexShrink: 0 },
+  schedDot: { width: 9, height: 9, borderRadius: 4.5, shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.6, shadowRadius: 6, elevation: 3 },
+  schedLine: { width: 1, flex: 1, minHeight: 28, backgroundColor: C.border, marginTop: 5 },
+  schedContent: { flex: 1, paddingTop: 2 },
+  schedTitle: { fontSize: 14, fontWeight: '600', color: C.text, marginBottom: 3, lineHeight: 18 },
+  schedTitleStrike: { textDecorationLine: 'line-through', color: C.textSub },
+  schedMeta: { fontSize: 11, color: C.textSub, lineHeight: 16 },
+  schedTag: { borderRadius: 5, paddingHorizontal: 7, paddingVertical: 2, marginTop: 6, alignSelf: 'flex-start' },
+  schedTagText: { fontSize: 9.5, fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase' },
+
+  deadlineChip: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 14, width: 170 },
+  deadlineChipDot: { width: 8, height: 8, borderRadius: 4, flexShrink: 0 },
+  deadlineChipTitle: { fontSize: 13, fontWeight: '700', color: C.text, marginBottom: 3 },
+  deadlineChipDue: { fontSize: 11.5, color: C.textMute, fontWeight: '500' },
+
+  matRow: { flexDirection: 'row', alignItems: 'center', gap: 13, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 18, padding: 14, position: 'relative', overflow: 'hidden' },
+  matAccentLine: { position: 'absolute', left: 0, top: 12, bottom: 12, width: 2, borderRadius: 1, opacity: 0.65 },
+  matIconBox: { width: 42, height: 42, minWidth: 42, minHeight: 42, flexShrink: 0, borderRadius: 13, borderWidth: 1, justifyContent: 'center', alignItems: 'center' },
+  matContent: { flex: 1 },
+  matTitle: { fontSize: 13.5, fontWeight: '600', color: C.text, lineHeight: 19, marginBottom: 7 },
+  matMeta: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  matCourse: { fontSize: 11, color: C.textMute },
+})
+
+
+// ===== features/home/components/CustomizeModal.tsx =====
+import { Ionicons } from '@expo/vector-icons'
+import { useEffect, useState } from 'react'
+import {
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native'
+import { C } from '@/lib/colors'
+import type { DashCard } from '@/features/home/types'
+
+type CustomizeModalProps = {
+  visible: boolean
+  availableCards: DashCard[]
+  customCards: string[]
+  onClose: () => void
+  onSave: (newCards: string[]) => void
+}
+
+export function CustomizeModal({
+  visible,
+  availableCards,
+  customCards,
+  onClose,
+  onSave,
+}: CustomizeModalProps) {
+  const [tempSelected, setTempSelected] = useState(customCards)
+
+  useEffect(() => {
+    if (visible) {
+      setTempSelected(customCards)
+    }
+  }, [visible, customCards])
+
+  const handleToggle = (id: string) => {
+    setTempSelected(prev => {
+      const next = prev.includes(id) ? prev.filter(selected => selected !== id) : [...prev, id]
+      return next.slice(0, 6)
+    })
+  }
+
+  const handleSave = () => {
+    onSave(tempSelected)
+    onClose()
+  }
+
+  const handleReset = () => {
+    setTempSelected(['solutions', 'mats', 'notes', 'plan', 'contribute', 'contributors'])
+  }
+
+  const maxedOut = tempSelected.length >= 6
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent presentationStyle="overFullScreen">
+      <View style={styles.overlay}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.keyboardWrap}>
+          <View style={styles.sheet}>
+            <View style={styles.handleRow}><View style={styles.handle} /></View>
+            <View style={styles.header}>
+              <View>
+                <Text maxFontSizeMultiplier={1.3} style={styles.title}>Customize Dashboard</Text>
+                <Text maxFontSizeMultiplier={1.3} style={styles.subtitle}>Choose up to 6 cards (3x2 grid)</Text>
+              </View>
+              <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
+                <Ionicons name="close" size={18} color={C.textSub} />
+              </TouchableOpacity>
+            </View>
+
+            <Text maxFontSizeMultiplier={1.3} style={styles.fieldLabel} numberOfLines={1}>
+              {tempSelected.length}/6 cards selected
+            </Text>
+
+            <ScrollView showsVerticalScrollIndicator={false} style={styles.scrollArea}>
+              {availableCards.map(card => {
+                const isSelected = tempSelected.includes(card.id)
+                return (
+                  <TouchableOpacity
+                    key={card.id}
+                    style={[styles.cardItem, isSelected && { backgroundColor: `${card.glowColor}20` }]}
+                    onPress={() => (!maxedOut || isSelected ? handleToggle(card.id) : null)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.cardCheckbox}>
+                      <Ionicons
+                        name={isSelected ? 'checkmark-circle' : 'ellipse-outline'}
+                        size={20}
+                        color={isSelected ? C.emerald : C.textMute}
+                      />
+                    </View>
+                    <View style={[styles.cardIcon, { backgroundColor: card.badgeBg }]}>
+                      <Text style={styles.cardEmoji}>{card.emoji}</Text>
+                    </View>
+                    <View style={styles.cardText}>
+                      <Text maxFontSizeMultiplier={1.3} style={styles.cardTitle} numberOfLines={1}>{card.title}</Text>
+                      <Text maxFontSizeMultiplier={1.3} style={styles.cardSub} numberOfLines={1}>{card.sub}</Text>
+                    </View>
+                    {maxedOut && !isSelected && (
+                      <View style={styles.maxedBadge}>
+                        <Text style={styles.maxedText}>MAX</Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                )
+              })}
+            </ScrollView>
+
+            <View style={styles.actionsRow}>
+              <TouchableOpacity style={styles.resetBtn} onPress={handleReset} activeOpacity={0.8}>
+                <Text maxFontSizeMultiplier={1.3} style={styles.resetBtnText}>Reset</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.saveBtn}
+                onPress={handleSave}
+                disabled={tempSelected.length === 0}
+                activeOpacity={0.8}
+              >
+                <Text maxFontSizeMultiplier={1.3} style={styles.saveBtnText}>
+                  {tempSelected.length === 0 ? 'Select cards' : 'Save'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
+  )
+}
+
+const styles = StyleSheet.create({
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)' },
+  keyboardWrap: { flex: 1, justifyContent: 'flex-end' },
+  sheet: {
+    backgroundColor: C.surface,
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    padding: 24,
+    paddingBottom: 36,
+  },
+  handleRow: { alignItems: 'center', marginBottom: 22 },
+  handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: C.border },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 22,
+  },
+  title: { fontSize: 20, fontWeight: '800', color: C.text, letterSpacing: -0.4 },
+  subtitle: { fontSize: 13, color: C.textMute, marginTop: 3 },
+  closeBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: C.raised,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  fieldLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: C.textMute,
+    textTransform: 'uppercase',
+    letterSpacing: 0.7,
+    marginBottom: 12,
+  },
+  scrollArea: { maxHeight: 300 },
+  cardItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: C.raised,
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  cardCheckbox: { width: 24, height: 24, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
+  cardIcon: { width: 44, height: 44, borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
+  cardEmoji: { fontSize: 20 },
+  cardText: { flex: 1, minWidth: 0 },
+  cardTitle: { fontSize: 15, fontWeight: '700', color: C.text, marginBottom: 2 },
+  cardSub: { fontSize: 12, color: C.textSub },
+  maxedBadge: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    minWidth: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: C.coralDim,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  maxedText: { fontSize: 10, fontWeight: '800', color: C.coral },
+  actionsRow: { flexDirection: 'row', gap: 12, marginTop: 20 },
+  resetBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 16,
+    paddingVertical: 15,
+  },
+  resetBtnText: { fontSize: 15, fontWeight: '700', color: C.text },
+  saveBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: C.orange,
+    borderRadius: 16,
+    paddingVertical: 15,
+  },
+  saveBtnText: { fontSize: 15, fontWeight: '800', color: '#fff' },
+})
+
+
+// ===== features/home/components/AddDeadlineModal.tsx =====
+import { Ionicons } from '@expo/vector-icons'
+import { useState } from 'react'
+import {
+  Alert,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native'
+import { C } from '@/lib/colors'
+import { DEADLINE_COLORS } from '@/features/home/constants'
+import type { Deadline } from '@/features/home/types'
+
+export function AddDeadlineModal({
+  visible,
+  onClose,
+  onAdd,
+}: {
+  visible: boolean
+  onClose: () => void
+  onAdd: (deadline: Omit<Deadline, 'id'>) => void
+}) {
+  const [title, setTitle] = useState('')
+  const [course, setCourse] = useState('')
+  const [due, setDue] = useState('')
+  const [color, setColor] = useState(DEADLINE_COLORS[0])
+
+  const handleAdd = () => {
+    if (!title.trim() || !due.trim()) {
+      Alert.alert('Missing fields', 'Please enter a title and due date.')
+      return
+    }
+
+    onAdd({
+      title: title.trim(),
+      course: course.trim() || 'General',
+      due_date: due.trim(),
+      color,
+    })
+
+    setTitle('')
+    setCourse('')
+    setDue('')
+    setColor(DEADLINE_COLORS[0])
+    onClose()
+  }
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent presentationStyle="overFullScreen">
+      <View style={styles.overlay}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.keyboardWrap}>
+          <View style={styles.sheet}>
+            <View style={styles.handleRow}><View style={styles.handle} /></View>
+            <View style={styles.header}>
+              <Text maxFontSizeMultiplier={1.3} style={styles.title}>Add Deadline</Text>
+              <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
+                <Ionicons name="close" size={18} color={C.textSub} />
+              </TouchableOpacity>
+            </View>
+
+            <TextInput
+              style={styles.input}
+              placeholder="Assignment / Exam title"
+              placeholderTextColor={C.textMute}
+              value={title}
+              onChangeText={setTitle}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Course name (optional)"
+              placeholderTextColor={C.textMute}
+              value={course}
+              onChangeText={setCourse}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Due date (e.g. Dec 20, 2025)"
+              placeholderTextColor={C.textMute}
+              value={due}
+              onChangeText={setDue}
+            />
+
+            <Text maxFontSizeMultiplier={1.3} style={styles.fieldLabel}>Colour tag</Text>
+            <View style={styles.colorRow}>
+              {DEADLINE_COLORS.map(swatch => (
+                <TouchableOpacity
+                  key={swatch}
+                  style={[styles.colorDot, { backgroundColor: swatch }, color === swatch && styles.colorDotActive]}
+                  onPress={() => setColor(swatch)}
+                >
+                  {color === swatch && <Ionicons name="checkmark" size={12} color="#fff" />}
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <TouchableOpacity style={styles.primaryBtn} onPress={handleAdd}>
+              <Text maxFontSizeMultiplier={1.3} style={styles.primaryBtnText}>Add Deadline</Text>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
+  )
+}
+
+const styles = StyleSheet.create({
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)' },
+  keyboardWrap: { flex: 1, justifyContent: 'flex-end' },
+  sheet: {
+    backgroundColor: C.surface,
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    padding: 24,
+    paddingBottom: 36,
+  },
+  handleRow: { alignItems: 'center', marginBottom: 22 },
+  handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: C.border },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 22 },
+  title: { fontSize: 20, fontWeight: '800', color: C.text, letterSpacing: -0.4 },
+  closeBtn: { width: 32, height: 32, borderRadius: 10, backgroundColor: C.raised, justifyContent: 'center', alignItems: 'center' },
+  input: {
+    backgroundColor: C.raised,
+    borderRadius: 12,
+    paddingHorizontal: 13,
+    paddingVertical: 11,
+    fontSize: 14,
+    color: C.text,
+    borderWidth: 1,
+    borderColor: C.border,
+    marginBottom: 13,
+  },
+  fieldLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: C.textMute,
+    textTransform: 'uppercase',
+    letterSpacing: 0.7,
+    marginBottom: 7,
+  },
+  colorRow: { flexDirection: 'row', gap: 10, marginBottom: 20 },
+  colorDot: { width: 32, height: 32, borderRadius: 16, justifyContent: 'center', alignItems: 'center' },
+  colorDotActive: { borderWidth: 2.5, borderColor: '#fff' },
+  primaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: C.orange,
+    borderRadius: 16,
+    paddingVertical: 15,
+  },
+  primaryBtnText: { fontSize: 15, fontWeight: '800', color: '#fff' },
+})
+
+
+// ===== features/home/components/AnnouncementAdminModal.tsx =====
+import { Ionicons } from '@expo/vector-icons'
+import { ActivityIndicator, Alert, Image, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
+import * as ImagePicker from 'expo-image-picker'
+import { useEffect, useState } from 'react'
+import { supabase } from '@/core/api/supabase'
+import { base64ToBytes, priorityColor } from '@/features/home/api/home'
+import { C } from '@/lib/colors'
+import type { Announcement } from '@/features/home/types'
+
+export function AnnouncementAdminModal({
+  visible,
+  onClose,
+  announcements,
+  classId,
+  collegeId,
+  onRefresh,
+  onSaveSuccess,
+  onOptimisticUpdate,
+}: {
+  visible: boolean
+  onClose: () => void
+  announcements: Announcement[]
+  classId: string | null
+  collegeId: string | null
+  onRefresh: () => void
+  onSaveSuccess?: () => void
+  onOptimisticUpdate: (updater: (prev: Announcement[]) => Announcement[]) => void
+}) {
+  const [mode, setMode] = useState<'list' | 'edit'>('list')
+  const [editing, setEditing] = useState<Partial<Announcement> | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [imgUp, setImgUp] = useState(false)
+
+  const reset = () => {
+    setEditing(null)
+    setMode('list')
+  }
+
+  useEffect(() => {
+    if (!visible) reset()
+  }, [visible])
+
+  const handleDelete = (id: string) => {
+    Alert.alert('Delete', 'Delete this announcement?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          onOptimisticUpdate(prev => prev.filter(item => item.id !== id))
+          const { error } = await supabase.from('announcements').delete().eq('id', id)
+          if (error) {
+            Alert.alert('Error', error.message)
+            onRefresh()
+          }
+        },
+      },
+    ])
+  }
+
+  const handlePickImage = async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync()
+    if (!permission.granted) {
+      Alert.alert('Permission required', 'Allow photo library access.')
+      return
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'] as any,
+      allowsEditing: true,
+      quality: 0.7,
+      base64: true,
+    })
+
+    if (result.canceled) return
+
+    try {
+      setImgUp(true)
+      const asset = result.assets[0]
+      const ext = asset.uri.split('.').pop()?.toLowerCase() || 'jpg'
+      const fileName = `announcement_${Date.now()}.${ext}`
+      const bytes = base64ToBytes(asset.base64!)
+      const { error } = await supabase.storage.from('announcements').upload(fileName, bytes, {
+        contentType: `image/${ext}`,
+        upsert: true,
+      })
+      if (error) throw error
+      const { data: urlData } = supabase.storage.from('announcements').getPublicUrl(fileName)
+      setEditing(prev => ({ ...prev, image_url: urlData.publicUrl }))
+    } catch (error: any) {
+      Alert.alert('Upload failed', error?.message)
+    } finally {
+      setImgUp(false)
+    }
+  }
+
+  const handleSave = async () => {
+    if (!editing?.title?.trim()) {
+      Alert.alert('Required', 'Please enter a title.')
+      return
+    }
+
+    setSaving(true)
+    try {
+      const payload = {
+        title: editing.title.trim(),
+        body: editing.body?.trim() || '',
+        priority: (editing.priority || 'normal') as Announcement['priority'],
+        image_url: editing.image_url || null,
+        class_id: classId,
+        college_id: collegeId,
+      }
+      const isNew = !editing.id
+
+      if (editing.id) {
+        const { error } = await supabase.from('announcements').update(payload).eq('id', editing.id)
+        if (error) throw new Error(error.message)
+        onOptimisticUpdate(prev => prev.map(item => (item.id === editing.id ? { ...item, ...payload, created_at: item.created_at } : item)))
+      } else {
+        const { data: inserted, error } = await supabase
+          .from('announcements')
+          .insert(payload)
+          .select('id, title, body, image_url, created_at, priority')
+          .single()
+        if (error) throw new Error(error.message)
+        if (!inserted) throw new Error('Insert returned no data.')
+        onOptimisticUpdate(prev => [inserted as Announcement, ...prev])
+      }
+
+      reset()
+      onClose()
+      if (isNew) onSaveSuccess?.()
+      onRefresh()
+    } catch (error: any) {
+      Alert.alert('Could not save', error?.message ?? 'Check your connection.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent presentationStyle="overFullScreen">
+      <View style={styles.overlay}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.keyboardWrap}>
+          <View style={[styles.sheet, { maxHeight: '90%' }]}>
+            <View style={styles.handleRow}><View style={styles.handle} /></View>
+            <View style={styles.header}>
+              <View>
+                <Text maxFontSizeMultiplier={1.3} style={styles.title}>
+                  {mode === 'edit' ? (editing?.id ? 'Edit Announcement' : 'New Announcement') : 'Manage Announcements'}
+                </Text>
+                <Text maxFontSizeMultiplier={1.3} style={styles.subtitle}>
+                  {mode === 'edit' ? 'Fill in details below' : 'Add, edit or remove'}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => { reset(); onClose() }} style={styles.closeBtn}>
+                <Ionicons name="close" size={18} color={C.textSub} />
+              </TouchableOpacity>
+            </View>
+
+            {mode === 'list' ? (
+              <>
+                <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingBottom: 16 }}>
+                  {announcements.length === 0 ? (
+                    <View style={styles.emptyBox}>
+                      <Ionicons name="megaphone-outline" size={32} color={C.textMute} />
+                      <Text maxFontSizeMultiplier={1.3} style={styles.emptyText}>No announcements yet</Text>
+                    </View>
+                  ) : (
+                    announcements.map(item => (
+                      <View key={item.id} style={[styles.annCard, { borderLeftColor: priorityColor(item.priority) }]}>
+                        <View style={{ flex: 1 }}>
+                          <Text maxFontSizeMultiplier={1.3} style={styles.annCardTitle} numberOfLines={1}>{item.title}</Text>
+                          <Text maxFontSizeMultiplier={1.3} style={styles.annCardBody} numberOfLines={2}>{item.body}</Text>
+                          {item.image_url && (
+                            <View style={styles.hasImageRow}>
+                              <Ionicons name="image" size={11} color={C.textMute} />
+                              <Text maxFontSizeMultiplier={1.3} style={styles.hasImageText}>Has image</Text>
+                            </View>
+                          )}
+                        </View>
+                        <View style={styles.iconColumn}>
+                          <TouchableOpacity style={[styles.iconBtn, { backgroundColor: C.sapphDim }]} onPress={() => { setEditing({ ...item }); setMode('edit') }}>
+                            <Ionicons name="pencil" size={15} color={C.sapphire} />
+                          </TouchableOpacity>
+                          <TouchableOpacity style={[styles.iconBtn, { backgroundColor: C.coralDim }]} onPress={() => handleDelete(item.id)}>
+                            <Ionicons name="trash" size={15} color={C.coral} />
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    ))
+                  )}
+                </ScrollView>
+                <TouchableOpacity style={styles.primaryBtn} onPress={() => { setEditing({ title: '', body: '', priority: 'normal', image_url: null }); setMode('edit') }}>
+                  <Ionicons name="add-circle-outline" size={17} color={C.void} />
+                  <Text maxFontSizeMultiplier={1.3} style={styles.primaryBtnText}>New Announcement</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                <TouchableOpacity style={styles.backRow} onPress={reset}>
+                  <Ionicons name="arrow-back" size={15} color={C.textSub} />
+                  <Text maxFontSizeMultiplier={1.3} style={styles.backText}>Back to list</Text>
+                </TouchableOpacity>
+
+                <Text maxFontSizeMultiplier={1.3} style={styles.fieldLabel}>Title *</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Announcement title"
+                  placeholderTextColor={C.textMute}
+                  value={editing?.title || ''}
+                  onChangeText={value => setEditing(prev => ({ ...prev, title: value }))}
+                />
+
+                <Text maxFontSizeMultiplier={1.3} style={styles.fieldLabel}>Body</Text>
+                <TextInput
+                  style={[styles.input, { height: 90, textAlignVertical: 'top' }]}
+                  placeholder="Write the announcement..."
+                  placeholderTextColor={C.textMute}
+                  multiline
+                  numberOfLines={4}
+                  value={editing?.body || ''}
+                  onChangeText={value => setEditing(prev => ({ ...prev, body: value }))}
+                />
+
+                <Text maxFontSizeMultiplier={1.3} style={styles.fieldLabel}>Priority</Text>
+                <View style={styles.priorityRow}>
+                  {(['high', 'normal', 'low'] as const).map(priority => (
+                    <TouchableOpacity
+                      key={priority}
+                      style={[styles.priorityBtn, editing?.priority === priority && { backgroundColor: priorityColor(priority), borderColor: priorityColor(priority) }]}
+                      onPress={() => setEditing(prev => ({ ...prev, priority }))}
+                    >
+                      <Text maxFontSizeMultiplier={1.3} style={[styles.priorityBtnText, editing?.priority === priority && { color: '#fff' }]}>
+                        {priority.charAt(0).toUpperCase() + priority.slice(1)}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                <Text maxFontSizeMultiplier={1.3} style={styles.fieldLabel}>Image (optional)</Text>
+                {editing?.image_url ? (
+                  <View style={styles.imageWrap}>
+                    <Image source={{ uri: editing.image_url }} style={styles.previewImage} resizeMode="cover" />
+                    <TouchableOpacity style={styles.removeImageBtn} onPress={() => setEditing(prev => ({ ...prev, image_url: null }))}>
+                      <Ionicons name="close-circle" size={22} color={C.coral} />
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <TouchableOpacity style={styles.imgPickBtn} onPress={handlePickImage} disabled={imgUp}>
+                    {imgUp ? (
+                      <ActivityIndicator color={C.orange} size="small" />
+                    ) : (
+                      <>
+                        <Ionicons name="image-outline" size={18} color={C.orange} />
+                        <Text maxFontSizeMultiplier={1.3} style={[styles.addBtnText, { color: C.orange }]}>Upload Image</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                )}
+
+                <TouchableOpacity style={[styles.primaryBtn, { marginTop: 18, marginBottom: 8 }]} onPress={handleSave} disabled={saving}>
+                  {saving ? <ActivityIndicator color={C.void} size="small" /> : <Text style={styles.primaryBtnText}>{editing?.id ? 'Save Changes' : 'Post Announcement'}</Text>}
+                </TouchableOpacity>
+              </ScrollView>
+            )}
+          </View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
+  )
+}
+
+const styles = StyleSheet.create({
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)' },
+  keyboardWrap: { flex: 1, justifyContent: 'flex-end' },
+  sheet: { backgroundColor: C.surface, borderTopLeftRadius: 32, borderTopRightRadius: 32, padding: 24, paddingBottom: 48, maxHeight: '88%' },
+  handleRow: { alignItems: 'center', marginBottom: 22 },
+  handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: C.border },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 22 },
+  title: { fontSize: 20, fontWeight: '800', color: C.text, letterSpacing: -0.4 },
+  subtitle: { fontSize: 13, color: C.textMute, marginTop: 3 },
+  closeBtn: { width: 32, height: 32, borderRadius: 10, backgroundColor: C.raised, justifyContent: 'center', alignItems: 'center' },
+  addBtnText: { fontSize: 14, fontWeight: '700', color: C.orange },
+  primaryBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: C.orange, borderRadius: 16, paddingVertical: 15 },
+  primaryBtnText: { fontSize: 15, fontWeight: '800', color: '#fff' },
+  emptyBox: { alignItems: 'center', paddingVertical: 40, gap: 10 },
+  emptyText: { fontSize: 14, color: C.textMute },
+  annCard: { flexDirection: 'row', backgroundColor: C.raised, borderRadius: 14, padding: 13, borderLeftWidth: 4, borderWidth: 1, borderColor: C.border, gap: 10, marginBottom: 10 },
+  annCardTitle: { fontSize: 14, fontWeight: '700', color: C.text, marginBottom: 3 },
+  annCardBody: { fontSize: 12.5, color: C.textSub, lineHeight: 17 },
+  hasImageRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
+  hasImageText: { fontSize: 11, color: C.textMute },
+  iconColumn: { flexDirection: 'column', gap: 8 },
+  iconBtn: { width: 30, height: 30, borderRadius: 9, justifyContent: 'center', alignItems: 'center' },
+  backRow: { flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 20 },
+  backText: { fontSize: 14, color: C.textSub, fontWeight: '600' },
+  fieldLabel: { fontSize: 11, fontWeight: '700', color: C.textMute, textTransform: 'uppercase', letterSpacing: 0.7, marginBottom: 7 },
+  input: { backgroundColor: C.raised, borderRadius: 12, paddingHorizontal: 13, paddingVertical: 11, fontSize: 14, color: C.text, borderWidth: 1, borderColor: C.border, marginBottom: 13 },
+  priorityRow: { flexDirection: 'row', gap: 10, marginBottom: 18 },
+  priorityBtn: { flex: 1, paddingVertical: 10, borderRadius: 11, borderWidth: 1.5, borderColor: C.border, alignItems: 'center' },
+  priorityBtnText: { fontSize: 13, fontWeight: '700', color: C.textMute },
+  imageWrap: { position: 'relative', marginBottom: 16 },
+  previewImage: { width: '100%', height: 150, borderRadius: 14 },
+  removeImageBtn: { position: 'absolute', top: 8, right: 8 },
+  imgPickBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: C.orangeDim, borderRadius: 13, paddingVertical: 14, borderWidth: 1, borderColor: `${C.orange}25`, marginBottom: 4 },
+})
+
+
+// ===== features/home/components/LeaderboardPreview.tsx =====
+import { useQuery } from '@tanstack/react-query'
+import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
+import { C } from '@/lib/colors'
+import { fetchCollegeLeaderboard } from '@/lib/leaderboard'
+
+type LeaderboardEntry = {
+  id: string
+  rank: number
+  score: number
+  full_name?: string | null
+  avatar_url?: string | null
+  movement?: number
+}
+
+function PodiumAvatar({ entry, size, bg }: { entry: LeaderboardEntry; size: number; bg: string }) {
+  return (
+    <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: bg, justifyContent: 'center', alignItems: 'center', overflow: 'hidden' }}>
+      {entry.avatar_url
+        ? <Image source={{ uri: entry.avatar_url }} style={{ width: size, height: size, borderRadius: size / 2 }} />
+        : <Text style={{ fontSize: size * 0.38, fontWeight: '800', color: '#fff' }}>{entry.full_name?.charAt(0) ?? '?'}</Text>
+      }
+      <View style={styles.podAvatarBadge}>
+        <Text allowFontScaling={false} style={styles.podAvatarBadgeText}>{entry.rank}</Text>
+      </View>
+    </View>
+  )
+}
+
+export function LeaderboardPreview({
+  userId,
+  collegeId,
+  onOpenFull,
+}: {
+  userId: string | null
+  collegeId: string | null
+  onOpenFull: () => void
+}) {
+  const { data: collegeBoard = [] } = useQuery({
+    queryKey: ['leaderboard_college', collegeId, 'weekly'],
+    queryFn: () => fetchCollegeLeaderboard(collegeId, 'weekly'),
+    enabled: !!collegeId,
+    staleTime: 5 * 60 * 1000,
+  })
+
+  const activeBoard = collegeBoard as LeaderboardEntry[]
+  const podium = activeBoard.slice(0, 3)
+  const rest = activeBoard.slice(3, 5)
+  const myEntry = activeBoard.find(entry => entry.id === userId)
+  const topScore = activeBoard[0]?.score || 1
+
+  if (activeBoard.length === 0) return null
+
+  return (
+    <View style={styles.card}>
+      <View style={styles.header}>
+        <View style={styles.headerLeft}>
+          <View style={styles.headerLine} />
+          <Text allowFontScaling={false} style={styles.headerLabel}>LEADERBOARD</Text>
+        </View>
+        <TouchableOpacity onPress={onOpenFull} activeOpacity={0.7}>
+          <Text allowFontScaling={false} style={styles.headerLink}>Full board</Text>
+        </TouchableOpacity>
+      </View>
+
+      {podium.length >= 1 && (
+        <View style={styles.podiumWrap}>
+          <View style={[styles.podSlot, { alignSelf: 'flex-end' }]}>
+            <PodiumAvatar entry={podium[1] ?? podium[0]} size={68} bg="#5A6070" />
+            <Text allowFontScaling={false} style={styles.podName} numberOfLines={1}>
+              {(podium[1] ?? podium[0]).full_name?.split(' ')[0]}
+            </Text>
+            <Text allowFontScaling={false} style={styles.podPts}>
+              {(podium[1] ?? podium[0]).score.toLocaleString()}
+            </Text>
+            <View style={styles.podBase2} />
+          </View>
+
+          <View style={[styles.podSlot, { alignSelf: 'flex-end', marginBottom: 0 }]}>
+            <Text style={styles.crown}>??</Text>
+            <PodiumAvatar entry={podium[0]} size={84} bg="#BF9730" />
+            <Text allowFontScaling={false} style={[styles.podName, { color: C.text }]} numberOfLines={1}>
+              {podium[0].full_name?.split(' ')[0]}
+            </Text>
+            <Text allowFontScaling={false} style={[styles.podPts, { color: C.gold, fontWeight: '700', fontSize: 13 }]}>
+              {podium[0].score.toLocaleString()}
+            </Text>
+            <View style={styles.podBase1} />
+          </View>
+
+          <View style={[styles.podSlot, { alignSelf: 'flex-end' }]}>
+            <PodiumAvatar entry={podium[2] ?? podium[0]} size={68} bg="#7A4A28" />
+            <Text allowFontScaling={false} style={styles.podName} numberOfLines={1}>
+              {(podium[2] ?? podium[0]).full_name?.split(' ')[0]}
+            </Text>
+            <Text allowFontScaling={false} style={styles.podPts}>
+              {(podium[2] ?? podium[0]).score.toLocaleString()}
+            </Text>
+            <View style={styles.podBase3} />
+          </View>
+        </View>
+      )}
+
+      <View style={styles.rankSection}>
+        {rest.map((entry) => {
+          const isMe = entry.id === userId
+          const mv = entry.movement
+          const hasMv = mv !== undefined && mv !== 0
+
+          return (
+            <View key={entry.id}>
+              <View style={styles.rowDivider} />
+              <View style={[styles.rankRow, isMe && styles.rankRowMe]}>
+                <Text style={styles.rankNum}>{entry.rank}</Text>
+                <View style={styles.rankAvatarBox}>
+                  {entry.avatar_url
+                    ? <Image source={{ uri: entry.avatar_url }} style={{ width: 44, height: 44, borderRadius: 14 }} />
+                    : <Text style={styles.rankAvatarInit}>{entry.full_name?.charAt(0) ?? '?'}</Text>
+                  }
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.rankName} numberOfLines={1}>{entry.full_name}</Text>
+                  <View style={styles.rankUnderline}>
+                    <View style={[styles.rankUnderlineFill, { width: `${Math.min((entry.score / topScore) * 100, 100)}%` as any }]} />
+                  </View>
+                </View>
+                <View style={styles.mvChip}>
+                  {hasMv
+                    ? <Text style={mv! > 0 ? styles.mvUp : styles.mvDown}>{mv! > 0 ? `â†‘${mv}` : `â†“${Math.abs(mv!)}`}</Text>
+                    : <Text style={styles.mvNeutral}>-</Text>
+                  }
+                </View>
+                <View style={styles.ptsBox}>
+                  <Text style={styles.rankPts}>{entry.score.toLocaleString()}</Text>
+                  <Text style={styles.rankPtsSub}>pts</Text>
+                </View>
+              </View>
+            </View>
+          )
+        })}
+      </View>
+
+      {myEntry && (
+        <View style={styles.footer}>
+          <Text style={styles.footerHash}>#</Text>
+          <Text style={styles.footerRankNum}>{myEntry.rank}</Text>
+          <View style={{ flex: 1, minWidth: 0, marginLeft: 4 }}>
+            <Text style={styles.footerLabel}>Your College Rank</Text>
+            <View style={styles.footerBar}>
+              <View style={[styles.footerBarFill, { width: `${Math.min((myEntry.score / topScore) * 100, 100)}%` as any }]} />
+            </View>
+            <Text style={styles.footerSub}>Top 5% | Keep going</Text>
+          </View>
+          <View style={{ alignItems: 'flex-end', flexShrink: 0, marginLeft: 10 }}>
+            <Text style={styles.footerScore}>{myEntry.score.toLocaleString()}</Text>
+            <Text style={styles.footerScoreSub}>total pts</Text>
+          </View>
+        </View>
+      )}
+    </View>
+  )
+}
+
+const styles = StyleSheet.create({
+  card: { backgroundColor: C.surface, borderColor: C.border, borderWidth: 1, borderRadius: 28, padding: 18, overflow: 'hidden' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  headerLine: { width: 18, height: 1, backgroundColor: C.orange, opacity: 0.8 },
+  headerLabel: { color: C.textMute, fontWeight: '800', letterSpacing: 2.2, fontSize: 9.5 },
+  headerLink: { color: C.orange, fontSize: 10.5, fontWeight: '700' },
+
+  podiumWrap: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 18, paddingHorizontal: 4 },
+  podSlot: { flex: 1, alignItems: 'center', marginBottom: 4 },
+  crown: { fontSize: 18, marginBottom: 4 },
+  podAvatarBadge: { position: 'absolute', right: -2, bottom: -2, minWidth: 22, height: 22, borderRadius: 11, backgroundColor: C.orange, borderWidth: 2, borderColor: C.surface, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 4 },
+  podAvatarBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800' },
+  podName: { marginTop: 8, color: C.textSub, fontSize: 12.5, fontWeight: '700', maxWidth: 88 },
+  podPts: { marginTop: 2, color: C.textMute, fontSize: 11.5, fontWeight: '600' },
+  podBase1: { marginTop: 10, width: 72, height: 10, borderRadius: 999, backgroundColor: 'rgba(223,168,60,0.20)' },
+  podBase2: { marginTop: 10, width: 62, height: 8, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.06)' },
+  podBase3: { marginTop: 10, width: 62, height: 8, borderRadius: 999, backgroundColor: 'rgba(122,74,40,0.22)' },
+
+  rankSection: { marginTop: 2 },
+  rowDivider: { height: 1, backgroundColor: C.border },
+  rankRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12 },
+  rankRowMe: { backgroundColor: C.raised, borderRadius: 16, paddingHorizontal: 10 },
+  rankNum: { width: 20, color: C.textMute, fontSize: 12, fontWeight: '800', textAlign: 'center' },
+  rankAvatarBox: { width: 44, height: 44, borderRadius: 14, backgroundColor: C.raised, justifyContent: 'center', alignItems: 'center', overflow: 'hidden', flexShrink: 0 },
+  rankAvatarInit: { color: C.text, fontSize: 17, fontWeight: '800' },
+  rankName: { color: C.text, fontSize: 13, fontWeight: '700', marginBottom: 6 },
+  rankUnderline: { height: 4, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.06)', overflow: 'hidden' },
+  rankUnderlineFill: { height: '100%', borderRadius: 999, backgroundColor: C.orange },
+  mvChip: { minWidth: 34, alignItems: 'center' },
+  mvUp: { color: C.emerald, fontSize: 11, fontWeight: '800' },
+  mvDown: { color: C.coral, fontSize: 11, fontWeight: '800' },
+  mvNeutral: { color: C.textMute, fontSize: 11, fontWeight: '700' },
+  ptsBox: { alignItems: 'flex-end', minWidth: 52 },
+  rankPts: { color: C.text, fontSize: 12.5, fontWeight: '800' },
+  rankPtsSub: { color: C.textMute, fontSize: 10 },
+
+  footer: { marginTop: 16, flexDirection: 'row', alignItems: 'center', borderRadius: 20, backgroundColor: C.raised, paddingHorizontal: 14, paddingVertical: 14 },
+  footerHash: { color: C.orange, fontSize: 16, fontWeight: '900' },
+  footerRankNum: { color: C.text, fontSize: 22, fontWeight: '900', marginLeft: 2, minWidth: 34 },
+  footerLabel: { color: C.text, fontSize: 12, fontWeight: '700', marginBottom: 6 },
+  footerBar: { height: 5, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.06)', overflow: 'hidden' },
+  footerBarFill: { height: '100%', borderRadius: 999, backgroundColor: C.orange },
+  footerSub: { color: C.textMute, fontSize: 10.5, marginTop: 6 },
+  footerScore: { color: C.text, fontSize: 16, fontWeight: '900' },
+  footerScoreSub: { color: C.textMute, fontSize: 10.5 },
+})
+
+
+// ===== features/home/types.ts =====
+import type { Ionicons } from '@expo/vector-icons'
+
+export type Profile = {
+  full_name: string
+  avatar_url: string | null
+  college_id: string | null
+  class_id: string | null
+  is_verified: boolean
+  is_premium: boolean
+  bio: string | null
+  role: string | null
+  college: { name: string; short_name: string } | null
+  class: { name: string } | null
+}
+
+export type Material = {
+  id: string
+  title: string
+  type: string
+  file_url: string
+  created_at: string
+  courses: any
+}
+
+export type Announcement = {
+  id: string
+  title: string
+  body: string
+  image_url?: string | null
+  created_at: string
+  priority: 'high' | 'normal' | 'low'
+}
+
+export type Deadline = {
+  id: string
+  title: string
+  due_date: string
+  course: string
+  color: string
+}
+
+export type IoniconName = React.ComponentProps<typeof Ionicons>['name']
+
+export type PendingAvatarUpload = {
+  localUri: string
+  base64?: string
+  fileExt: string
+  userId: string
+  queuedAt: number
+  retryCount?: number
+}
+
+export type ScheduleItem = {
+  id: string
+  hour: string
+  period: 'AM' | 'PM'
+  title: string
+  meta: string
+  tagLabel: string
+  tagColor: string
+  tagBg: string
+  dotColor: string
+  cancelled?: boolean
+}
+
+export type DashCard = {
+  id: string
+  emoji: string
+  title: string
+  sub: string
+  badgeLabel: string
+  badgeColor: string
+  badgeBg: string
+  borderColor: string
+  glowColor: string
+  onPress: () => void
+}
+
+export type GradeEntry = {
+  id: string
+  subject: string
+  score: string
+  weight: string
+}
+
+
+// ===== features/home/constants.ts =====
+import { C } from '@/lib/colors'
+
+export const MOTIVATIONS = [
+  { quote: 'The secret of getting ahead is getting started.', author: 'Mark Twain' },
+  { quote: 'Success is the sum of small efforts repeated day in and day out.', author: 'Robert Collier' },
+  { quote: "Believe you can and you're halfway there.", author: 'Theodore Roosevelt' },
+  { quote: 'Education is the most powerful weapon you can use to change the world.', author: 'Nelson Mandela' },
+  { quote: 'The expert in anything was once a beginner.', author: 'Helen Hayes' },
+  { quote: 'Push yourself, because no one else is going to do it for you.', author: 'Unknown' },
+  { quote: 'Great things never come from comfort zones.', author: 'Unknown' },
+  { quote: 'Dream it. Believe it. Build it.', author: 'Unknown' },
+  { quote: 'Study hard, for the well is deep and our brains are shallow.', author: 'Richard Baxter' },
+  { quote: "Don't watch the clock; do what it does. Keep going.", author: 'Sam Levenson' },
+  { quote: 'The beautiful thing about learning is that nobody can take it away from you.', author: 'B.B. King' },
+]
+
+export const DEADLINE_COLORS = [C.sapphire, C.lavender, C.emerald, C.gold, C.coral, C.pink]
+export const DEADLINES_KEY = 'studentshare_deadlines'
+export const DASHBOARD_CACHE_KEY = 'studentshare_dashboard_cache'
+export const DASH_CUSTOM_CARDS_KEY = 'studentshare_dashboard_custom_cards'
+export const ANNOUNCEMENTS_KEY = 'studentshare_announcements_cache'
+export const SEEN_MATERIALS_KEY = 'studentshare_seen_material_ids'
+export const AVATAR_QUEUE_KEY = 'studentshare_avatar_upload_queue'
+export const AVATAR_LOCK_KEY = 'studentshare_avatar_refetch_lock'
+export const AVATAR_LOCK_TTL_MS = 60_000
+export const MAX_AVATAR_BYTES = 2 * 1024 * 1024
+

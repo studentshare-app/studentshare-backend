@@ -3,6 +3,7 @@ import SQLiteAdapter from '@nozbe/watermelondb/adapters/sqlite';
 import { Platform } from 'react-native';
 
 import schema from './schema';
+import migrations from './migrations';
 import User from './models/User';
 import Post from './models/Post';
 import Comment from './models/Comment';
@@ -11,8 +12,17 @@ import Conversation from './models/Conversation';
 import Message from './models/Message';
 import Note from './models/Note';
 import SyncQueue from './models/SyncQueue';
+import Course from './models/Course';
+import Lecturer from './models/Lecturer';
+import PostInteraction from './models/PostInteraction';
+import Bookmark from './models/Bookmark';
+
 
 // ─── Adapter ────────────────────────────────────────────────────────────────
+
+console.log('[WatermelonDB] Initializing database with:');
+console.log(' - Schema Version:', schema.version);
+console.log(' - Migrations Range:', migrations ? `${migrations.minVersion} to ${migrations.maxVersion}` : 'None');
 
 let adapter;
 
@@ -20,7 +30,8 @@ if (Platform.OS === 'web') {
   // Web: use LokiJS (no native SQLite available)
   const LokiJSAdapter = require('@nozbe/watermelondb/adapters/lokijs').default;
   adapter = new LokiJSAdapter({
-    schema,
+    schema: schema,
+    migrations: migrations,
     dbName: 'studentshare_web',
     useWebWorker: false,
     useIncrementalIndexedDB: true,
@@ -28,9 +39,9 @@ if (Platform.OS === 'web') {
 } else {
   // iOS / Android: native SQLite via expo-sqlite
   adapter = new SQLiteAdapter({
-    schema,
+    schema: schema,
+    migrations: migrations,
     dbName: 'studentshare',
-    // migrations: migrations, // add when you have migrations
     jsi: true, // faster JS interface — requires JSI support (expo-dev-client ✓)
     onSetUpError: (error) => {
       console.error('[WatermelonDB] Setup error:', error);
@@ -53,7 +64,12 @@ const database = new Database({
     Message,
     Note,
     SyncQueue,
+    Course,
+    Lecturer,
+    PostInteraction,
+    Bookmark,
   ],
 });
+
 
 export default database;

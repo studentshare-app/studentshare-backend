@@ -26,6 +26,7 @@ import {
 import {
   Alert,
   Animated,
+  AppState,
   Easing,
   KeyboardAvoidingView,
   Modal,
@@ -36,6 +37,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  Vibration,
   View,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -79,14 +81,18 @@ const C = {
 } as const
 
 // ─────────────────────────────────────────────
-// Storage keys
+// Storage keys (scoped per user)
 // ─────────────────────────────────────────────
-const KEYS = {
-  BLOCKS:  'ss_planner_blocks_${userId}',
-  TASKS:   'ss_planner_tasks',
-  GOALS:   'ss_study_goals_${userId}',
-  STATS:   'ss_planner_stats',
-} as const
+function getStorageKeys(uid: string | null) {
+  const s = uid || 'anon'
+  return {
+    BLOCKS: `ss_planner_blocks_${s}`,
+    TASKS:  `ss_planner_tasks_${s}`,
+    GOALS:  `ss_study_goals_${s}`,
+    STATS:  `ss_planner_stats_${s}`,
+    FOCUS:  `ss_focus_session_${s}`,
+  }
+}
 
 // ─────────────────────────────────────────────
 // Types
@@ -102,6 +108,8 @@ type TimeBlock = {
   startTime: string
   endTime: string
   color: string
+  completed: boolean
+  completedAt?: string
 }
 
 type PlannerTask = {
@@ -110,6 +118,7 @@ type PlannerTask = {
   course: string
   dueDate: string
   done: boolean
+  completedAt?: string
   color: string
   priority: 'high' | 'normal' | 'low'
 }
@@ -126,12 +135,22 @@ type PlannerStats = {
   total_tasks: number
   total_pomodoros: number
   streak: number
+  best_streak: number
   last_active: string
   sessions_today: number
   focused_mins_today: number
 }
 
 type PomoMode = 'focus' | 'short' | 'long'
+
+type FocusSession = {
+  startedAt: number
+  mode: PomoMode
+  subject: string
+  totalSecs: number
+  pausedAt?: number
+  remaining?: number
+}
 
 // ─────────────────────────────────────────────
 // Constants
@@ -148,6 +167,7 @@ const DEFAULT_STATS: PlannerStats = {
   total_tasks: 0,
   total_pomodoros: 0,
   streak: 0,
+  best_streak: 0,
   last_active: '',
   sessions_today: 0,
   focused_mins_today: 0,
@@ -256,13 +276,34 @@ function dueDateLabel(isoDate: string): { label: string; urgent: boolean } {
 function getWeeklyBlockHours(blocks: TimeBlock[]): number {
   const week = getWeekDays(new Date()).map(toISO)
   return blocks
+    .filter(b => week.includes(b.date) && b.completed)
+    .reduce((sum, b) => sum + blockDurationMins(b) / 60, 0)
+}
+
+function getWeeklyScheduledHours(blocks: TimeBlock[]): number {
+  const week = getWeekDays(new Date()).map(toISO)
+  return blocks
     .filter(b => week.includes(b.date))
     .reduce((sum, b) => sum + blockDurationMins(b) / 60, 0)
 }
 
+function getWeeklyBlocksDone(blocks: TimeBlock[]): number {
+  const week = getWeekDays(new Date()).map(toISO)
+  return blocks.filter(b => week.includes(b.date) && b.completed).length
+}
+
+function getWeeklyBlocksTotal(blocks: TimeBlock[]): number {
+  const week = getWeekDays(new Date()).map(toISO)
+  return blocks.filter(b => week.includes(b.date)).length
+}
+
 function getWeeklyTasksDone(tasks: PlannerTask[]): number {
   const week = getWeekDays(new Date()).map(toISO)
-  return tasks.filter(t => t.done && week.some(d => d === t.dueDate)).length
+  return tasks.filter(t => {
+    if (!t.done) return false
+    if (t.completedAt) return week.includes(t.completedAt.slice(0, 10))
+    return week.some(d => d === t.dueDate)
+  }).length
 }
 
 // ─────────────────────────────────────────────
@@ -414,7 +455,7 @@ function AddBlockModal({
     const [sh, sm] = startTime.split(':').map(Number)
     const [eh, em] = endTime.split(':').map(Number)
     if (eh * 60 + em <= sh * 60 + sm) { Alert.alert('Invalid time', 'End time must be after start time.'); return }
-    onAdd({ subject: subject.trim(), type, date: selectedDate, startTime, endTime, color: BLOCK_COLORS[type] })
+    onAdd({ subject: subject.trim(), type, date: selectedDate, startTime, endTime, color: BLOCK_COLORS[type], completed: false })
     onClose()
   }
 
@@ -630,11 +671,12 @@ function EditGoalsModal({
 // SCHEDULE TAB
 // ─────────────────────────────────────────────
 function ScheduleTab({
-  blocks, onAddBlock, onDeleteBlock, stats, goals, canAddBlock, onGate,
+  blocks, onAddBlock, onDeleteBlock, onToggleComplete, stats, goals, canAddBlock, onGate,
 }: {
   blocks: TimeBlock[]
   onAddBlock: (b: Omit<TimeBlock, 'id'>) => void
   onDeleteBlock: (id: string) => void
+  onToggleComplete: (id: string) => void
   stats: PlannerStats
   goals: StudyGoals
   canAddBlock: boolean
@@ -645,11 +687,14 @@ function ScheduleTab({
   const [selectedDate, setSelectedDate] = useState(todayISO())
   const [showAdd,      setShowAdd]      = useState(false)
 
-  const weekDays    = useMemo(() => getWeekDays(weekRef), [weekRef])
-  const dayBlocks   = useMemo(() => blocks.filter(b => b.date === selectedDate).sort((a, b) => a.startTime.localeCompare(b.startTime)), [blocks, selectedDate])
-  const weeklyHours = useMemo(() => getWeeklyBlockHours(blocks), [blocks])
-  const weekPct     = Math.min((weeklyHours / goals.weekly_hours) * 100, 100)
-  const DAY_NAMES   = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']
+  const weekDays        = useMemo(() => getWeekDays(weekRef), [weekRef])
+  const dayBlocks       = useMemo(() => blocks.filter(b => b.date === selectedDate).sort((a, b) => a.startTime.localeCompare(b.startTime)), [blocks, selectedDate])
+  const weeklyCompleted = useMemo(() => getWeeklyBlockHours(blocks), [blocks])
+  const weeklyScheduled = useMemo(() => getWeeklyScheduledHours(blocks), [blocks])
+  const blocksDone      = useMemo(() => getWeeklyBlocksDone(blocks), [blocks])
+  const blocksTotal     = useMemo(() => getWeeklyBlocksTotal(blocks), [blocks])
+  const weekPct         = Math.min((weeklyCompleted / goals.weekly_hours) * 100, 100)
+  const DAY_NAMES       = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']
 
   const handleAddPress = () => { if (!canAddBlock) { onGate(); return } setShowAdd(true) }
 
@@ -659,13 +704,16 @@ function ScheduleTab({
         <LinearGradient colors={[C.sapphDim, C.emerDim + '80']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
         <View style={sc.overviewRow}>
           <View style={{ flex: 1 }}>
-            <Text maxFontSizeMultiplier={1.2} style={sc.overviewLabel}>This week</Text>
+            <Text maxFontSizeMultiplier={1.2} style={sc.overviewLabel}>This week · completed</Text>
             <Text maxFontSizeMultiplier={1.2} style={sc.overviewHours}>
-              {weeklyHours.toFixed(1)}<Text style={sc.overviewHoursSub}>h / {goals.weekly_hours}h</Text>
+              {weeklyCompleted.toFixed(1)}<Text style={sc.overviewHoursSub}>h / {goals.weekly_hours}h</Text>
             </Text>
             <View style={sc.progressTrack}>
               <View style={[sc.progressFill, { width: `${weekPct}%` as any, backgroundColor: weekPct >= 100 ? C.emerald : C.sapphire }]} />
             </View>
+            <Text allowFontScaling={false} style={sc.overviewMeta}>
+              {weeklyScheduled.toFixed(1)}h scheduled · {blocksDone}/{blocksTotal} sessions done
+            </Text>
           </View>
           <View style={sc.overviewRight}>
             <View style={sc.streakBox}>
@@ -677,14 +725,16 @@ function ScheduleTab({
         <View style={sc.streakDots}>
           {weekDays.map((d, i) => {
             const iso = toISO(d)
+            const dayCompleted = blocks.some(b => b.date === iso && b.completed)
             const hasBlocks = blocks.some(b => b.date === iso)
             const isTod  = iso === todayISO()
             const isPast = iso < todayISO()
             return (
               <View key={i} style={sc.streakDotCol}>
                 <Text allowFontScaling={false} style={sc.streakDotDay}>{DAY_NAMES[i]}</Text>
-                <View style={[sc.streakDot, hasBlocks && isPast && sc.streakDotDone, isTod && sc.streakDotToday, hasBlocks && isTod && { borderColor: C.sapphire }]}>
-                  {hasBlocks && <View style={[sc.streakDotInner, { backgroundColor: isTod ? C.sapphire : C.emerald }]} />}
+                <View style={[sc.streakDot, dayCompleted && isPast && sc.streakDotDone, isTod && sc.streakDotToday, hasBlocks && isTod && { borderColor: C.sapphire }]}>
+                  {dayCompleted && <View style={[sc.streakDotInner, { backgroundColor: isTod ? C.sapphire : C.emerald }]} />}
+                  {!dayCompleted && hasBlocks && <View style={[sc.streakDotInner, { backgroundColor: C.textMute, width: 5, height: 5, borderRadius: 3 }]} />}
                 </View>
               </View>
             )
@@ -722,7 +772,6 @@ function ScheduleTab({
         <Text maxFontSizeMultiplier={1.2} style={g.sectionTitle}>
           {new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
         </Text>
-        {/* GATE: turns gold + lock icon when at limit */}
         <TouchableOpacity style={[sc.addBlockBtn, !canAddBlock && sc.addBlockBtnLocked]} onPress={handleAddPress} activeOpacity={0.85}>
           <Ionicons name={canAddBlock ? 'add' : 'lock-closed'} size={15} color={canAddBlock ? C.sapphire : C.gold} />
           <Text maxFontSizeMultiplier={1.2} style={[sc.addBlockBtnText, !canAddBlock && { color: C.gold }]}>Add block</Text>
@@ -737,16 +786,22 @@ function ScheduleTab({
         <View style={{ gap: 10 }}>
           {dayBlocks.map(block => (
             <ScalePress key={block.id}>
-              <View style={[sc.block, { borderLeftColor: block.color }]}>
+              <View style={[sc.block, { borderLeftColor: block.color }, block.completed && sc.blockDone]}>
                 <View style={[sc.blockAccent, { backgroundColor: block.color + '15' }]} />
+                <TouchableOpacity
+                  style={[sc.blockCheck, block.completed && { backgroundColor: C.emerald, borderColor: C.emerald }]}
+                  onPress={() => onToggleComplete(block.id)} activeOpacity={0.7}
+                >
+                  {block.completed && <Ionicons name="checkmark" size={13} color={C.void} />}
+                </TouchableOpacity>
                 <View style={[sc.blockIconBox, { backgroundColor: block.color + '15', borderColor: block.color + '25' }]}>
                   <Ionicons name={block.type === 'lecture' ? 'school-outline' : block.type === 'revision' ? 'refresh-outline' : block.type === 'practice' ? 'barbell-outline' : block.type === 'assignment' ? 'document-text-outline' : 'ellipsis-horizontal'} size={18} color={block.color} />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text maxFontSizeMultiplier={1.2} style={sc.blockSubject} numberOfLines={1}>{block.subject}</Text>
+                  <Text maxFontSizeMultiplier={1.2} style={[sc.blockSubject, block.completed && { color: C.textMute }]} numberOfLines={1}>{block.subject}</Text>
                   <Text allowFontScaling={false} style={sc.blockTime}>{block.startTime} — {block.endTime} · {formatDuration(blockDurationMins(block))}</Text>
                 </View>
-                <TagChip label={BLOCK_TYPE_LABELS[block.type]} color={block.color} />
+                <TagChip label={block.completed ? '✓ Done' : BLOCK_TYPE_LABELS[block.type]} color={block.completed ? C.emerald : block.color} />
                 <TouchableOpacity onPress={() => Alert.alert('Delete block', `Remove "${block.subject}"?`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: () => onDeleteBlock(block.id) }])} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={{ marginLeft: 4 }}>
                   <Ionicons name="close-circle" size={18} color={C.textMute} />
                 </TouchableOpacity>
@@ -887,6 +942,7 @@ function FocusTab({
   const [subject,   setSubject]   = useState('General')
   const [editSubj,  setEditSubj]  = useState(false)
 
+  const focusKey = `ss_focus_session_${userId || 'anon'}`
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const totalSecs   = POMO_DURATIONS[mode]
   const pct         = ((totalSecs - remaining) / totalSecs) * 100
@@ -896,32 +952,86 @@ function FocusTab({
     Animated.timing(ringAnim, { toValue: pct, duration: 300, useNativeDriver: false, easing: Easing.linear }).start()
   }, [pct])
 
-  const start = useCallback(() => {
-    // GATE: block start if free user hit session limit
+  const clearTimer = useCallback(() => {
+    if (intervalRef.current) clearInterval(intervalRef.current)
+    setRunning(false)
+    AsyncStorage.removeItem(focusKey)
+  }, [focusKey])
+
+  const completeSession = useCallback(async (smode: PomoMode, ssub: string) => {
+    clearTimer()
+    setRemaining(0)
+    if (smode === 'focus') {
+      onSessionComplete(smode)
+      if (userId) sbRun(supabase.from('user_activity').insert({ user_id: userId, activity_type: 'ai_session' }))
+    }
+    Vibration.vibrate([0, 500, 200, 500])
+    Alert.alert(smode === 'focus' ? '🎉 Session complete!' : '⏰ Break over!', smode === 'focus' ? `Great work on "${ssub}"! Take a break.` : 'Ready to focus again?')
+    setRemaining(POMO_DURATIONS[smode])
+  }, [clearTimer, onSessionComplete, userId])
+
+  const tick = useCallback((endAt: number, currentMode: PomoMode, currentSubj: string) => {
+    const r = Math.round((endAt - Date.now()) / 1000)
+    if (r <= 0) {
+      completeSession(currentMode, currentSubj)
+    } else {
+      setRemaining(r)
+    }
+  }, [completeSession])
+
+  const start = useCallback(async () => {
     if (!canFocus) { onGate(); return }
+    const endAt = Date.now() + remaining * 1000
+    await AsyncStorage.setItem(focusKey, JSON.stringify({ endAt, mode, subject, totalSecs }))
     setRunning(true)
-    intervalRef.current = setInterval(() => {
-      setRemaining(prev => {
-        if (prev <= 1) {
-          clearInterval(intervalRef.current!)
-          setRunning(false)
-          if (mode === 'focus') {
-            onSessionComplete(mode)
-            if (userId) sbRun(supabase.from('user_activity').insert({ user_id: userId, activity_type: 'ai_session' }))
-          }
-          Alert.alert(mode === 'focus' ? '🎉 Session complete!' : '⏰ Break over!', mode === 'focus' ? `Great work on "${subject}"! Take a break.` : 'Ready to focus again?')
-          return 0
+    if (intervalRef.current) clearInterval(intervalRef.current)
+    intervalRef.current = setInterval(() => tick(endAt, mode, subject), 1000)
+  }, [canFocus, remaining, focusKey, mode, subject, totalSecs, onGate, tick])
+
+  const pause = useCallback(async () => {
+    if (intervalRef.current) clearInterval(intervalRef.current)
+    setRunning(false)
+    await AsyncStorage.setItem(focusKey, JSON.stringify({ pausedRemaining: remaining, mode, subject, totalSecs }))
+  }, [remaining, mode, subject, totalSecs, focusKey])
+
+  const reset = useCallback(() => {
+    clearTimer()
+    setRemaining(POMO_DURATIONS[mode])
+  }, [clearTimer, mode])
+
+  const switchMode = useCallback((newMode: PomoMode) => {
+    clearTimer()
+    setMode(newMode)
+    setRemaining(POMO_DURATIONS[newMode])
+  }, [clearTimer])
+
+  useEffect(() => {
+    let active = true
+    AsyncStorage.getItem(focusKey).then(raw => {
+      if (!active || !raw) return
+      const s = JSON.parse(raw)
+      setMode(s.mode)
+      setSubject(s.subject)
+      if (s.pausedRemaining !== undefined) {
+        setRemaining(s.pausedRemaining)
+      } else if (s.endAt) {
+        const r = Math.round((s.endAt - Date.now()) / 1000)
+        if (r <= 0) {
+          completeSession(s.mode, s.subject)
+        } else {
+          setRemaining(r)
+          setRunning(true)
+          if (intervalRef.current) clearInterval(intervalRef.current)
+          intervalRef.current = setInterval(() => tick(s.endAt, s.mode, s.subject), 1000)
         }
-        return prev - 1
-      })
-    }, 1000)
-  }, [mode, subject, userId, onSessionComplete, canFocus, onGate])
+      }
+    })
+    return () => {
+      active = false
+      if (intervalRef.current) clearInterval(intervalRef.current)
+    }
+  }, [focusKey, completeSession, tick])
 
-  const pause      = useCallback(() => { clearInterval(intervalRef.current!); setRunning(false) }, [])
-  const reset      = useCallback(() => { clearInterval(intervalRef.current!); setRunning(false); setRemaining(POMO_DURATIONS[mode]) }, [mode])
-  const switchMode = useCallback((newMode: PomoMode) => { clearInterval(intervalRef.current!); setRunning(false); setMode(newMode); setRemaining(POMO_DURATIONS[newMode]) }, [])
-
-  useEffect(() => { return () => clearInterval(intervalRef.current!) }, [])
 
   const sessionsPct = Math.min((stats.sessions_today / goals.daily_pomodoros) * 100, 100)
   const ringSize    = 200
@@ -1098,7 +1208,7 @@ function GoalsTab({
           { label: 'Hours studied', val: stats.total_hours.toFixed(1), color: C.sapphire, icon: 'school-outline'         as const },
           { label: 'Tasks done',    val: String(stats.total_tasks),    color: C.emerald,  icon: 'checkmark-done-outline'  as const },
           { label: 'Pomodoros',     val: String(stats.total_pomodoros),color: C.gold,     icon: 'timer-outline'           as const },
-          { label: 'Best streak',   val: `${stats.streak}🔥`,          color: C.coral,    icon: 'flame-outline'           as const },
+          { label: 'Best streak',   val: `${stats.best_streak || stats.streak}🔥`, color: C.coral, icon: 'flame-outline'           as const },
         ].map(item => (
           <View key={item.label} style={gl.allTimeCard}>
             <View style={[gl.allTimeIconBox, { backgroundColor: item.color + '15' }]}>
@@ -1154,47 +1264,53 @@ export default function StudyPlannerScreen() {
     { key: 'goals',    label: 'Goals',    icon: 'trophy'           },
   ]
 
+  const keys = useMemo(() => getStorageKeys(userId), [userId])
+
   useEffect(() => {
     const load = async () => {
       try {
         const [rawBlocks, rawTasks, rawGoals, rawStats] = await Promise.all([
-          AsyncStorage.getItem(KEYS.BLOCKS),
-          AsyncStorage.getItem(KEYS.TASKS),
-          AsyncStorage.getItem(KEYS.GOALS),
-          AsyncStorage.getItem(KEYS.STATS),
+          AsyncStorage.getItem(keys.BLOCKS),
+          AsyncStorage.getItem(keys.TASKS),
+          AsyncStorage.getItem(keys.GOALS),
+          AsyncStorage.getItem(keys.STATS),
         ])
         if (rawBlocks) setBlocks(JSON.parse(rawBlocks))
+        else setBlocks([])
         if (rawTasks)  setTasks(JSON.parse(rawTasks))
+        else setTasks([])
         if (rawGoals)  setGoals(JSON.parse(rawGoals))
+        else setGoals(DEFAULT_GOALS)
         if (rawStats)  setStats(JSON.parse(rawStats))
+        else setStats(DEFAULT_STATS)
       } catch {}
       setLoaded(true)
     }
     load()
-  }, [])
+  }, [keys])
 
   useEffect(() => {
     if (!loaded) return
-    AsyncStorage.setItem(KEYS.BLOCKS, JSON.stringify(blocks)).catch(() => {})
+    AsyncStorage.setItem(keys.BLOCKS, JSON.stringify(blocks)).catch(() => {})
     if (isOnline && userId) sbRun(supabase.from('planner_blocks').upsert(blocks.map(b => ({ ...b, user_id: userId }))))
-  }, [blocks, loaded])
+  }, [blocks, loaded, keys, isOnline, userId])
 
   useEffect(() => {
     if (!loaded) return
-    AsyncStorage.setItem(KEYS.TASKS, JSON.stringify(tasks)).catch(() => {})
+    AsyncStorage.setItem(keys.TASKS, JSON.stringify(tasks)).catch(() => {})
     if (isOnline && userId) sbRun(supabase.from('planner_tasks').upsert(tasks.map(t => ({ ...t, user_id: userId }))))
-  }, [tasks, loaded])
+  }, [tasks, loaded, keys, isOnline, userId])
 
   useEffect(() => {
     if (!loaded) return
-    AsyncStorage.setItem(KEYS.GOALS, JSON.stringify(goals)).catch(() => {})
+    AsyncStorage.setItem(keys.GOALS, JSON.stringify(goals)).catch(() => {})
     if (isOnline && userId) sbRun(supabase.from('profiles').update({ study_goals: goals }).eq('id', userId!))
-  }, [goals, loaded])
+  }, [goals, loaded, keys, isOnline, userId])
 
   useEffect(() => {
     if (!loaded) return
-    AsyncStorage.setItem(KEYS.STATS, JSON.stringify(stats)).catch(() => {})
-  }, [stats, loaded])
+    AsyncStorage.setItem(keys.STATS, JSON.stringify(stats)).catch(() => {})
+  }, [stats, loaded, keys])
 
   useEffect(() => {
     if (!loaded) return
@@ -1202,18 +1318,33 @@ export default function StudyPlannerScreen() {
     if (stats.last_active === today) return
     const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1)
     const newStreak = stats.last_active === toISO(yesterday) ? stats.streak + 1 : 1
-    setStats(p => ({ ...p, streak: newStreak, last_active: today, sessions_today: 0, focused_mins_today: 0 }))
-  }, [loaded])
+    const newBest = Math.max(newStreak, stats.best_streak || 0)
+    setStats(p => ({ ...p, streak: newStreak, best_streak: newBest, last_active: today, sessions_today: 0, focused_mins_today: 0 }))
+  }, [loaded, stats.last_active, stats.streak, stats.best_streak])
 
   const addBlock    = useCallback((b: Omit<TimeBlock, 'id'>) => { setBlocks(prev => [...prev, { ...b, id: Date.now().toString() }]) }, [])
   const deleteBlock = useCallback((id: string) => { setBlocks(prev => prev.filter(b => b.id !== id)); if (isOnline && userId) sbRun(supabase.from('planner_blocks').delete().eq('id', id).eq('user_id', userId)) }, [isOnline, userId])
+  const toggleBlock = useCallback((id: string) => {
+    setBlocks(prev => {
+      const next = prev.map(b => {
+        if (b.id !== id) return b
+        const completed = !b.completed
+        return { ...b, completed, completedAt: completed ? todayISO() : undefined }
+      })
+      if (isOnline && userId) {
+        const changed = next.find(x => x.id === id)
+        if (changed) sbRun(supabase.from('planner_blocks').upsert({ ...changed, user_id: userId }))
+      }
+      return next
+    })
+  }, [isOnline, userId])
   const addTask     = useCallback((t: Omit<PlannerTask, 'id' | 'done'>) => { setTasks(prev => [...prev, { ...t, id: Date.now().toString(), done: false }]) }, [])
   const toggleTask  = useCallback((id: string) => {
     setTasks(prev => prev.map(t => {
       if (t.id !== id) return t
       const newDone = !t.done
       if (newDone) setStats(p => ({ ...p, total_tasks: p.total_tasks + 1 }))
-      return { ...t, done: newDone }
+      return { ...t, done: newDone, completedAt: newDone ? todayISO() : undefined }
     }))
   }, [])
   const deleteTask  = useCallback((id: string) => { setTasks(prev => prev.filter(t => t.id !== id)); if (isOnline && userId) sbRun(supabase.from('planner_tasks').delete().eq('id', id).eq('user_id', userId)) }, [isOnline, userId])
@@ -1280,7 +1411,7 @@ export default function StudyPlannerScreen() {
       {/* TAB CONTENT */}
       <View style={root.body}>
         {activeTab === 'schedule' && (
-          <ScheduleTab blocks={blocks} onAddBlock={addBlock} onDeleteBlock={deleteBlock} stats={stats} goals={goals}
+          <ScheduleTab blocks={blocks} onAddBlock={addBlock} onDeleteBlock={deleteBlock} onToggleComplete={toggleBlock} stats={stats} goals={goals}
             canAddBlock={canAdd(blocks.length)} onGate={() => openGate('schedule blocks')} />
         )}
         {activeTab === 'tasks' && (
@@ -1355,6 +1486,7 @@ const sc = StyleSheet.create({
   overviewLabel:    { fontSize: 11, color: C.textMute, fontWeight: '600', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 4 },
   overviewHours:    { fontSize: 30, fontWeight: '800', color: C.text, letterSpacing: -1 },
   overviewHoursSub: { fontSize: 14, fontWeight: '400', color: C.textMute },
+  overviewMeta:     { fontSize: 11, color: C.textMute, marginTop: 8 },
   progressTrack:    { height: 4, backgroundColor: C.border, borderRadius: 2, marginTop: 10, overflow: 'hidden' },
   progressFill:     { height: '100%', borderRadius: 2 },
   overviewRight:    { flexShrink: 0 },
@@ -1382,7 +1514,9 @@ const sc = StyleSheet.create({
   addBlockBtnLocked:{ backgroundColor: C.goldDim, borderColor: C.gold + '35' },
   addBlockBtnText:  { fontSize: 12, fontWeight: '700', color: C.sapphire },
   block:            { flexDirection: 'row', alignItems: 'center', gap: 13, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 18, padding: 14, borderLeftWidth: 3, overflow: 'hidden', position: 'relative' },
+  blockDone:        { opacity: 0.6, backgroundColor: C.void },
   blockAccent:      { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, opacity: 0.4 },
+  blockCheck:       { width: 22, height: 22, borderRadius: 7, borderWidth: 1.5, borderColor: C.border, justifyContent: 'center', alignItems: 'center', flexShrink: 0 },
   blockIconBox:     { width: 40, height: 40, borderRadius: 13, borderWidth: 1, justifyContent: 'center', alignItems: 'center', flexShrink: 0 },
   blockSubject:     { fontSize: 14, fontWeight: '700', color: C.text, marginBottom: 3 },
   blockTime:        { fontSize: 11, color: C.textMute },

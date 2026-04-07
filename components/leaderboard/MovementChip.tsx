@@ -3,24 +3,36 @@
  * Displays rank movement: ↑N (green), ↓N (red), or — (muted).
  */
 
-import { StyleSheet, Text } from 'react-native'
-import { C } from '../../lib/colors'
+import { StyleSheet, Text, View } from 'react-native'
+import { C } from '../../src/lib/colors'
 
 type Props = { movement?: number }
 
 export function MovementChip({ movement }: Props) {
   if (movement === undefined || movement === 0) {
-    return <Text allowFontScaling={false} style={st.same}>—</Text>
+    return (
+      <View style={[st.chip, st.chipSame]}>
+        <Text allowFontScaling={false} style={st.textSame}>—</Text>
+      </View>
+    )
   }
+  
+  const isUp = movement > 0
   return (
-    <Text allowFontScaling={false} style={movement > 0 ? st.up : st.down}>
-      {movement > 0 ? `↑${movement}` : `↓${Math.abs(movement)}`}
-    </Text>
+    <View style={[st.chip, isUp ? st.chipUp : st.chipDown]}>
+      <Text allowFontScaling={false} style={isUp ? st.textUp : st.textDown}>
+        {isUp ? '↑' : '↓'}{Math.abs(movement)}
+      </Text>
+    </View>
   )
 }
 
 const st = StyleSheet.create({
-  up:   { fontSize: 11, fontWeight: '700', color: C.emerald,  minWidth: 28, textAlign: 'center' },
-  down: { fontSize: 11, fontWeight: '700', color: C.coral,    minWidth: 28, textAlign: 'center' },
-  same: { fontSize: 11, fontWeight: '700', color: C.textMute, minWidth: 28, textAlign: 'center' },
+  chip:     { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, minWidth: 28, alignItems: 'center' },
+  chipUp:   { backgroundColor: C.emerald + '15' },
+  chipDown: { backgroundColor: C.coral + '15' },
+  chipSame: { backgroundColor: C.raised },
+  textUp:   { fontSize: 10, fontWeight: '800', color: C.emerald },
+  textDown: { fontSize: 10, fontWeight: '800', color: C.coral },
+  textSame: { fontSize: 10, fontWeight: '800', color: C.textMute },
 })

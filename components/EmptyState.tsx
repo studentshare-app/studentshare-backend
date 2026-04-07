@@ -7,7 +7,7 @@
  */
 
 import React from 'react'
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native'
+import { View, Text, TouchableOpacity, StyleProp, StyleSheet, TextStyle, ViewStyle } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
 import { COLORS, SPACING, TYPOGRAPHY, BORDER_RADIUS } from '../designTokens'
 
@@ -19,7 +19,20 @@ interface EmptyStateProps {
   ctaText?: string
   onCTA?: () => void
   size?: 'sm' | 'md' | 'lg'
-  style?: any
+  style?: StyleProp<ViewStyle>
+}
+
+type EmptyStateStyles = {
+  container: ViewStyle
+  iconBox: ViewStyle
+  title: TextStyle
+  titleSmall: TextStyle
+  titleLarge: TextStyle
+  description: TextStyle
+  descriptionSmall: TextStyle
+  ctaButton: ViewStyle
+  ctaButtonSmall: ViewStyle
+  ctaText: TextStyle
 }
 
 /**
@@ -197,7 +210,7 @@ export const NoSearchResultsEmpty: React.FC<{
   />
 )
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create<EmptyStateStyles>({
   container: {
     backgroundColor: COLORS.background.tertiary,
     borderWidth: 1,
@@ -221,7 +234,7 @@ const styles = StyleSheet.create({
   },
 
   title: {
-    ...TYPOGRAPHY.body.md,
+    ...(TYPOGRAPHY.body.md as TextStyle),
     fontWeight: '600',
     color: COLORS.text.primary,
     textAlign: 'center',
@@ -229,24 +242,24 @@ const styles = StyleSheet.create({
   },
 
   titleSmall: {
-    ...TYPOGRAPHY.body.sm,
+    ...(TYPOGRAPHY.body.sm as TextStyle),
     fontWeight: '600',
   },
 
   titleLarge: {
-    ...TYPOGRAPHY.heading.sm,
+    ...(TYPOGRAPHY.heading.sm as TextStyle),
     fontWeight: '700',
   },
 
   description: {
-    ...TYPOGRAPHY.body.sm,
+    ...(TYPOGRAPHY.body.sm as TextStyle),
     color: COLORS.text.secondary,
     textAlign: 'center',
     marginBottom: SPACING.md,
   },
 
   descriptionSmall: {
-    ...TYPOGRAPHY.caption.lg,
+    ...(TYPOGRAPHY.caption.lg as TextStyle),
     color: COLORS.text.tertiary,
   },
 
@@ -266,7 +279,7 @@ const styles = StyleSheet.create({
   },
 
   ctaText: {
-    ...TYPOGRAPHY.label.md,
+    ...(TYPOGRAPHY.label.md as TextStyle),
     color: '#fff',
     fontWeight: '600',
   },

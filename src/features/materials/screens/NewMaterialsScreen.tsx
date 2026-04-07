@@ -1,10 +1,9 @@
 /**
  * app/new-materials.tsx — Offline-First Class Materials Screen
- * Redesigned to match home screen (index.tsx) design language.
+ * Production-ready: Uses WatermelonDB local data filtered by user's college/class.
  */
 
 import { Ionicons } from '@expo/vector-icons'
-import AsyncStorage from '@react-native-async-storage/async-storage'
 import { useRouter } from 'expo-router'
 import {
   useCallback,
@@ -27,17 +26,26 @@ import {
   View,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { supabase } from '@/core/api/supabase'
-import { useMaterialsActions } from '../hooks/useMaterialsActions'
-import { useDownloadRegistry } from '@/lib/useDownloadRegistry'
 import { LinearGradient } from 'expo-linear-gradient'
+
+import { supabase } from '@/lib/supabase'
+import { toggleBookmark as dbToggleBookmark } from '@/database/actions'
+import { triggerSync } from '@/core/sync/syncService'
+import {
+  useMaterials,
+  useCourses,
+  useLecturers,
+  useBookmarks,
+  useUser,
+} from '@/hooks/useLocalQueries'
+import { usePremium } from '@/core/entitlements/PremiumProvider'
+import { useNetworkStatus } from '@/hooks/useNetworkStatus'
+import { downloadMaterial as syncDownload } from '@/core/sync/fileSyncService'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants & Theme
 // ─────────────────────────────────────────────────────────────────────────────
 const BODY_H_PAD = 16
-const CACHE_KEY  = 'new_materials_cache'
-const SEEN_KEY   = 'new_materials_seen'
 
 const C = {
   void:      '#0A0A0F',
@@ -62,35 +70,62 @@ const C = {
   redDim:    'rgba(255,69,58,0.12)',
 }
 
-const TYPE_CONFIG = {
-  slide:         { label: 'Slides',         icon: 'easel-outline'          as const, color: C.blue,   bg: C.blueDim   },
-  past_question: { label: 'Past Questions', icon: 'document-text-outline' as const, color: C.red,    bg: C.redDim    },
-  tutorial:      { label: 'Tutorials',      icon: 'school-outline'         as const, color: C.green,  bg: C.greenDim  },
-  book:          { label: 'Books',          icon: 'book-outline'           as const, color: C.purple, bg: C.purpleDim },
-  other:         { label: 'Other',          icon: 'folder-outline'         as const, color: C.gold,   bg: C.goldDim   },
+const TYPE_CONFIG: Record<string, { label: string; icon: React.ComponentProps<typeof Ionicons>['name']; color: string; bg: string }> = {
+  slide:         { label: 'Slides',         icon: 'easel-outline',          color: C.blue,   bg: C.blueDim   },
+  past_question: { label: 'Past Questions', icon: 'document-text-outline',  color: C.red,    bg: C.redDim    },
+  tutorial:      { label: 'Tutorials',      icon: 'school-outline',         color: C.green,  bg: C.greenDim  },
+  book:          { label: 'Books',          icon: 'book-outline',           color: C.purple, bg: C.purpleDim },
+  notes:         { label: 'Notes',          icon: 'document-outline',       color: C.gold,   bg: C.goldDim   },
+  other:         { label: 'Other',          icon: 'folder-outline',         color: C.gold,   bg: C.goldDim   },
 }
 
-const FILTER_TABS = [
+type MaterialType = 'slide' | 'book' | 'past_question' | 'notes' | 'tutorial' | 'other'
+type FilterKey = MaterialType | 'all'
+
+const FILTER_TABS: { key: FilterKey; label: string; emoji: string }[] = [
   { key: 'all',           label: 'All',            emoji: '📚' },
   { key: 'slide',         label: 'Slides',         emoji: '📊' },
   { key: 'past_question', label: 'Past Qs',        emoji: '📝' },
-  { key: 'tutorial',      label: 'Tutorials',      emoji: '👨‍🏫' },
   { key: 'book',          label: 'Books',          emoji: '📖' },
+  { key: 'notes',         label: 'Notes',          emoji: '🗒️' },
+  { key: 'tutorial',      label: 'Tutorials',      emoji: '👨‍🏫' },
   { key: 'other',         label: 'Other',          emoji: '📁' },
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
-interface Material {
+interface MaterialRecord {
   id: string
+  remoteId?: string
   title: string
+  type: MaterialType
   file_url: string
-  type: string
+  file_size: number | null
+  is_premium: boolean
   created_at: string
-  course_id?: string
-  uploader_name?: string
-  size_bytes?: number
+  downloadStatus?: string
+  courses: {
+    name: string
+    code: string
+    class_id: string
+    is_official?: boolean
+  } | null
+  lecturers?: { name: string } | null
+  lecturer_id: string | null
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+function fmtSize(bytes: number | null): string {
+  if (!bytes) return ''
+  if (bytes < 1_048_576) return `${(bytes / 1024).toFixed(0)} KB`
+  return `${(bytes / 1_048_576).toFixed(1)} MB`
+}
+
+function fmtDate(dateStr: string): string {
+  return new Date(dateStr).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -158,16 +193,15 @@ function SectionHead({ title, link, onLink }: { title: string; link?: string; on
 }
 
 function FeaturedCard({
-  item, index, isBookmarked, isDownloaded, onOpen, onSave,
+  item, index, isBookmarked, onOpen, onSave,
 }: {
-  item: Material
+  item: MaterialRecord
   index: number
   isBookmarked: boolean
-  isDownloaded: boolean
   onOpen: () => void
   onSave: () => void
 }) {
-  const cfg = TYPE_CONFIG[item.type as keyof typeof TYPE_CONFIG] ?? TYPE_CONFIG.other
+  const cfg = TYPE_CONFIG[item.type] ?? TYPE_CONFIG.other
 
   return (
     <TouchableOpacity
@@ -207,7 +241,7 @@ function FeaturedCard({
             </Text>
           </TouchableOpacity>
 
-          {isDownloaded && (
+          {item.downloadStatus === 'done' && (
             <View style={S.offlineBadge}>
               <Ionicons name="cloud-download" size={10} color={C.green} />
               <Text style={S.offlineBadgeText}>Offline</Text>
@@ -224,21 +258,20 @@ function FeaturedCard({
 }
 
 function MaterialCard({
-  item, index, isNew, isBookmarked, isDownloaded, isSyncing, onOpen, onChat, onToggleBookmark, onDownload, onQuiz,
+  item, index, isNew, isBookmarked, bookmarkLoading, onOpen, onChat, onToggleBookmark, onDownload, onQuiz,
 }: {
-  item: Material
+  item: MaterialRecord
   index: number
   isNew: boolean
   isBookmarked: boolean
-  isDownloaded: boolean
-  isSyncing: boolean
+  bookmarkLoading: boolean
   onOpen: () => void
   onChat: () => void
   onToggleBookmark: () => void
   onDownload: () => void
   onQuiz: () => void
 }) {
-  const cfg = TYPE_CONFIG[item.type as keyof typeof TYPE_CONFIG] ?? TYPE_CONFIG.other
+  const cfg = TYPE_CONFIG[item.type] ?? TYPE_CONFIG.other
 
   return (
     <TouchableOpacity
@@ -268,7 +301,7 @@ function MaterialCard({
                 <Text style={{ fontSize: 9, fontWeight: '800', color: C.orange }}>NEW</Text>
               </View>
             )}
-            {isDownloaded && (
+            {item.downloadStatus === 'done' && (
               <View style={{
                 backgroundColor: C.greenDim, borderRadius: 5, borderWidth: 1,
                 borderColor: C.green + '40', paddingHorizontal: 5, paddingVertical: 1,
@@ -282,91 +315,88 @@ function MaterialCard({
               {item.title}
             </Text>
           </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
             <View style={{
               backgroundColor: cfg.bg, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2,
             }}>
               <Text style={{ fontSize: 10, fontWeight: '700', color: cfg.color }}>{cfg.label}</Text>
             </View>
-            {item.uploader_name && (
-              <Text style={{ fontSize: 11, color: C.textMute }} numberOfLines={1}>
-                by {item.uploader_name}
+            {item.courses?.name && (
+              <Text style={{ fontSize: 11, color: C.textSub }} numberOfLines={1}>
+                {item.courses.name}{item.courses.code ? ` • ${item.courses.code}` : ''}
               </Text>
             )}
           </View>
-        </View>
-
-        <View style={{ flexDirection: 'row', gap: 4 }}>
-          <TouchableOpacity onPress={onDownload} style={S.iconBtn} disabled={isSyncing || isDownloaded}>
-            {isSyncing 
-              ? <ActivityIndicator size="small" color={C.textSub} />
-              : <Ionicons
-                  name={isDownloaded ? 'cloud-done' : 'cloud-download-outline'}
-                  size={18}
-                  color={isDownloaded ? C.green : C.textMute}
-                />
-            }
-          </TouchableOpacity>
-          <TouchableOpacity onPress={onToggleBookmark} style={S.iconBtn}>
-            <Ionicons
-              name={isBookmarked ? 'bookmark' : 'bookmark-outline'}
-              size={18}
-              color={isBookmarked ? C.orange : C.textMute}
-            />
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+              <Ionicons name="calendar-outline" size={10} color={C.textMute} />
+              <Text style={{ fontSize: 10, color: C.textMute }}>{fmtDate(item.created_at)}</Text>
+            </View>
+            {item.file_size ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                <Ionicons name="server-outline" size={10} color={C.textMute} />
+                <Text style={{ fontSize: 10, color: C.textMute }}>{fmtSize(item.file_size)}</Text>
+              </View>
+            ) : null}
+            {item.lecturers?.name && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                <Ionicons name="person-outline" size={10} color={C.textMute} />
+                <Text style={{ fontSize: 10, color: C.textMute }}>{item.lecturers.name}</Text>
+              </View>
+            )}
+          </View>
         </View>
       </View>
 
-      <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
-        <TouchableOpacity
-          style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: C.raised, borderRadius: 10, paddingVertical: 8, borderWidth: 1, borderColor: C.border }}
-          onPress={onChat} activeOpacity={0.75}
-        >
-          <Ionicons name="chatbubble-outline" size={13} color={C.textSub} />
-          <Text style={{ fontSize: 12, fontWeight: '600', color: C.textSub }}>Ask AI</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: C.orangeDim, borderRadius: 10, paddingVertical: 8, borderWidth: 1, borderColor: C.orange + '30' }}
-          onPress={onQuiz} activeOpacity={0.75}
-        >
-          <Ionicons name="flash-outline" size={13} color={C.orange} />
-          <Text style={{ fontSize: 12, fontWeight: '600', color: C.orange }}>Quiz me</Text>
-        </TouchableOpacity>
+      <View style={S.matActions}>
+        <View style={S.primaryRow}>
+          <TouchableOpacity 
+            style={[S.matBtn, S.matBtnPrimary]} 
+            onPress={onOpen}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="eye-outline" size={15} color="#fff" />
+            <Text style={S.matBtnText}>Open File</Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={[S.matBtn, item.downloadStatus === 'done' ? S.matBtnDone : S.matBtnMinor]} 
+            onPress={onDownload}
+            activeOpacity={0.8}
+          >
+            <Ionicons 
+              name={item.downloadStatus === 'done' ? 'cloud-done' : 'cloud-download-outline'} 
+              size={15} 
+              color={item.downloadStatus === 'done' ? C.green : C.text} 
+            />
+            <Text style={[S.matBtnText, item.downloadStatus === 'done' && { color: C.green }]}>
+              {item.downloadStatus === 'done' ? 'Offline' : 'Save'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={S.utilityRow}>
+          <TouchableOpacity
+            style={[S.utilBtn, isBookmarked && S.utilBtnActive]}
+            onPress={onToggleBookmark}
+          >
+            {bookmarkLoading
+              ? <ActivityIndicator size="small" color={C.orange} />
+              : <Ionicons name={isBookmarked ? 'bookmark' : 'bookmark-outline'} size={14} color={isBookmarked ? C.orange : C.textSub} />
+            }
+            <Text style={[S.utilBtnText, isBookmarked && { color: C.orange }]}>Bookmark</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={S.utilBtn} onPress={onChat}>
+            <Ionicons name="chatbubble-outline" size={13} color={C.textSub} />
+            <Text style={S.utilBtnText}>AI Chat</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={S.utilBtn} onPress={onQuiz}>
+            <Ionicons name="flash-outline" size={13} color={C.orange} />
+            <Text style={[S.utilBtnText, { color: C.orange }]}>Quiz</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     </TouchableOpacity>
   )
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-function guessType(url: string): string {
-  return 'other'
-}
-
-async function fetchMaterials(classId: string): Promise<Material[]> {
-  // 1. Get all courses for this class
-  const { data: courses, error: courseError } = await supabase
-    .from('courses')
-    .select('id')
-    .eq('class_id', classId)
-
-  if (courseError) throw courseError
-  if (!courses || courses.length === 0) return []
-
-  const courseIds = courses.map(c => c.id)
-
-  // 2. Fetch published materials for those courses
-  const { data, error } = await supabase
-    .from('materials')
-    .select('id, title, file_url, type, created_at, course_id, uploader_name, size_bytes')
-    .in('course_id', courseIds)
-    .eq('status', 'published')
-    .order('created_at', { ascending: false })
-    .limit(100)
-
-  if (error) throw error
-  return (data ?? []).map(m => ({ ...m, type: m.type || guessType(m.file_url ?? '') }))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -375,18 +405,13 @@ async function fetchMaterials(classId: string): Promise<Material[]> {
 export default function NewMaterialsScreen() {
   const router  = useRouter()
   const insets  = useSafeAreaInsets()
+  const { isOffline } = useNetworkStatus()
+  const { isPremium } = usePremium()
 
-  const [ready, setReady]                     = useState(false)
-  const [allMaterials, setAllMaterials]       = useState<Material[]>([])
-  const [refreshing, setRefreshing]           = useState(false)
-  const [isOnline, setIsOnline]               = useState(true)
-  const [newIds, setNewIds]                   = useState<Set<string>>(new Set())
-  const [filter, setFilter]                   = useState('all')
-  const [search, setSearch]                   = useState('')
-  const [classId, setClassId]                 = useState<string | null>(null)
-  const [userId, setUserId]                   = useState<string | null>(null)
-  const classIdRef = useRef<string | null>(null)
-  const userIdRef  = useRef<string | null>(null)
+  const [filter, setFilter]   = useState<FilterKey>('all')
+  const [search, setSearch]   = useState('')
+  const [userId, setUserId]   = useState<string | null>(null)
+  const [bookmarkLoading, setBookmarkLoading] = useState<string | null>(null)
 
   const heroOpacity = useRef(new Animated.Value(0)).current
   const heroY       = useRef(new Animated.Value(12)).current
@@ -398,101 +423,175 @@ export default function NewMaterialsScreen() {
     ]).start()
   }, [heroOpacity, heroY])
 
-  const { downloadedIds } = useDownloadRegistry()
-  const { 
-    bookmarkedIds, 
-    toggleBookmark: hookToggleBookmark, 
-    downloadMaterial, 
-    isSyncing 
-  } = useMaterialsActions(userId)
-
+  // Get auth user ID
   useEffect(() => {
-    let cancelled = false
-    async function bootstrap() {
-      try {
-        const { data: { user } } = await supabase.auth.getUser()
-        const uid = user?.id ?? null
-        userIdRef.current = uid
-        if (!cancelled) setUserId(uid)
-
-        const storedClassId = await AsyncStorage.getItem('active_class_id')
-        if (!storedClassId) { setReady(true); return }
-        classIdRef.current = storedClassId
-        setClassId(storedClassId)
-
-        const raw = await AsyncStorage.getItem(`${CACHE_KEY}:${storedClassId}`)
-        const cached: Material[] = raw ? JSON.parse(raw) : []
-
-        const seenRaw = await AsyncStorage.getItem(`${SEEN_KEY}:${storedClassId}`)
-        const seenArr: string[] = seenRaw ? JSON.parse(seenRaw) : []
-        const seenSet = new Set(seenArr)
-
-        if (!cancelled && cached.length > 0) {
-          applyMaterials(cached, seenSet)
-        }
-        setReady(true)
-
-        try {
-          const live = await fetchMaterials(storedClassId)
-          if (!cancelled) {
-            await AsyncStorage.setItem(`${CACHE_KEY}:${storedClassId}`, JSON.stringify(live))
-            applyMaterials(live, seenSet)
-            setIsOnline(true)
-          }
-        } catch {
-          if (!cancelled) setIsOnline(false)
-        }
-
-        setTimeout(async () => {
-          if (cancelled) return
-          const allIds = classIdRef.current
-            ? (await AsyncStorage.getItem(`${CACHE_KEY}:${classIdRef.current}`)
-                .then(r => (r ? (JSON.parse(r) as Material[]).map(m => m.id) : [])))
-            : []
-          const merged = [...new Set([...seenArr, ...allIds])]
-          if (classIdRef.current)
-            await AsyncStorage.setItem(`${SEEN_KEY}:${classIdRef.current}`, JSON.stringify(merged))
-          if (!cancelled) setNewIds(new Set())
-        }, 3000)
-      } catch (e) {
-        console.warn('[NewMaterials] bootstrap error', e)
-        if (!cancelled) setReady(true)
-      }
-    }
-    bootstrap()
-    return () => { cancelled = true }
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) setUserId(session.user.id)
+    })
   }, [])
 
-  function applyMaterials(materials: Material[], seenSet: Set<string>) {
-    setAllMaterials(materials)
-    setNewIds(new Set(materials.filter(m => !seenSet.has(m.id)).map(m => m.id)))
-  }
+  // ── WatermelonDB reactive hooks ──
+  const { records: localMaterials, loading: materialsLoading } = useMaterials() as { records: any[], loading: boolean }
+  const { records: localCourses }   = useCourses(undefined) as { records: any[] }
+  const { records: localLecturers } = useLecturers() as { records: any[] }
+  const { records: localBookmarks } = useBookmarks(userId || '', 'material') as { records: any[] }
+  const { user }                    = useUser(userId || undefined)
+  const [profileInfo, setProfileInfo] = useState<{ classId: string | null; collegeId: string | null } | null>(null)
 
-  const onRefresh = useCallback(async () => {
-    const cid = classIdRef.current
-    if (!cid || !isOnline) return
-    setRefreshing(true)
-    try {
-      const live = await fetchMaterials(cid)
-      await AsyncStorage.setItem(`${CACHE_KEY}:${cid}`, JSON.stringify(live))
-      const seenRaw = await AsyncStorage.getItem(`${SEEN_KEY}:${cid}`)
-      const seenSet = new Set<string>(seenRaw ? JSON.parse(seenRaw) : [])
-      applyMaterials(live, seenSet)
-    } catch {
-      Alert.alert('Refresh failed', 'Could not fetch latest materials.')
-    } finally {
-      setRefreshing(false)
+  // Fallback: fetch college_id/class_id from Supabase profiles if WatermelonDB user record is missing them
+  useEffect(() => {
+    if (!userId) return
+    
+    // Silently fetch materials from server in background on component mount to ensure fresh data
+    triggerSync().catch(() => {})
+
+    // If we already have both from WatermelonDB user, skip
+    if (user && user.classId && user.collegeId) {
+      setProfileInfo({ classId: user.classId, collegeId: user.collegeId })
+      return
     }
-  }, [isOnline])
+    // Fetch from Supabase profiles as fallback
+    supabase.from('profiles').select('college_id, class_id').eq('id', userId).single()
+      .then(({ data }) => {
+        if (data) {
+          setProfileInfo({ classId: data.class_id, collegeId: data.college_id })
+        }
+      })
+  }, [userId, user])
 
-  const openMaterial = useCallback((item: Material) => {
+  // Effective user info for filtering: prefer WatermelonDB, fallback to profiles
+  const effectiveClassId = user?.classId || profileInfo?.classId || null
+  const effectiveCollegeId = user?.collegeId || profileInfo?.collegeId || null
+
+  const bookmarkedIds = useMemo(() => new Set(localBookmarks.map((b: any) => b.itemId)), [localBookmarks])
+
+  // Build lookup maps: key = Supabase remote UUID
+  const coursesMap   = useMemo(() => new Map(localCourses.map((c: any) => [c.remoteId || c.id, c])), [localCourses])
+  const lecturersMap = useMemo(() => new Map(localLecturers.map((l: any) => [l.remoteId || l.id, l])), [localLecturers])
+
+  // ── Filter materials by user's college & class ──
+  const materials = useMemo((): MaterialRecord[] => {
+    // If we're loading and have no materials at all, return empty
+    if (materialsLoading && localMaterials.length === 0) return []
+
+    const rawList = localMaterials
+      .filter((m: any) => {
+        // Broaden matching: if it's in our local database, it's likely relevant.
+        // We only exclude it if we specifically know it's for another class/college.
+        let isMatch = false
+
+        if (m.courseId) {
+          const course = coursesMap.get(m.courseId)
+          if (course) {
+            // If we have the course, check if it belongs to our class (if we know our class)
+            if (effectiveClassId && course.classId && course.classId !== effectiveClassId) {
+              return false // Explicitly for a different class
+            }
+            isMatch = true
+          } else {
+            // Course not loaded yet but material is here — include it!
+            isMatch = true
+          }
+        }
+
+        if (m.lecturerId) {
+          const lecturer = lecturersMap.get(m.lecturerId)
+          if (lecturer) {
+            if (effectiveCollegeId && lecturer.collegeId && lecturer.collegeId !== effectiveCollegeId) {
+              return false // Explicitly for a different college
+            }
+            isMatch = true
+          } else {
+            isMatch = true
+          }
+        }
+
+        // General materials (neither course nor lecturer)
+        if (!m.courseId && !m.lecturerId) {
+          isMatch = true
+        }
+
+        return isMatch
+      })
+      .map((m: any) => {
+        const course   = coursesMap.get(m.courseId)
+        const lecturer = lecturersMap.get(m.lecturerId)
+        return {
+          id:             m.id,
+          remoteId:       m.remoteId,
+          title:          m.title,
+          type:           (m.fileType as MaterialType) || 'other',
+          file_url:       m.fileUrl,
+          file_size:      m.fileSize,
+          is_premium:     false,
+          created_at:     new Date(m.createdAt).toISOString(),
+          downloadStatus: m.downloadStatus,
+          courses:        course ? { name: course.name, code: course.code, class_id: course.classId, is_official: course.isOfficial } : null,
+          lecturers:      lecturer ? { name: lecturer.name } : null,
+          lecturer_id:    m.lecturerId,
+        } as MaterialRecord
+      })
+      // Sort newest first
+      .sort((a: MaterialRecord, b: MaterialRecord) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+
+    // Show latest 30 materials to ensure the screen feels active and realtime.
+    return rawList.slice(0, 30)
+  }, [localMaterials, coursesMap, lecturersMap, effectiveClassId, effectiveCollegeId, materialsLoading])
+
+  // ── Counts per type ──
+  const counts = useMemo(() => {
+    const c: Record<string, number> = {}
+    for (const m of materials) {
+      c[m.type] = (c[m.type] ?? 0) + 1
+    }
+    return c
+  }, [materials])
+
+  // ── Featured = newest 5 ──
+  const featured = useMemo(() => materials.slice(0, 5), [materials])
+
+  // ── Filtered + searched list ──
+  const displayed = useMemo(() => {
+    let list = materials
+    if (filter !== 'all') list = list.filter(m => m.type === filter)
+    if (search.trim()) {
+      const q = search.trim().toLowerCase()
+      list = list.filter(m =>
+        m.title.toLowerCase().includes(q) ||
+        (m.courses?.name ?? '').toLowerCase().includes(q) ||
+        (m.courses?.code ?? '').toLowerCase().includes(q)
+      )
+    }
+    return list
+  }, [materials, filter, search])
+
+  // ── Actions ──
+  const toggleBookmark = useCallback(async (item: MaterialRecord) => {
+    if (!userId) return Alert.alert('Sign in required')
+    setBookmarkLoading(item.id)
+    try { await dbToggleBookmark(userId, item.id, 'material') } finally { setBookmarkLoading(null) }
+  }, [userId])
+
+  const openMaterial = useCallback((item: MaterialRecord) => {
     router.push({
       pathname: '/viewer' as any,
-      params: { material_id: item.id, title: item.title, file_url: item.file_url, type: item.type },
+      params: { file_url: item.file_url, title: item.title, material_id: item.id, is_local: item.downloadStatus === 'done' ? '1' : '0' },
     })
   }, [router])
 
-  const openQuiz = useCallback((item: Material) => {
+  const handleDownload = useCallback((item: MaterialRecord) => {
+    if (!isPremium) {
+      Alert.alert('Premium Required', 'Downloading materials for offline viewing requires a Premium subscription.', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Upgrade', onPress: () => router.push('/subscription' as any) }
+      ])
+      return
+    }
+    const material = localMaterials.find((x: any) => x.id === item.id)
+    if (material) syncDownload(material)
+  }, [isPremium, localMaterials, router])
+
+  const openQuiz = useCallback((item: MaterialRecord) => {
     router.push({
       pathname: '/quiz-flashcards' as any,
       params: {
@@ -505,30 +604,7 @@ export default function NewMaterialsScreen() {
     })
   }, [router])
 
-  const onToggleBookmark = useCallback((item: Material) => hookToggleBookmark(item.id), [hookToggleBookmark])
-  const onDownload = useCallback((item: Material) => downloadMaterial(item as any), [downloadMaterial])
-
-  const counts = useMemo(() => {
-    const c: Record<string, number> = {}
-    for (const m of allMaterials) {
-      c[m.type] = (c[m.type] ?? 0) + 1
-    }
-    return c
-  }, [allMaterials])
-
-  const featured = useMemo(() => allMaterials.slice(0, 5), [allMaterials])
-
-  const displayed = useMemo(() => {
-    let list = allMaterials
-    if (filter !== 'all') list = list.filter(m => m.type === filter)
-    if (search.trim()) {
-      const q = search.trim().toLowerCase()
-      list = list.filter(m => m.title.toLowerCase().includes(q))
-    }
-    return list
-  }, [allMaterials, filter, search])
-
-  const showSkeletons = !ready
+  const showSkeletons = materialsLoading && materials.length === 0
   const NAV_H = insets.top + 58
 
   return (
@@ -551,7 +627,7 @@ export default function NewMaterialsScreen() {
         <View style={{ flex: 1 }} />
       </View>
 
-      {!isOnline && allMaterials.length > 0 && <OfflineBanner />}
+      {isOffline && materials.length > 0 && <OfflineBanner />}
 
       <Animated.View
         style={[S.hero, { paddingTop: NAV_H + 18 }, { opacity: heroOpacity, transform: [{ translateY: heroY }] }]}
@@ -559,22 +635,17 @@ export default function NewMaterialsScreen() {
         <View style={S.blob1} />
         <View style={S.blob2} />
         <View style={S.heroTitleRow}>
-          <Text style={S.heroTitle}>Class Materials</Text>
-          {newIds.size > 0 && (
-            <View style={S.heroNewBadge}>
-              <Text style={S.heroNewBadgeText}>{newIds.size} new</Text>
-            </View>
-          )}
+          <Text style={S.heroTitle}>New Class Materials</Text>
         </View>
         <Text style={S.heroSub}>
           {showSkeletons
             ? 'Loading…'
-            : `${allMaterials.length} material${allMaterials.length !== 1 ? 's' : ''} available`
+            : `${materials.length} material${materials.length !== 1 ? 's' : ''} available`
           }
         </Text>
-        {!showSkeletons && allMaterials.length > 0 && (
+        {!showSkeletons && materials.length > 0 && (
           <View style={S.summaryRow}>
-            {(Object.entries(TYPE_CONFIG) as [keyof typeof TYPE_CONFIG, (typeof TYPE_CONFIG)[keyof typeof TYPE_CONFIG]][]).map(([key, cfg]) => {
+            {(Object.entries(TYPE_CONFIG) as [string, (typeof TYPE_CONFIG)[string]][]).map(([key, cfg]) => {
               const n = counts[key] || 0
               if (!n) return null
               const active = filter === key
@@ -582,7 +653,7 @@ export default function NewMaterialsScreen() {
                 <TouchableOpacity
                   key={key}
                   style={[S.summaryChip, { backgroundColor: active ? cfg.bg : C.surface }, active && { borderColor: cfg.color + '40' }]}
-                  onPress={() => setFilter(prev => prev === key ? 'all' : key)}
+                  onPress={() => setFilter(prev => prev === key ? 'all' : key as FilterKey)}
                   activeOpacity={0.75}
                 >
                   <Ionicons name={cfg.icon} size={11} color={active ? cfg.color : C.textMute} />
@@ -615,7 +686,7 @@ export default function NewMaterialsScreen() {
         >
           {FILTER_TABS.map(tab => {
             const active   = filter === tab.key
-            const tabCount = tab.key === 'all' ? allMaterials.length : (counts[tab.key] || 0)
+            const tabCount = tab.key === 'all' ? materials.length : (counts[tab.key] || 0)
             return (
               <TouchableOpacity
                 key={tab.key}
@@ -649,15 +720,10 @@ export default function NewMaterialsScreen() {
           keyExtractor={item => item.id}
           contentContainerStyle={[S.list, displayed.length === 0 && S.listEmpty]}
           showsVerticalScrollIndicator={false}
-          refreshControl={
-            isOnline ? (
-              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.orange} colors={[C.orange]} />
-            ) : undefined
-          }
           ListHeaderComponent={
             featured.length > 0 && filter === 'all' && !search ? (
               <View style={{ marginBottom: 20 }}>
-                <SectionHead title="Featured Materials" link="See all" />
+                <SectionHead title="Featured Materials" />
                 <ScrollView 
                   horizontal 
                   showsHorizontalScrollIndicator={false}
@@ -669,9 +735,8 @@ export default function NewMaterialsScreen() {
                       item={item} 
                       index={idx} 
                       isBookmarked={bookmarkedIds.has(item.id)}
-                      isDownloaded={downloadedIds.has(item.id)}
                       onOpen={() => openMaterial(item)}
-                      onSave={() => onToggleBookmark(item)}
+                      onSave={() => toggleBookmark(item)}
                     />
                   ))}
                 </ScrollView>
@@ -685,21 +750,21 @@ export default function NewMaterialsScreen() {
             <View style={S.emptyState}>
               <View style={S.emptyIcon}>
                 <Ionicons
-                  name={!isOnline && allMaterials.length === 0 ? 'cloud-offline-outline' : 'library-outline'}
+                  name={isOffline && materials.length === 0 ? 'cloud-offline-outline' : 'library-outline'}
                   size={32} color={C.textMute}
                 />
               </View>
               <Text style={S.emptyTitle}>
-                {!isOnline && allMaterials.length === 0 ? 'No cached materials'
+                {isOffline && materials.length === 0 ? 'No cached materials'
                   : search.trim() ? 'No results found'
-                  : filter !== 'all' ? `No ${TYPE_CONFIG[filter as keyof typeof TYPE_CONFIG]?.label ?? filter} yet`
+                  : filter !== 'all' ? `No ${TYPE_CONFIG[filter]?.label ?? filter} yet`
                   : 'No materials yet'}
               </Text>
               <Text style={S.emptySub}>
-                {!isOnline && allMaterials.length === 0
-                  ? 'Connect to the internet to load class materials for the first time.'
+                {isOffline && materials.length === 0
+                  ? 'Connect to the internet to sync class materials.'
                   : search.trim() ? `No materials match "${search}".`
-                  : 'Pull down to refresh.'}
+                  : 'Materials for your class will appear here once synced.'}
               </Text>
               {filter !== 'all' && (
                 <TouchableOpacity style={S.clearBtn} onPress={() => setFilter('all')}>
@@ -711,17 +776,16 @@ export default function NewMaterialsScreen() {
           renderItem={({ item, index }) => (
             <MaterialCard
               item={item} index={index}
-              isNew={newIds.has(item.id)}
+              isNew={new Date(item.created_at).getTime() > Date.now() - 24 * 60 * 60 * 1000}
               isBookmarked={bookmarkedIds.has(item.id)}
-              isDownloaded={downloadedIds.has(item.id)}
-              isSyncing={isSyncing}
+              bookmarkLoading={bookmarkLoading === item.id}
               onOpen={() => openMaterial(item)}
               onChat={() => router.push({
                 pathname: '/chat' as any,
                 params: { material_title: item.title, file_url: item.file_url, material_id: item.id },
               })}
-              onToggleBookmark={() => onToggleBookmark(item)}
-              onDownload={() => onDownload(item)}
+              onToggleBookmark={() => toggleBookmark(item)}
+              onDownload={() => handleDownload(item)}
               onQuiz={() => openQuiz(item)}
             />
           )}
@@ -744,6 +808,17 @@ const S = StyleSheet.create({
   navWordmark:       { fontSize: 19, fontWeight: '700', color: C.text, letterSpacing: -0.4 },
   navWordmarkAccent: { color: C.orange },
   navBtn:            { width: 38, height: 38, borderRadius: 13, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, justifyContent: 'center', alignItems: 'center' },
+  matActions:        { marginTop: 14, gap: 10 },
+  primaryRow:        { flexDirection: 'row', gap: 8 },
+  utilityRow:        { flexDirection: 'row', gap: 8 },
+  matBtn:            { flex: 1, height: 40, borderRadius: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
+  matBtnPrimary:     { backgroundColor: C.orange },
+  matBtnMinor:       { backgroundColor: C.raised, borderWidth: 1, borderColor: C.border },
+  matBtnDone:        { backgroundColor: C.greenDim, borderWidth: 1, borderColor: C.green + '30' },
+  matBtnText:        { fontSize: 13, fontWeight: '700', color: '#fff' },
+  utilBtn:           { flex: 1, height: 36, borderRadius: 8, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
+  utilBtnActive:     { backgroundColor: C.orangeDim, borderColor: C.orange + '30' },
+  utilBtnText:       { fontSize: 11, fontWeight: '600', color: C.textSub },
   orbOrange: { position: 'absolute', top: -120, right: -80,  width: 300, height: 300, borderRadius: 150, backgroundColor: 'rgba(232,105,42,0.12)' },
   orbBlue:   { position: 'absolute', top:   40, left: -60,   width: 220, height: 220, borderRadius: 110, backgroundColor: 'rgba(75,140,245,0.07)'  },
   orbPurple: { position: 'absolute', top:   80, left: '38%' as any, width: 160, height: 160, borderRadius: 80, backgroundColor: 'rgba(155,124,244,0.06)' },
@@ -752,8 +827,6 @@ const S = StyleSheet.create({
   blob2: { position: 'absolute', width: 180, height: 180, borderRadius: 90,  bottom: -70, left: -50, backgroundColor: '#7C3AED', opacity: 0.06 },
   heroTitleRow:     { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 },
   heroTitle:        { fontSize: 28, fontWeight: '900', color: C.text, letterSpacing: -0.8, lineHeight: 32 },
-  heroNewBadge:     { backgroundColor: C.orangeDim, borderWidth: 1, borderColor: C.orange + '40', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
-  heroNewBadgeText: { fontSize: 11, fontWeight: '800', color: C.orange },
   heroSub:          { fontSize: 12, color: C.textSub, marginBottom: 16 },
   summaryRow:      { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 14 },
   summaryChip:     { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, borderWidth: 1, borderColor: C.border },

@@ -10,7 +10,7 @@
  */
 
 export const ROUTES = {
-  TABS:              '/(tabs)/index'                   as const,
+  TABS:              '/(tabs)'                   as const,
   LOGIN:             '/(auth)/login'             as const,
   SIGNUP:            '/(auth)/signup'            as const,
   FORGOT_PASSWORD:   '/(auth)/forgot-password'   as const,

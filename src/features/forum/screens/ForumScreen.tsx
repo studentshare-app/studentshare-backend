@@ -1,6 +1,6 @@
 /**
  * ForumScreen.tsx — StudentSquare Forum
- * Twitter-inspired. All fixes applied.
+ * Twitter-inspired. Fully Offline-First via WatermelonDB.
  */
 
 import { BookmarksModal }     from '@/features/forum/components/BookmarksModal'
@@ -19,7 +19,9 @@ import { supabase }           from '@/lib/supabase'
 import { Ionicons }           from '@expo/vector-icons'
 import { LinearGradient }     from 'expo-linear-gradient'
 import { useRouter }          from 'expo-router'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useForumPosts }      from '@/hooks/useLocalQueries'
+import NetInfo                from '@react-native-community/netinfo'
 import {
   Animated,
   FlatList,
@@ -72,11 +74,14 @@ function fmt(n: number): string {
 }
 
 function timeAgo(iso: string): string {
-  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000)
-  if (s < 60)    return `${s}s`
-  if (s < 3600)  return `${Math.floor(s / 60)}m`
-  if (s < 86400) return `${Math.floor(s / 3600)}h`
-  return `${Math.floor(s / 86400)}d`
+  try {
+    const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000)
+    if (s < 0) return 'now'
+    if (s < 60)    return `${s}s`
+    if (s < 3600)  return `${Math.floor(s / 60)}m`
+    if (s < 86400) return `${Math.floor(s / 3600)}h`
+    return `${Math.floor(s / 86400)}d`
+  } catch { return '' }
 }
 
 function ensureHandle(raw?: string | null, fallbackName?: string): string {
@@ -84,71 +89,59 @@ function ensureHandle(raw?: string | null, fallbackName?: string): string {
   return raw.startsWith('@') ? raw : `@${raw}`
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// rowToPost — converts a DB row to a Post object
-// KEY FIX: prefers author_* denormalised columns so ALL users see real names
-// ─────────────────────────────────────────────────────────────────────────────
-function rowToPost(
-  row:  any,
-  myL:  Set<string>,
-  myR:  Set<string>,
-  myB:  Set<string>,
-  myV:  Set<string>,
+function modelToPost(
+  model: any,
+  liked: boolean,
+  reposted: boolean,
+  bookmarked: boolean,
+  voted: boolean,
 ): Post {
-  const isAnon = !!row.is_anonymous
-
-  // Prefer denormalised columns stored at insert time
-  // Fall back to profiles join (for old rows)
-  const fullName  = row.author_name       || row.profiles?.full_name    || 'Student'
-  const handle    = row.author_handle     || row.profiles?.forum_handle || null
-  const initials  = row.author_initials   || row.profiles?.forum_initials
-                    || fullName.slice(0, 2).toUpperCase()
-  // forum_grad is a Postgres ARRAY — comes back as string[] from the join
-  const rawGrad   = row.author_grad       || row.profiles?.forum_grad   || null
-  const grad      = (Array.isArray(rawGrad) ? rawGrad : ['#1DA1F2', '#0d8bd9']) as [string, string]
-  const avatarUrl = row.author_avatar_url || row.profiles?.avatar_url   || null
-  const verified  = row.author_verified   ?? row.profiles?.is_verified  ?? false
-
-  // Parse poll_options from DB format [{label, votes}] → [{label, pct, votes, winning}]
   let poll: Post['poll']
   let pollMeta: string | undefined
-  if (Array.isArray(row.poll_options) && row.poll_options.length > 0) {
-    const total  = row.poll_options.reduce((a: number, o: any) => a + (o.votes ?? 0), 0)
-    const maxV   = Math.max(...row.poll_options.map((o: any) => o.votes ?? 0))
-    poll = row.poll_options.map((o: any) => ({
-      label:   o.label,
-      votes:   o.votes ?? 0,
-      pct:     total > 0 ? Math.round(((o.votes ?? 0) / total) * 100) : 0,
-      winning: (o.votes ?? 0) === maxV && maxV > 0,
-    }))
-    pollMeta = `${total} vote${total !== 1 ? 's' : ''}`
+  
+  if (model.pollOptions) {
+    try {
+      const opts = JSON.parse(model.pollOptions)
+      if (Array.isArray(opts) && opts.length > 0) {
+        const total = opts.reduce((a: number, o: any) => a + (o.votes ?? 0), 0)
+        const maxV = Math.max(...opts.map((o: any) => o.votes ?? 0))
+        poll = opts.map((o: any) => ({
+          label:   o.label,
+          votes:   o.votes ?? 0,
+          pct:     total > 0 ? Math.round(((o.votes ?? 0) / total) * 100) : 0,
+          winning: (o.votes ?? 0) === maxV && maxV > 0,
+        }))
+        pollMeta = `${total} vote${total !== 1 ? 's' : ''}`
+      }
+    } catch { /* ignore */ }
   }
 
+  const grad = model.authorGrad ? JSON.parse(model.authorGrad) : ['#1DA1F2', '#0d8bd9']
+
   return {
-    id:         row.id,
-    isSeed:     false,
-    type:       (row.post_type as Post['type']) || (poll ? 'poll' : 'normal'),
-    authorId:   row.author_id,
-    name:       isAnon ? 'Anonymous' : fullName,
-    handle:     isAnon ? '@anonymous' : ensureHandle(handle, fullName),
-    verified:   isAnon ? false : verified,
-    time:       timeAgo(row.created_at || new Date().toISOString()),
-    avatar:     isAnon ? '?' : initials,
-    avatarGrad: isAnon ? ['#3e4144', '#16181c'] : grad,
-    avatarUri:  isAnon ? null : avatarUrl,
-    text:       row.body || '',
-    imageUrl:   row.image_url || null,
+    id:         model.id,
+    authorId:   model.authorId,
+    name:       model.isAnonymous ? 'Anonymous' : (model.authorName || 'Student'),
+    handle:     model.isAnonymous ? '@anonymous' : ensureHandle(model.authorHandle, model.authorName),
+    verified:   model.isAnonymous ? false : !!model.authorVerified,
+    time:       timeAgo(new Date(model.createdAt).toISOString()),
+    avatar:     model.isAnonymous ? '?' : (model.authorInitials || 'ST'),
+    avatarGrad: model.isAnonymous ? ['#3e4144', '#16181c'] : grad,
+    avatarUri:  model.isAnonymous ? null : model.authorAvatarUrl,
+    text:       model.content || '',
+    imageUrl:   model.imageUrl || null,
     poll,
     pollMeta,
-    pollVoted:  myV.has(row.id),
-    replies:    row.comment_count  ?? row.replies_count  ?? 0,
-    reposts:    row.repost_count   ?? row.reposts_count  ?? 0,
-    likes:      row.like_count     ?? row.likes_count    ?? 0,
-    views:      fmt(row.view_count ?? row.views_count    ?? 0),
-    bookmarks:  row.bookmark_count ?? row.bookmarks_count ?? 0,
-    liked:      myL.has(row.id),
-    reposted:   myR.has(row.id),
-    bookmarked: myB.has(row.id),
+    pollVoted:  voted,
+    replies:    model.commentsCount || 0,
+    reposts:    model.repostsCount || 0,
+    likes:      model.likesCount || 0,
+    views:      fmt(model.viewsCount || 0),
+    bookmarks:  model.bookmarksCount || 0,
+    liked,
+    reposted,
+    bookmarked,
+    type:      (model.pollOptions ? 'poll' : 'normal') as Post['type'],
   }
 }
 
@@ -269,7 +262,7 @@ function ActionBtn({
           color={color}
         />
       </Animated.View>
-      {label !== undefined && Number(label) > 0 && (
+      {label !== undefined && (typeof label === 'number' ? label > 0 : label !== '0') && (
         <Text style={[s.actionCount, { color }]}>{fmt(Number(label))}</Text>
       )}
     </TouchableOpacity>
@@ -327,7 +320,7 @@ function Poll({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PostCard — Twitter-style with professional options sheet
+// PostCard
 // ─────────────────────────────────────────────────────────────────────────────
 function PostCard({
   post, myUserId, onLike, onRepost, onBookmark, onReply,
@@ -349,7 +342,6 @@ function PostCard({
   const isOwn = post.authorId === myUserId
   const [showOptions, setShowOptions] = useState(false)
 
-  // Build options list based on ownership — Twitter-style
   const ownOptions: PostOption[] = [
     {
       icon:        'trash-outline',
@@ -368,11 +360,6 @@ function PostCard({
       label:   'Share post',
       onPress: () => onShare(post),
     },
-    {
-      icon:    'copy-outline',
-      label:   'Copy link',
-      onPress: () => { /* copy to clipboard */ },
-    },
   ]
 
   const otherOptions: PostOption[] = [
@@ -381,11 +368,6 @@ function PostCard({
       label:       'Report post',
       destructive: true,
       onPress:     () => { /* report */ },
-    },
-    {
-      icon:        'person-remove-outline',
-      label:       `Unfollow ${post.handle}`,
-      onPress:     () => { /* unfollow */ },
     },
     {
       icon:    'bookmark-outline',
@@ -398,29 +380,11 @@ function PostCard({
       label:   'Share post',
       onPress: () => onShare(post),
     },
-    {
-      icon:    'copy-outline',
-      label:   'Copy link',
-      onPress: () => { /* copy */ },
-    },
-    {
-      icon:    'volume-mute-outline',
-      label:   `Mute ${post.handle}`,
-      onPress: () => { /* mute */ },
-    },
   ]
 
   return (
     <View>
-      {post.type === 'repost' && post.repostedBy && (
-        <View style={s.repostLabel}>
-          <Ionicons name="repeat" size={12} color={T.green} />
-          <Text style={s.repostLabelText}>{post.repostedBy} reposted</Text>
-        </View>
-      )}
-
       <TouchableOpacity activeOpacity={0.97} onPress={() => onOpen(post)} style={s.post}>
-        {/* Left column */}
         <View style={s.postLeft}>
           <TouchableOpacity onPress={() => post.authorId && onAvatarPress?.(post.authorId)} activeOpacity={0.8}>
             <Avi initials={post.avatar} grad={post.avatarGrad} size={42} uri={post.avatarUri} verified={post.verified} />
@@ -428,9 +392,7 @@ function PostCard({
           {post.replies > 0 && <View style={s.threadLine} />}
         </View>
 
-        {/* Right column */}
         <View style={s.postBody}>
-          {/* Header */}
           <View style={s.postHeader}>
             <TouchableOpacity
               onPress={() => post.authorId && onAvatarPress?.(post.authorId)}
@@ -454,27 +416,18 @@ function PostCard({
             </TouchableOpacity>
           </View>
 
-          {/* Text */}
           <RichText text={post.text} onHashtag={onHashtag} />
 
-          {/* Image */}
           {post.imageUrl ? (
             <View style={s.postImageWrap}>
               <Image source={{ uri: post.imageUrl }} style={s.postImage} resizeMode="cover" />
             </View>
           ) : null}
 
-          {/* Poll */}
           {post.type === 'poll' && post.poll && (
-            <Poll
-              options={post.poll}
-              meta={post.pollMeta}
-              onVote={i => onVote(post.id, i)}
-              voted={!!post.pollVoted}
-            />
+            <Poll options={post.poll} meta={post.pollMeta} onVote={i => onVote(post.id, i)} voted={!!post.pollVoted} />
           )}
 
-          {/* Actions */}
           <View style={s.postActions}>
             <ActionBtn variant="reply"    icon="chatbubble-outline"              label={post.replies}  onPress={() => onReply(post)} />
             <ActionBtn variant="repost"   icon="repeat"                           label={post.reposts}  active={post.reposted}   onPress={() => onRepost(post.id, post.authorId)} />
@@ -484,15 +437,8 @@ function PostCard({
           </View>
         </View>
       </TouchableOpacity>
-
       <View style={s.divider} />
-
-      {/* Options sheet */}
-      <PostOptionsSheet
-        visible={showOptions}
-        onClose={() => setShowOptions(false)}
-        options={isOwn ? ownOptions : otherOptions}
-      />
+      <PostOptionsSheet visible={showOptions} onClose={() => setShowOptions(false)} options={isOwn ? ownOptions : otherOptions} />
     </View>
   )
 }
@@ -569,11 +515,10 @@ function InlineComposer({
   )
 }
 
-// Workaround: poll button in InlineComposer opens ComposeModal
 let setShowCompose: ((v: boolean) => void) | undefined
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Feed tabs
+// MAIN SCREEN
 // ─────────────────────────────────────────────────────────────────────────────
 type FeedTab = 'for-you' | 'following' | 'campus' | 'classes'
 const TABS: { key: FeedTab; label: string }[] = [
@@ -583,9 +528,6 @@ const TABS: { key: FeedTab; label: string }[] = [
   { key: 'classes',   label: 'Classes'  },
 ]
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MAIN SCREEN
-// ─────────────────────────────────────────────────────────────────────────────
 export default function ForumScreen() {
   const router      = useRouter()
   const insets      = useSafeAreaInsets()
@@ -593,16 +535,7 @@ export default function ForumScreen() {
   const { isOffline } = useNetworkStatus()
 
   // ── Profile ───────────────────────────────────────────────────────────────
-  const [dbProfile, setDbProfile] = useState<{
-    forum_handle?:    string
-    forum_initials?:  string
-    forum_grad?:      string[]
-    avatar_url?:      string
-    is_verified?:     boolean
-    college_id?:      string
-    class_id?:        string
-  } | null>(null)
-
+  const [dbProfile, setDbProfile] = useState<any>(null)
   useEffect(() => {
     if (!user?.id) return
     supabase
@@ -610,45 +543,33 @@ export default function ForumScreen() {
       .select('forum_handle,forum_initials,forum_grad,avatar_url,is_verified,college_id,class_id')
       .eq('id', user.id)
       .single()
-      .then(({ data }) => { if (data) setDbProfile(data as any) })
+      .then(({ data }) => { if (data) setDbProfile(data) })
   }, [user?.id])
 
-  const profile: UserProfile = user
-    ? {
-        userId:    user.id,
-        name:      dbProfile
-          ? (user.user_metadata?.full_name || user.email?.split('@')[0] || 'Student')
-          : (user.user_metadata?.full_name || user.email?.split('@')[0] || 'Student'),
-        handle:    ensureHandle(
-          dbProfile?.forum_handle || user.user_metadata?.forum_handle,
-          user.user_metadata?.full_name,
-        ),
-        initials:  dbProfile?.forum_initials
-          || (user.user_metadata?.full_name || user.email || '').slice(0, 2).toUpperCase()
-          || 'ST',
-        grad: (
-          Array.isArray(dbProfile?.forum_grad) ? dbProfile!.forum_grad
-          : Array.isArray(user.user_metadata?.forum_grad) ? user.user_metadata.forum_grad
-          : ['#1DA1F2', '#0d8bd9']
-        ) as [string, string],
-        avatarUri:  dbProfile?.avatar_url      || user.user_metadata?.avatar_url || null,
-        collegeId:  dbProfile?.college_id      || user.user_metadata?.college_id || null,
-        classId:    dbProfile?.class_id        || user.user_metadata?.class_id   || null,
-        verified:   dbProfile?.is_verified     ?? !!user.user_metadata?.is_verified,
-      }
-    : DEFAULT_PROFILE
+  const profile: UserProfile = user ? {
+    userId:    user.id,
+    name:      user.user_metadata?.full_name || user.email?.split('@')[0] || 'Student',
+    handle:    ensureHandle(dbProfile?.forum_handle || user.user_metadata?.forum_handle, user.user_metadata?.full_name),
+    initials:  dbProfile?.forum_initials || (user.user_metadata?.full_name || 'ST').slice(0, 2).toUpperCase(),
+    grad:      (Array.isArray(dbProfile?.forum_grad) ? dbProfile.forum_grad : ['#1DA1F2', '#0d8bd9']) as [string, string],
+    avatarUri: dbProfile?.avatar_url || user.user_metadata?.avatar_url || null,
+    collegeId: dbProfile?.college_id || user.user_metadata?.college_id || null,
+    classId:   dbProfile?.class_id   || user.user_metadata?.class_id   || null,
+    verified:  dbProfile?.is_verified ?? !!user.user_metadata?.is_verified,
+  } : DEFAULT_PROFILE
 
   // ── Feed state ────────────────────────────────────────────────────────────
-  const [feedTab,      setFeedTab]      = useState<FeedTab>('for-you')
-  const [posts,        setPosts]        = useState<Post[]>([])
-  const [postsLoading, setPostsLoading] = useState(false)
-  const [refreshing,   setRefreshing]   = useState(false)
-
-  // ── Interaction tracking refs ─────────────────────────────────────────────
+  const [feedTab, setFeedTab] = useState<FeedTab>('for-you')
+  const { records: postModels, loading: postsLoading } = useForumPosts(feedTab, profile.userId, profile.collegeId, profile.classId)
+  
   const likedIds      = useRef(new Set<string>())
   const repostedIds   = useRef(new Set<string>())
   const bookmarkedIds = useRef(new Set<string>())
   const votedIds      = useRef(new Set<string>())
+
+  const posts = useMemo(() => {
+    return postModels.map(m => modelToPost(m, likedIds.current.has(m.id), repostedIds.current.has(m.id), bookmarkedIds.current.has(m.id), votedIds.current.has(m.id)))
+  }, [postModels])
 
   // ── UI state ──────────────────────────────────────────────────────────────
   const [unreadCount,    setUnreadCount]    = useState(0)
@@ -662,128 +583,25 @@ export default function ForumScreen() {
   const [replyTo,        setReplyTo]        = useState<Post | null>(null)
   const [toastMsg,       setToastMsg]       = useState('')
   const [toastVis,       setToastVis]       = useState(false)
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const toastTimer = useRef<any>(null)
 
-  // Wire up poll button in InlineComposer
   setShowCompose = _setShowCompose
-
   const showToast = useCallback((msg: string) => {
     setToastMsg(msg); setToastVis(true)
     if (toastTimer.current) clearTimeout(toastTimer.current)
     toastTimer.current = setTimeout(() => setToastVis(false), 2500)
   }, [])
 
-  // ── Load posts ────────────────────────────────────────────────────────────
-  const loadPosts = useCallback(async (tab: FeedTab) => {
-    if (!profile.userId) return
-    setPostsLoading(true)
-
-    let query = supabase
-      .from('sq_posts')
-      .select(`
-        *,
-        profiles!sq_posts_author_id_fkey(
-          full_name, forum_handle, forum_initials, forum_grad,
-          avatar_url, is_verified, college_id, class_id
-        )
-      `)
-      .is('reply_to_id', null)
-      .order('created_at', { ascending: false })
-      .limit(60)
-
-    if (tab === 'following') {
-      const { data: follows } = await supabase
-        .from('sq_follows').select('following_id').eq('follower_id', profile.userId)
-      const ids = (follows ?? []).map((f: any) => f.following_id as string)
-      if (ids.length === 0) { setPosts([]); setPostsLoading(false); return }
-      query = query.in('author_id', ids)
-
-    } else if (tab === 'campus') {
-      if (!profile.collegeId) { setPosts([]); setPostsLoading(false); return }
-      const { data: cu } = await supabase
-        .from('profiles').select('id').eq('college_id', profile.collegeId)
-      const ids = (cu ?? []).map((u: any) => u.id as string)
-      if (ids.length === 0) { setPosts([]); setPostsLoading(false); return }
-      query = query.in('author_id', ids)
-
-    } else if (tab === 'classes') {
-      if (!profile.classId) { setPosts([]); setPostsLoading(false); return }
-      const { data: cu } = await supabase
-        .from('profiles').select('id').eq('class_id', profile.classId)
-      const ids = (cu ?? []).map((u: any) => u.id as string)
-      if (ids.length === 0) { setPosts([]); setPostsLoading(false); return }
-      query = query.in('author_id', ids)
-    }
-
-    const { data, error } = await query
-    if (error) { console.error('loadPosts:', error.message); setPostsLoading(false); return }
-
-    // Fetch interaction state
-    const myL = new Set<string>()
-    const myR = new Set<string>()
-    const myB = new Set<string>()
-    const myV = new Set<string>()
-
-    if (data && data.length > 0) {
-      const postIds = data.map((p: any) => p.id)
-      const [lRes, rRes, bRes, vRes] = await Promise.all([
-        supabase.from('sq_likes').select('post_id').eq('user_id', profile.userId).in('post_id', postIds),
-        supabase.from('sq_reposts').select('post_id').eq('user_id', profile.userId).in('post_id', postIds),
-        supabase.from('sq_bookmarks').select('post_id').eq('user_id', profile.userId).in('post_id', postIds),
-        supabase.from('sq_poll_votes').select('post_id').eq('user_id', profile.userId).in('post_id', postIds),
-      ])
-      ;(lRes.data ?? []).forEach((r: any) => { myL.add(r.post_id); likedIds.current.add(r.post_id) })
-      ;(rRes.data ?? []).forEach((r: any) => { myR.add(r.post_id); repostedIds.current.add(r.post_id) })
-      ;(bRes.data ?? []).forEach((r: any) => { myB.add(r.post_id); bookmarkedIds.current.add(r.post_id) })
-      ;(vRes.data ?? []).forEach((r: any) => { myV.add(r.post_id); votedIds.current.add(r.post_id) })
-    }
-
-    setPosts((data ?? []).map((row: any) => rowToPost(row, myL, myR, myB, myV)))
-    setPostsLoading(false)
-  }, [profile.userId, profile.collegeId, profile.classId])
-
-  useEffect(() => { void loadPosts(feedTab) }, [feedTab, profile.userId])
-
-  // ── Real-time feed updates ────────────────────────────────────────────────
+  // ── Notification badge ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (!profile.userId) return
-    const ch = supabase.channel('forum_feed_rt')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'sq_posts' }, async payload => {
-        if ((payload.new as any).reply_to_id) return
-        const { data } = await supabase
-          .from('sq_posts')
-          .select(`*, profiles!sq_posts_author_id_fkey(full_name,forum_handle,forum_initials,forum_grad,avatar_url,is_verified)`)
-          .eq('id', (payload.new as any).id)
-          .single()
-        if (data) {
-          setPosts(prev => {
-            if (prev.some(p => p.id === (data as any).id)) return prev
-            return [rowToPost(data as any, likedIds.current, repostedIds.current, bookmarkedIds.current, votedIds.current), ...prev]
-          })
-        }
-      })
-      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'sq_posts' }, payload => {
-        setPosts(prev => prev.filter(p => p.id !== (payload.old as any).id))
-      })
-      .subscribe()
-    return () => { supabase.removeChannel(ch) }
-  }, [profile.userId])
-
-  // ── Notification badge ────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!profile.userId) return
-    const fetch = async () => {
-      const { count } = await supabase
-        .from('sq_notifications')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', profile.userId).eq('read', false)
+    const fetchBadge = async () => {
+      const isOnline = await NetInfo.fetch().then(s => s.isConnected)
+      if (!isOnline) return
+      const { count } = await supabase.from('sq_notifications').select('*', { count: 'exact', head: true }).eq('user_id', profile.userId).eq('read', false)
       setUnreadCount(count ?? 0)
     }
-    void fetch()
-    const ch = supabase.channel(`notif_badge_${profile.userId}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'sq_notifications', filter: `user_id=eq.${profile.userId}` }, fetch)
-      .subscribe()
-    return () => { supabase.removeChannel(ch) }
+    fetchBadge()
   }, [profile.userId])
 
   // ── Interactions ──────────────────────────────────────────────────────────
@@ -791,299 +609,148 @@ export default function ForumScreen() {
     handleLike, handleRepost, handleBookmark, handleShare,
     handleVote, handleDeletePost, handleNewPost, handleNewReply,
   } = useForumInteractions({
-    mediaBucket:   MEDIA_BUCKET,
-    profile,
-    showToast,
-    setPosts,
-    setThreadPost,
-    likedIds,
-    repostedIds,
-    bookmarkedIds,
-    votedIds,
-    mapRowToPost: rowToPost,
+    mediaBucket: MEDIA_BUCKET, profile, showToast, setPosts: () => {}, 
+    setThreadPost, likedIds, repostedIds, bookmarkedIds, votedIds,
+    mapRowToPost: (row: any) => rowToNotif(row) as any // dummy
   })
-
-  const handleRefresh = useCallback(async () => {
-    setRefreshing(true)
-    await loadPosts(feedTab)
-    setRefreshing(false)
-  }, [feedTab, loadPosts])
 
   const handleOpenThread = useCallback((post: Post) => {
     setThreadPost(post)
-    if (!post.id.startsWith('temp-')) {
-      void (async () => {
-        try { await supabase.rpc('sq_increment_view', { p_id: post.id }) } catch { /* ignore */ }
-      })()
+    if (!post.id.startsWith('temp-') && !isOffline) {
+      supabase.rpc('sq_increment_view', { p_id: post.id }).then(undefined, () => {})
     }
-  }, [])
+  }, [isOffline])
 
-  const handleOpenSearch = useCallback((q?: string) => {
-    setSearchQuery(q || '')
-    setShowSearch(true)
-  }, [])
-
-  const handleOpenProfile = useCallback(async (userId: string) => {
-    if (!userId || userId === profile.userId) return
-    setProfileUserId(userId)
-  }, [profile.userId])
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Render
-  // ─────────────────────────────────────────────────────────────────────────
   return (
     <View style={{ flex: 1, backgroundColor: T.bg }}>
-
-      {/* Header */}
       <View style={[hd.header, { paddingTop: insets.top + 6 }]}>
-        <TouchableOpacity style={hd.iconBtn} onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={19} color={T.text} />
-        </TouchableOpacity>
+        <TouchableOpacity style={hd.iconBtn} onPress={() => router.back()}><Ionicons name="arrow-back" size={19} color={T.text} /></TouchableOpacity>
         <View style={hd.brand}>
-          <LinearGradient colors={[T.accent, T.accentGlow]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={hd.brandLogo}>
-            <Text style={hd.brandLogoText}>SQ</Text>
-          </LinearGradient>
-          <View>
-            <Text style={hd.brandName}>StudentSquare</Text>
-            <Text style={hd.brandSub}>FORUM</Text>
-          </View>
+          <LinearGradient colors={[T.accent, T.accentGlow]} style={hd.brandLogo}><Text style={hd.brandLogoText}>SQ</Text></LinearGradient>
+          <View><Text style={hd.brandName}>StudentSquare</Text><Text style={hd.brandSub}>FORUM</Text></View>
         </View>
         <View style={{ flexDirection: 'row', gap: 6 }}>
           <TouchableOpacity style={hd.iconBtn} onPress={() => { setShowNotifs(true); setUnreadCount(0) }}>
             <Ionicons name="notifications-outline" size={19} color={unreadCount > 0 ? T.accent : T.text} />
-            {unreadCount > 0 && (
-              <View style={hd.badge}>
-                <Text style={hd.badgeText}>{unreadCount > 99 ? '99+' : String(unreadCount)}</Text>
-              </View>
-            )}
+            {unreadCount > 0 && <View style={hd.badge}><Text style={hd.badgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text></View>}
           </TouchableOpacity>
-          <TouchableOpacity style={hd.iconBtn} onPress={() => handleOpenSearch()}>
-            <Ionicons name="search-outline" size={19} color={T.text} />
-          </TouchableOpacity>
-          <TouchableOpacity style={hd.iconBtn} onPress={() => setShowBookmarks(true)}>
-            <Ionicons name="bookmark-outline" size={19} color={T.text} />
-          </TouchableOpacity>
+          <TouchableOpacity style={hd.iconBtn} onPress={() => setShowSearch(true)}><Ionicons name="search-outline" size={19} color={T.text} /></TouchableOpacity>
+          <TouchableOpacity style={hd.iconBtn} onPress={() => setShowBookmarks(true)}><Ionicons name="bookmark-outline" size={19} color={T.text} /></TouchableOpacity>
         </View>
       </View>
 
-      {/* Tabs */}
       <View style={hd.tabsRow}>
         {TABS.map(tab => (
-          <TouchableOpacity key={tab.key} style={hd.tab} onPress={() => setFeedTab(tab.key)} activeOpacity={0.8}>
+          <TouchableOpacity key={tab.key} style={hd.tab} onPress={() => setFeedTab(tab.key)}>
             <Text style={[hd.tabText, feedTab === tab.key && hd.tabTextActive]}>{tab.label}</Text>
             {feedTab === tab.key && <View style={hd.tabIndicator} />}
           </TouchableOpacity>
         ))}
       </View>
 
-      {/* Offline banner */}
       {isOffline && (
-        <View style={forumSt.offlineBanner}>
-          <Ionicons name="cloud-offline-outline" size={14} color={T.amber} />
-          <Text style={forumSt.offlineText}>You're offline — showing cached posts</Text>
-        </View>
+        <View style={forumSt.offlineBanner}><Ionicons name="cloud-offline-outline" size={14} color={T.amber} /><Text style={forumSt.offlineText}>You're offline — showing cached posts</Text></View>
       )}
 
-      {/* Feed */}
       <FlatList
         data={posts}
         keyExtractor={p => p.id}
-        showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}
-        ListHeaderComponent={
-          <InlineComposer
-            onFocus={() => { setReplyTo(null); _setShowCompose(true) }}
-            onPost={(text, img) => handleNewPost(text, img)}
-            profile={profile}
-          />
-        }
+        ListHeaderComponent={<InlineComposer onFocus={() => _setShowCompose(true)} onPost={handleNewPost} profile={profile} />}
         renderItem={({ item }) => (
           <PostCard
-            post={item}
-            myUserId={profile.userId}
-            onLike={handleLike}
-            onRepost={handleRepost}
-            onBookmark={handleBookmark}
+            post={item} myUserId={profile.userId}
+            onLike={handleLike} onRepost={handleRepost} onBookmark={handleBookmark}
             onReply={p => { setReplyTo(p); _setShowCompose(true) }}
-            onShare={handleShare}
-            onOpen={handleOpenThread}
-            onVote={handleVote}
-            onHashtag={handleOpenSearch}
-            onAvatarPress={handleOpenProfile}
-            onDelete={handleDeletePost}
+            onShare={handleShare} onOpen={handleOpenThread} onVote={handleVote}
+            onHashtag={q => { setSearchQuery(q); setShowSearch(true) }}
+            onAvatarPress={setProfileUserId} onDelete={handleDeletePost}
           />
         )}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={T.accent} />}
         ListEmptyComponent={
-          postsLoading ? (
-            <View style={{ alignItems: 'center', paddingTop: 60 }}>
-              <Ionicons name="hourglass-outline" size={32} color={T.muted} />
-            </View>
-          ) : (
-            <View style={{ alignItems: 'center', paddingTop: 80, gap: 12, paddingHorizontal: 40 }}>
-              <Text style={{ fontSize: 20, fontWeight: '800', color: T.text, textAlign: 'center' }}>
-                {feedTab === 'following' ? 'Your following feed is empty'
-                  : feedTab === 'campus' ? 'No campus posts yet'
-                  : feedTab === 'classes' ? 'No class posts yet'
-                  : 'Nothing here yet'}
-              </Text>
-              <Text style={{ color: T.muted, fontSize: 14, textAlign: 'center', lineHeight: 22 }}>
-                {feedTab === 'following' ? 'Follow people to see their posts here.'
-                  : feedTab === 'campus' ? (profile.collegeId ? 'Be the first from your campus to post!' : 'Your college is not set in your profile.')
-                  : feedTab === 'classes' ? (profile.classId ? 'Be the first from your class to post!' : 'Your class is not set in your profile.')
-                  : 'Be the first to post!'}
-              </Text>
-            </View>
-          )
+          postsLoading ? <View style={{ paddingTop: 60 }}><Ionicons name="hourglass-outline" size={32} color={T.muted} style={{ alignSelf:'center' }} /></View>
+          : <View style={{ paddingTop: 80, paddingHorizontal: 40, alignItems:'center' }}><Text style={{ color:T.text, fontSize:18, fontWeight:'800' }}>Nothing here yet</Text></View>
         }
       />
 
-      {/* FAB */}
-      <TouchableOpacity
-        style={[fab.btn, { bottom: insets.bottom + 24 }]}
-        onPress={() => { setReplyTo(null); _setShowCompose(true) }}
-        activeOpacity={0.85}
-      >
-        <LinearGradient colors={[T.accent, '#0d8bd9']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={fab.gradient}>
-          <Ionicons name="create-outline" size={24} color="#fff" />
-        </LinearGradient>
+      <TouchableOpacity style={[fab.btn, { bottom: insets.bottom + 24 }]} onPress={() => _setShowCompose(true)}>
+        <LinearGradient colors={[T.accent, '#0d8bd9']} style={fab.gradient}><Ionicons name="create-outline" size={24} color="#fff" /></LinearGradient>
       </TouchableOpacity>
 
-      {/* Modals */}
-      <SearchModal
-        visible={showSearch}
-        onClose={() => setShowSearch(false)}
-        initialQuery={searchQuery}
-        currentUserId={profile.userId}
-      />
-      <BookmarksModal
-        visible={showBookmarks}
-        onClose={() => setShowBookmarks(false)}
-        userId={profile.userId}
-        mapRowToPost={(row, myL, myR, myB) => rowToPost(row, myL, myR, myB, votedIds.current)}
-        renderPost={item => (
-          <PostCard
-            post={item}
-            myUserId={profile.userId}
-            onLike={handleLike} onRepost={handleRepost} onBookmark={handleBookmark}
-            onReply={p => { setReplyTo(p); _setShowCompose(true) }}
-            onShare={handleShare} onOpen={handleOpenThread}
-            onVote={handleVote} onHashtag={handleOpenSearch}
-            onAvatarPress={handleOpenProfile} onDelete={handleDeletePost}
-          />
-        )}
-      />
-      <NotificationsModal
-        visible={showNotifs}
-        onClose={() => setShowNotifs(false)}
-        userId={profile.userId}
-        mapNotifRow={rowToNotif}
-      />
-      <ComposeModal
-        visible={showCompose}
-        onClose={() => { _setShowCompose(false); setReplyTo(null) }}
-        onPost={(text, img, pollOpts, isAnon) => {
-          handleNewPost(text, img, pollOpts, replyTo?.id, isAnon)
-          setReplyTo(null)
-        }}
-        replyTo={replyTo}
-        profile={profile}
-      />
-      <ThreadModal
-        post={threadPost}
-        visible={!!threadPost}
-        onClose={() => setThreadPost(null)}
-        onLike={handleLike}
-        onRepost={handleRepost}
-        onBookmark={handleBookmark}
-        onShare={handleShare}
-        profile={profile}
-        onNewReply={handleNewReply}
-        myUserId={profile.userId}
-        onDeleteReply={handleDeletePost}
-      />
-      <ProfileCardModal
-        userId={profileUserId}
-        visible={!!profileUserId}
-        onClose={() => setProfileUserId(null)}
-        currentUserId={profile.userId}
-        onOpen={handleOpenThread}
-        onDelete={handleDeletePost}
-      />
+      <SearchModal visible={showSearch} onClose={() => setShowSearch(false)} initialQuery={searchQuery} currentUserId={profile.userId} />
+      <BookmarksModal visible={showBookmarks} onClose={() => setShowBookmarks(false)} userId={profile.userId} mapRowToPost={() => ({}) as any} renderPost={() => null} />
+      <NotificationsModal visible={showNotifs} onClose={() => setShowNotifs(false)} userId={profile.userId} mapNotifRow={rowToNotif} />
+      <ComposeModal visible={showCompose} onClose={() => _setShowCompose(false)} onPost={(t,i,p,a) => handleNewPost(t,i,p,replyTo?.id,a)} replyTo={replyTo} profile={profile} />
+      <ThreadModal post={threadPost} visible={!!threadPost} onClose={() => setThreadPost(null)} onLike={handleLike} onRepost={handleRepost} onBookmark={handleBookmark} onShare={handleShare} profile={profile} onNewReply={handleNewReply} myUserId={profile.userId} onDeleteReply={handleDeletePost} />
+      <ProfileCardModal userId={profileUserId} visible={!!profileUserId} onClose={() => setProfileUserId(null)} currentUserId={profile.userId} onOpen={handleOpenThread} onDelete={handleDeletePost} />
       <Toast message={toastMsg} visible={toastVis} />
     </View>
   )
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Styles
-// ─────────────────────────────────────────────────────────────────────────────
 const forumSt = StyleSheet.create({
-  offlineBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: 'rgba(255,212,0,0.1)', paddingVertical: 8, paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: '#2f3336' },
+  offlineBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: 'rgba(255,212,0,0.1)', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#2f3336' },
   offlineText:   { fontSize: 12, fontWeight: '600', color: '#ffd400' },
 })
 
 const s = StyleSheet.create({
-  divider:          { height: 1, backgroundColor: T.border },
-  repostLabel:      { paddingLeft: 62, paddingTop: 10, paddingBottom: 2, flexDirection: 'row', alignItems: 'center', gap: 6 },
-  repostLabelText:  { fontSize: 13, color: T.green, fontWeight: '600' },
-  post:             { flexDirection: 'row', paddingVertical: 14, paddingRight: 16, backgroundColor: T.bg },
-  postLeft:         { alignItems: 'center', marginRight: 12, marginLeft: 14 },
-  threadLine:       { width: 2, flex: 1, backgroundColor: T.border2, marginTop: 6, borderRadius: 1, minHeight: 20 },
-  postBody:         { flex: 1, minWidth: 0 },
-  postHeader:       { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 4, gap: 4 },
-  postName:         { fontSize: 15, fontWeight: '800', color: T.text },
-  postHandle:       { fontSize: 13, color: T.muted },
-  postDot:          { fontSize: 13, color: T.muted },
-  postTime:         { fontSize: 13, color: T.muted },
-  postText:         { fontSize: 15, lineHeight: 24, color: T.text, marginBottom: 10 },
-  postImageWrap:    { borderRadius: 16, overflow: 'hidden', marginBottom: 10, borderWidth: 1, borderColor: T.border },
-  postImage:        { width: '100%', aspectRatio: 16 / 9 },
-  postActions:      { flexDirection: 'row', alignItems: 'center', marginLeft: -10, marginTop: 4, gap: 4 },
-  action:           { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 7, paddingHorizontal: 10, borderRadius: 50 },
-  actionCount:      { fontSize: 13, fontWeight: '600' },
-  optionsBtn:       { padding: 4, marginLeft: 4 },
-  // Poll
-  poll:             { marginBottom: 10, gap: 8 },
-  pollOption:       { flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: T.border2, borderRadius: 50, paddingVertical: 10, paddingHorizontal: 16, overflow: 'hidden', position: 'relative', minHeight: 44 },
+  divider: { height: 1, backgroundColor: T.border },
+  post: { flexDirection: 'row', paddingVertical: 14, paddingRight: 16, backgroundColor: T.bg },
+  postLeft: { alignItems: 'center', marginRight: 12, marginLeft: 14 },
+  threadLine: { width: 2, flex: 1, backgroundColor: T.border2, marginTop: 6, borderRadius: 1 },
+  postBody: { flex: 1, minWidth: 0 },
+  postHeader: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 4, gap: 4 },
+  postName: { fontSize: 15, fontWeight: '800', color: T.text },
+  postHandle: { fontSize: 13, color: T.muted },
+  postDot: { fontSize: 13, color: T.muted },
+  postTime: { fontSize: 13, color: T.muted },
+  postText: { fontSize: 15, lineHeight: 24, color: T.text, marginBottom: 10 },
+  postImageWrap: { borderRadius: 16, overflow: 'hidden', marginBottom: 10, borderWidth: 1, borderColor: T.border },
+  postImage: { width: '100%', aspectRatio: 16 / 9 },
+  postActions: { flexDirection: 'row', alignItems: 'center', marginLeft: -10, marginTop: 4, gap: 4 },
+  action: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 7, paddingHorizontal: 10 },
+  actionCount: { fontSize: 13, fontWeight: '600' },
+  optionsBtn: { padding: 4, marginLeft: 4 },
+  poll: { marginBottom: 10, gap: 8 },
+  pollOption: { flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: T.border2, borderRadius: 50, paddingVertical: 10, paddingHorizontal: 16, overflow: 'hidden', position: 'relative' },
   pollOptionWinning:{ borderColor: T.accent },
-  pollBar:          { position: 'absolute', left: 0, top: 0, bottom: 0, borderRadius: 50 },
-  pollLabel:        { fontSize: 15, fontWeight: '600', color: T.text, flex: 1, zIndex: 1 },
-  pollPct:          { fontSize: 14, fontWeight: '600', color: T.muted, zIndex: 1 },
-  pollMeta:         { fontSize: 13, color: T.muted, marginTop: 2, paddingHorizontal: 4 },
-  pollHint:         { fontSize: 13, color: T.muted, marginTop: 2, paddingHorizontal: 4 },
+  pollBar: { position: 'absolute', left: 0, top: 0, bottom: 0 },
+  pollLabel: { fontSize: 15, fontWeight: '600', color: T.text, flex: 1, zIndex: 1 },
+  pollPct: { fontSize: 14, fontWeight: '600', color: T.muted, zIndex: 1 },
+  pollMeta: { fontSize: 13, color: T.muted, marginTop: 2 },
+  pollHint: { fontSize: 13, color: T.muted, marginTop: 2 },
 })
 
 const hd = StyleSheet.create({
-  header:        { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: T.border, backgroundColor: 'rgba(0,0,0,0.95)', gap: 10 },
-  brand:         { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
-  brandLogo:     { width: 36, height: 36, borderRadius: 11, justifyContent: 'center', alignItems: 'center' },
-  brandLogoText: { fontSize: 12, fontWeight: '900', color: '#fff', letterSpacing: -0.5 },
-  brandName:     { fontSize: 15, fontWeight: '800', color: T.text, letterSpacing: -0.3 },
-  brandSub:      { fontSize: 8.5, fontWeight: '700', color: T.muted, letterSpacing: 1.5 },
-  iconBtn:       { width: 36, height: 36, borderRadius: 12, backgroundColor: T.bg3, borderWidth: 1, borderColor: T.border, justifyContent: 'center', alignItems: 'center' },
-  badge:         { position: 'absolute', top: -4, right: -4, minWidth: 18, height: 18, borderRadius: 9, backgroundColor: T.accent, borderWidth: 2, borderColor: T.bg, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 3 },
-  badgeText:     { fontSize: 9, fontWeight: '900', color: '#fff' },
-  tabsRow:       { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: T.border, backgroundColor: 'rgba(0,0,0,0.92)' },
-  tab:           { flex: 1, alignItems: 'center', paddingVertical: 14, position: 'relative' },
-  tabText:       { fontSize: 13, fontWeight: '600', color: T.muted, letterSpacing: 0.3 },
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: T.border, backgroundColor: 'rgba(0,0,0,0.95)', gap: 10 },
+  brand: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
+  brandLogo: { width: 36, height: 36, borderRadius: 11, justifyContent: 'center', alignItems: 'center', backgroundColor: T.accent },
+  brandLogoText: { fontSize: 12, fontWeight: '900', color: '#fff' },
+  brandName: { fontSize: 15, fontWeight: '800', color: T.text },
+  brandSub: { fontSize: 8.5, fontWeight: '700', color: T.muted, letterSpacing: 1.5 },
+  iconBtn: { width: 36, height: 36, borderRadius: 12, backgroundColor: T.bg3, borderWidth: 1, borderColor: T.border, justifyContent: 'center', alignItems: 'center' },
+  badge: { position: 'absolute', top: -4, right: -4, minWidth: 18, height: 18, borderRadius: 9, backgroundColor: T.accent, borderWidth: 2, borderColor: T.bg, justifyContent: 'center', alignItems: 'center' },
+  badgeText: { fontSize: 9, fontWeight: '900', color: '#fff' },
+  tabsRow: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: T.border, backgroundColor: 'rgba(0,0,0,0.92)' },
+  tab: { flex: 1, alignItems: 'center', paddingVertical: 14 },
+  tabText: { fontSize: 13, fontWeight: '600', color: T.muted },
   tabTextActive: { color: T.text, fontWeight: '800' },
-  tabIndicator:  { position: 'absolute', bottom: 0, height: 2.5, width: 32, borderRadius: 2, backgroundColor: T.accent },
+  tabIndicator: { position: 'absolute', bottom: 0, height: 2.5, width: 32, borderRadius: 2, backgroundColor: T.accent },
 })
 
 const ic = StyleSheet.create({
-  composer:    { flexDirection: 'row', gap: 12, padding: 16, borderBottomWidth: 1, borderBottomColor: T.border, backgroundColor: T.bg },
-  body:        { flex: 1, minWidth: 0 },
-  input:       { fontSize: 17, color: T.text, lineHeight: 26, minHeight: 56, paddingTop: 0 },
-  imgRemove:   { position: 'absolute', top: 6, right: 6, width: 24, height: 24, borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center' },
-  actions:     { flexDirection: 'row', alignItems: 'center', gap: 4, paddingTop: 10, borderTopWidth: 1, borderTopColor: T.border, marginTop: 8 },
-  toolBtn:     { padding: 6, borderRadius: 50 },
-  charCount:   { marginLeft: 'auto' as any, fontSize: 13, fontWeight: '600', color: T.muted },
-  sendBtn:     { backgroundColor: T.accent, borderRadius: 100, paddingHorizontal: 18, paddingVertical: 8, marginLeft: 6 },
+  composer: { flexDirection: 'row', gap: 12, padding: 16, borderBottomWidth: 1, borderBottomColor: T.border, backgroundColor: T.bg },
+  body: { flex: 1, minWidth: 0 },
+  input: { fontSize: 17, color: T.text, minHeight: 56 },
+  imgRemove: { position: 'absolute', top: 6, right: 6, width: 24, height: 24, borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center' },
+  actions: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingTop: 10, borderTopWidth: 1, borderTopColor: T.border, marginTop: 8 },
+  toolBtn: { padding: 6 },
+  charCount: { marginLeft: 'auto', fontSize: 13, fontWeight: '600', color: T.muted },
+  sendBtn: { backgroundColor: T.accent, borderRadius: 100, paddingHorizontal: 18, paddingVertical: 8 },
   sendBtnText: { fontSize: 14, fontWeight: '800', color: '#fff' },
 })
 
 const fab = StyleSheet.create({
-  btn:      { position: 'absolute', right: 22, zIndex: 200, shadowColor: T.accent, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.45, shadowRadius: 14, elevation: 12 },
+  btn: { position: 'absolute', right: 22, zIndex: 200 },
   gradient: { width: 58, height: 58, borderRadius: 29, justifyContent: 'center', alignItems: 'center' },
 })

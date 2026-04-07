@@ -32,6 +32,7 @@ export type PlannerBlock = {
   startTime: string   // 'HH:MM'
   endTime: string     // 'HH:MM'
   color: string
+  completed?: boolean
 }
 
 type StudyGoals = {
@@ -71,7 +72,7 @@ function blockDurationMins(b: PlannerBlock): number {
 function getWeeklyBlockHours(blocks: PlannerBlock[]): number {
   const week = getWeekDays(new Date()).map(toISO)
   return blocks
-    .filter(b => week.includes(b.date))
+    .filter(b => week.includes(b.date) && b.completed)
     .reduce((sum, b) => sum + blockDurationMins(b) / 60, 0)
 }
 

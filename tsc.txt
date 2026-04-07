@@ -1,0 +1,3 @@
+src/features/chat/screens/AiChatScreen.tsx(20,10): error TS2305: Module '"@/database/actions"' has no exported member 'sendMessage'.
+src/features/college/screens/CollegeInfoScreen.tsx(84,110): error TS2339: Property 'length' does not exist on type 'never'.
+src/features/forum/screens/ForumScreen.tsx(620,60): error TS2551: Property 'catch' does not exist on type 'PostgrestFilterBuilder<any, any, any, any, "sq_increment_view", null, "RPC">'. Did you mean 'match'?

@@ -1,0 +1,3161 @@
+﻿export { default as ForumScreen } from './screens/ForumScreen'
+/**
+ * forum/theme.ts
+ * Single source of truth for design tokens used across all forum components.
+ */
+
+export const T = {
+  // Backgrounds
+  bg:        '#000000',
+  bg2:       '#0d0d0d',
+  bg3:       '#16181c',
+  bg4:       '#202327',
+
+  // Borders
+  border:    '#2f3336',
+  border2:   '#3e4144',
+
+  // Text
+  text:      '#e7e9ea',
+  muted:     '#71767b',
+  muted2:    '#8b98a5',
+
+  // Brand â€“ Twitter/X blue
+  accent:    '#1DA1F2',
+  accentDim: 'rgba(29,161,242,0.12)',
+
+  // Semantics
+  green:     '#00ba7c',
+  red:       '#f91880',
+  amber:     '#ffd400',
+  gold:      '#ffd400',
+} as const
+
+export type TType = typeof T
+export type Post = {
+  id: string
+  isSeed?: boolean
+  type: 'normal' | 'repost' | 'poll' | 'quote'
+  repostedBy?: string
+  authorId?: string
+  name: string
+  handle: string
+  verified: boolean
+  time: string
+  avatar: string
+  avatarGrad: [string, string]
+  avatarUri: string | null
+  text: string
+  poll?: { label: string; pct: number; winning?: boolean }[]
+  pollMeta?: string
+  quote?: { name: string; handle: string; avatarGrad: [string, string]; text: string }
+  imageUrl?: string | null
+  replies: number
+  reposts: number
+  likes: number
+  views: string | number
+  bookmarks: number
+  liked: boolean
+  reposted: boolean
+  bookmarked: boolean
+}
+
+export type Reply = {
+  id: string
+  postId: string
+  name: string
+  handle: string
+  initials: string
+  grad: readonly [string, string]
+  avatarUri?: string | null
+  verified: boolean
+  text: string
+  likes: number
+  time: string
+}
+
+export type Notif = {
+  id: string
+  type: string
+  actorName: string
+  actorHandle: string
+  actorInitials: string
+  actorGrad: [string, string]
+  actorAvatar: string | null
+  postPreview: string | null
+  read: boolean
+  time: string
+}
+
+export type UserProfile = {
+  userId: string
+  name: string
+  handle: string
+  initials: string
+  grad: [string, string]
+  avatarUri: string | null
+  collegeId: string | null
+  classId: string | null
+  verified: boolean
+}
+import type { Post } from '@/features/forum/types'
+import { supabase } from '@/lib/supabase'
+import { Ionicons } from '@expo/vector-icons'
+import { useEffect, useState, type ReactNode } from 'react'
+import {
+  ActivityIndicator,
+  FlatList,
+  Modal,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
+
+const T = {
+  bg: '#000000',
+  bg3: '#16181c',
+  border: '#2f3336',
+  text: '#e7e9ea',
+  muted: '#71767b',
+  accent: '#1DA1F2',
+} as const
+
+export function BookmarksModal({
+  visible,
+  onClose,
+  userId,
+  mapRowToPost,
+  renderPost,
+}: {
+  visible: boolean
+  onClose: () => void
+  userId: string
+  mapRowToPost: (row: any, myL: Set<string>, myR: Set<string>, myB: Set<string>) => Post
+  renderPost: (post: Post) => ReactNode
+}) {
+  const insets = useSafeAreaInsets()
+  const [posts, setPosts] = useState<Post[]>([])
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (visible && userId) void load()
+  }, [visible, userId])
+
+  const load = async () => {
+    setLoading(true)
+
+    // Fetch bookmarked post IDs
+    const { data: bookmarks } = await supabase
+      .from('sq_bookmarks')
+      .select('post_id')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(60)
+
+    if (!bookmarks || bookmarks.length === 0) {
+      setPosts([])
+      setLoading(false)
+      return
+    }
+
+    const bookmarkedPostIds = bookmarks.map((b: any) => b.post_id as string)
+    const myB = new Set<string>(bookmarkedPostIds)
+
+    // Fetch the actual post data for those IDs
+    const { data: postsData } = await supabase
+      .from('sq_posts')
+      .select('*, profiles(full_name, forum_handle, avatar_url, is_verified)')
+      .in('id', bookmarkedPostIds)
+      .order('created_at', { ascending: false })
+
+    if (!postsData) {
+      setPosts([])
+      setLoading(false)
+      return
+    }
+
+    // Fetch user's likes and reposts for these posts
+    const [likedRes, repostRes] = await Promise.all([
+      supabase.from('sq_likes').select('post_id').eq('user_id', userId).in('post_id', bookmarkedPostIds),
+      supabase.from('sq_reposts').select('post_id').eq('user_id', userId).in('post_id', bookmarkedPostIds),
+    ])
+
+    const myL = new Set<string>((likedRes.data ?? []).map((r: any) => r.post_id as string))
+    const myR = new Set<string>((repostRes.data ?? []).map((r: any) => r.post_id as string))
+
+    setPosts(postsData.map((row: any) => mapRowToPost(row, myL, myR, myB)))
+    setLoading(false)
+  }
+
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+      <View style={[styles.root, { paddingTop: insets.top > 0 ? insets.top : 16 }]}>
+        <View style={styles.header}>
+          <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
+            <Ionicons name="arrow-back" size={20} color={T.text} />
+          </TouchableOpacity>
+          <Text style={styles.title}>Bookmarks</Text>
+          <View style={{ width: 34 }} />
+        </View>
+        {loading ? (
+          <View style={styles.centerFill}>
+            <ActivityIndicator color={T.accent} size="large" />
+          </View>
+        ) : posts.length === 0 ? (
+          <View style={styles.empty}>
+            <Ionicons name="bookmark-outline" size={56} color={T.muted} style={{ marginBottom: 16 }} />
+            <Text style={styles.emptyTitle}>Save posts for later</Text>
+            <Text style={styles.emptySub}>Bookmark posts to easily find them again here.</Text>
+          </View>
+        ) : (
+          <FlatList
+            data={posts}
+            keyExtractor={p => p.id}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}
+            ListHeaderComponent={
+              <View style={styles.countRow}>
+                <Text style={styles.countText}>{posts.length} saved post{posts.length !== 1 ? 's' : ''}</Text>
+              </View>
+            }
+            renderItem={({ item }) => <>{renderPost(item)}</>}
+          />
+        )}
+      </View>
+    </Modal>
+  )
+}
+
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: T.bg },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: T.border },
+  closeBtn: { width: 36, height: 36, borderRadius: 12, backgroundColor: T.bg3, justifyContent: 'center', alignItems: 'center' },
+  title: { fontSize: 20, fontWeight: '800', color: T.text },
+  centerFill: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  empty: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 36 },
+  emptyTitle: { fontSize: 22, fontWeight: '800', color: T.text, marginBottom: 8 },
+  emptySub: { fontSize: 15, color: T.muted, textAlign: 'center', lineHeight: 22 },
+  countRow: { paddingHorizontal: 16, paddingVertical: 10 },
+  countText: { fontSize: 13, fontWeight: '700', color: T.muted },
+})
+import type { Post, UserProfile } from '@/features/forum/types'
+import { Ionicons } from '@expo/vector-icons'
+import * as ImagePicker from 'expo-image-picker'
+import { LinearGradient } from 'expo-linear-gradient'
+import { useEffect, useRef, useState } from 'react'
+import {
+  Image,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
+
+const MAX_CHARS = 280
+
+// â”€â”€ All tokens are defined here (no references to missing tokens) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const T = {
+  bg:      '#000000',
+  bg2:     '#0d0d0d',
+  bg3:     '#16181c',
+  bg4:     '#202327',
+  border:  '#2f3336',
+  border2: '#3e4144',
+  text:    '#e7e9ea',
+  muted:   '#71767b',
+  accent:  '#1DA1F2',
+  red:     '#f91880',
+  amber:   '#ffd400',
+} as const
+
+// â”€â”€ Avatar component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function Avatar({
+  initials,
+  grad,
+  size = 40,
+  uri,
+}: {
+  initials: string
+  grad: readonly [string, string]
+  size?: number
+  uri?: string | null
+}) {
+  return (
+    <LinearGradient
+      colors={grad as [string, string]}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+      style={{
+        width: size,
+        height: size,
+        borderRadius: size / 2,
+        justifyContent: 'center',
+        alignItems: 'center',
+        overflow: 'hidden',
+      }}
+    >
+      {uri ? (
+        <Image
+          source={{ uri }}
+          style={{ width: size, height: size, borderRadius: size / 2, position: 'absolute' }}
+          resizeMode="cover"
+        />
+      ) : (
+        <Text style={{ fontSize: size * 0.34, fontWeight: '800', color: '#fff', letterSpacing: -0.3 }}>
+          {initials}
+        </Text>
+      )}
+    </LinearGradient>
+  )
+}
+
+// â”€â”€ ComposeModal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+export function ComposeModal({
+  visible,
+  onClose,
+  onPost,
+  replyTo,
+  profile,
+}: {
+  visible: boolean
+  onClose: () => void
+  /**
+   * Called when the user taps Post/Reply.
+   * `img` is the **local URI** â€“ the hook uploads it and stores the CDN URL.
+   */
+  onPost: (text: string, img?: string, pollOptions?: string[], isAnonymous?: boolean) => void
+  replyTo: Post | null
+  profile: UserProfile
+}) {
+  const insets = useSafeAreaInsets()
+  const [text, setText]           = useState('')
+  const [imageUri, setImageUri]   = useState<string | null>(null)
+  const [showPoll, setShowPoll]   = useState(false)
+  const [isAnon, setIsAnon]       = useState(false)
+  const [pollOpts, setPollOpts]   = useState<string[]>(['', ''])
+  const inputRef                  = useRef<TextInput>(null)
+
+  const remaining  = MAX_CHARS - text.length
+  const charColor  = remaining < 20 ? T.red : remaining < 50 ? T.amber : T.muted
+  const pct        = Math.max(0, Math.min(100, ((MAX_CHARS - remaining) / MAX_CHARS) * 100))
+  const canPost    = text.trim().length > 0 && (!showPoll || pollOpts.filter(o => o.trim()).length >= 2)
+
+  // Reset state when modal opens
+  useEffect(() => {
+    if (visible) {
+      setText('')
+      setImageUri(null)
+      setShowPoll(false)
+      setIsAnon(false)
+      setPollOpts(['', ''])
+      const t = setTimeout(() => inputRef.current?.focus(), 350)
+      return () => clearTimeout(t)
+    }
+  }, [visible])
+
+  const pickImage = async () => {
+    if (showPoll) return
+    const r = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.85,
+      allowsEditing: true,
+    })
+    if (!r.canceled && r.assets[0]) setImageUri(r.assets[0].uri)
+  }
+
+  const addPollOption  = () => { if (pollOpts.length < 4) setPollOpts(p => [...p, '']) }
+  const updatePollOpt  = (val: string, idx: number) => {
+    const next = [...pollOpts]; next[idx] = val; setPollOpts(next)
+  }
+
+  const handlePost = () => {
+    if (!canPost) return
+    // Pass the local image URI â€“ the hook uploads it
+    onPost(
+      text.trim(),
+      imageUri ?? undefined,
+      showPoll ? pollOpts.filter(o => o.trim()) : undefined,
+      isAnon,
+    )
+    onClose()
+  }
+
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="fullScreen"
+      onRequestClose={onClose}
+    >
+      <KeyboardAvoidingView
+        style={{ flex: 1, backgroundColor: T.bg }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        {/* â”€â”€ Header â”€â”€ */}
+        <View style={[st.header, { paddingTop: insets.top + 4 }]}>
+          <TouchableOpacity onPress={onClose} hitSlop={12} style={st.cancelBtn}>
+            <Text style={{ fontSize: 16, color: T.text }}>Cancel</Text>
+          </TouchableOpacity>
+          <View style={{ flex: 1 }} />
+          <TouchableOpacity
+            style={[st.postBtn, !canPost && { opacity: 0.45 }]}
+            onPress={handlePost}
+            disabled={!canPost}
+          >
+            <Text style={st.postBtnText}>{replyTo ? 'Reply' : 'Post'}</Text>
+          </TouchableOpacity>
+        </View>
+
+        <ScrollView
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{ flexGrow: 1 }}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* â”€â”€ Reply context â”€â”€ */}
+          {replyTo && (
+            <View style={st.replyCtx}>
+              <View style={{ alignItems: 'center' }}>
+                {/* Show replying-to user avatar */}
+                <Avatar
+                  initials={replyTo.avatar}
+                  grad={replyTo.avatarGrad}
+                  size={36}
+                  uri={replyTo.avatarUri}
+                />
+                <View style={st.threadLine} />
+              </View>
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                  <Text style={st.replyName}>{replyTo.name}</Text>
+                  <Text style={st.replyHandle}>{replyTo.handle}</Text>
+                </View>
+                <Text style={st.replySnippet} numberOfLines={3}>{replyTo.text}</Text>
+                <Text style={st.replyLabel}>
+                  Replying to <Text style={{ color: T.accent }}>{replyTo.handle}</Text>
+                </Text>
+              </View>
+            </View>
+          )}
+
+          {/* â”€â”€ Compose row â”€â”€ */}
+          <View style={st.row}>
+            {/*
+              FIX: Always use profile.avatarUri so the composer shows the user's
+              real profile picture (not a fallback).
+            */}
+            <Avatar
+              initials={isAnon ? 'ðŸ•µï¸' : profile.initials}
+              grad={isAnon ? ['#3e4144', '#16181c'] : profile.grad}
+              size={40}
+              uri={isAnon ? null : profile.avatarUri}
+            />
+
+            <View style={{ flex: 1, marginLeft: 12 }}>
+              <TextInput
+                ref={inputRef}
+                style={st.input}
+                placeholder={replyTo ? 'Post your replyâ€¦' : "What's happening?"}
+                placeholderTextColor={T.muted}
+                multiline
+                value={text}
+                onChangeText={setText}
+                maxLength={MAX_CHARS + 10}
+              />
+
+              {/* Image preview */}
+              {imageUri && (
+                <View style={{ marginTop: 10, position: 'relative' }}>
+                  <Image
+                    source={{ uri: imageUri }}
+                    style={{ width: '100%', borderRadius: 16, aspectRatio: 16 / 9 }}
+                    resizeMode="cover"
+                  />
+                  <TouchableOpacity onPress={() => setImageUri(null)} style={st.imgRemove}>
+                    <Ionicons name="close" size={16} color="#fff" />
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {/* Poll builder */}
+              {showPoll && (
+                <View style={st.pollCard}>
+                  {pollOpts.map((opt, i) => (
+                    <View key={i} style={st.pollInputWrap}>
+                      <TextInput
+                        style={st.pollInput}
+                        placeholder={`Choice ${i + 1}`}
+                        placeholderTextColor={T.muted}
+                        value={opt}
+                        onChangeText={v => updatePollOpt(v, i)}
+                        maxLength={25}
+                      />
+                    </View>
+                  ))}
+                  {pollOpts.length < 4 && (
+                    <TouchableOpacity style={st.addOptBtn} onPress={addPollOption}>
+                      <Ionicons name="add" size={18} color={T.accent} />
+                      <Text style={{ color: T.accent, fontWeight: '700' }}>Add option</Text>
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity
+                    onPress={() => { setShowPoll(false); setPollOpts(['', '']) }}
+                    style={{ alignSelf: 'center', marginTop: 12, paddingVertical: 8 }}
+                  >
+                    <Text style={{ color: T.red, fontWeight: '700' }}>Remove poll</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          </View>
+        </ScrollView>
+
+        {/* â”€â”€ Toolbar â”€â”€ */}
+        <View style={st.toolbar}>
+          <TouchableOpacity style={st.toolBtn} onPress={pickImage} disabled={showPoll}>
+            <Ionicons name="image-outline" size={22} color={showPoll ? T.muted : T.accent} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={st.toolBtn}
+            onPress={() => { setShowPoll(p => !p); setImageUri(null) }}
+            disabled={!!imageUri}
+          >
+            <Ionicons name="list-outline" size={22} color={imageUri ? T.muted : T.accent} />
+          </TouchableOpacity>
+          <TouchableOpacity style={st.toolBtn} onPress={() => setIsAnon(!isAnon)}>
+            <Ionicons
+              name={isAnon ? 'eye-off' : 'eye-off-outline'}
+              size={22}
+              color={isAnon ? T.accent : T.muted}
+            />
+          </TouchableOpacity>
+          {isAnon && (
+            <Text style={{ fontSize: 11, color: T.accent, fontWeight: '700', marginLeft: 2 }}>
+              Posting anonymously
+            </Text>
+          )}
+          <View style={{ flex: 1 }} />
+          <View style={st.charTrack}>
+            {remaining <= 50 && (
+              <Text style={[st.charCount, { color: charColor }]}>{remaining}</Text>
+            )}
+            <View style={st.ringWrap}>
+              {/* Simple progress ring */}
+              <View
+                style={[
+                  st.ring,
+                  {
+                    borderColor: pct > 90 ? T.red : pct > 70 ? T.amber : T.muted,
+                    opacity: pct > 10 ? 1 : 0.3,
+                  },
+                ]}
+              />
+            </View>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  )
+}
+
+const st = StyleSheet.create({
+  header:       { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: '#2f3336' },
+  cancelBtn:    { paddingVertical: 8 },
+  postBtn:      { backgroundColor: '#1DA1F2', borderRadius: 20, paddingHorizontal: 18, paddingVertical: 8 },
+  postBtnText:  { fontSize: 14, fontWeight: '800', color: '#fff' },
+
+  replyCtx:     { flexDirection: 'row', paddingHorizontal: 16, paddingTop: 16, gap: 12 },
+  replyName:    { fontSize: 15, fontWeight: '700', color: '#e7e9ea' },
+  replyHandle:  { fontSize: 14, color: '#71767b' },
+  replyLabel:   { fontSize: 14, color: '#71767b', marginTop: 6, marginBottom: 8 },
+  replySnippet: { fontSize: 14, color: '#e7e9ea', lineHeight: 20, marginTop: 4 },
+  threadLine:   { width: 2, flex: 1, backgroundColor: '#3e4144', marginTop: 6, borderRadius: 1 },
+
+  row:          { flexDirection: 'row', padding: 16, paddingTop: 12 },
+  input:        { fontSize: 18, color: '#e7e9ea', lineHeight: 28, minHeight: 80, paddingTop: 0 },
+  imgRemove:    { position: 'absolute', top: 8, right: 8, width: 30, height: 30, borderRadius: 15, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'center', alignItems: 'center' },
+
+  pollCard:     { marginTop: 12, borderWidth: 1, borderColor: '#2f3336', borderRadius: 16, padding: 12 },
+  pollInputWrap:{ borderBottomWidth: 1, borderBottomColor: '#2f3336', paddingVertical: 12 },
+  pollInput:    { fontSize: 15, color: '#e7e9ea' },
+  addOptBtn:    { borderBottomWidth: 1, borderBottomColor: '#2f3336', paddingVertical: 12, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 6 },
+
+  toolbar:      { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 6, paddingVertical: 8, borderTopWidth: 1, borderTopColor: '#2f3336', backgroundColor: '#000' },
+  toolBtn:      { padding: 10 },
+  charTrack:    { flexDirection: 'row', alignItems: 'center', gap: 8, paddingRight: 8 },
+  charCount:    { fontSize: 13, fontWeight: '600' },
+  ringWrap:     { width: 24, height: 24, justifyContent: 'center', alignItems: 'center' },
+  ring:         { width: 20, height: 20, borderRadius: 10, borderWidth: 2, position: 'absolute' },
+})
+import React, { useRef } from 'react'
+import { Animated, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
+import { LinearGradient } from 'expo-linear-gradient'
+
+// Local tokens (subset)
+const T = {
+  bg: '#07080c', bg2: '#0e0f14', bg3: '#16171e',
+  border: 'rgba(236,91,19,0.12)', border2: 'rgba(236,91,19,0.20)',
+  text: '#f0ede8', muted: '#5e5b56', muted2: '#b0ada8',
+  accent: '#ec5b13', accentDim: 'rgba(236,91,19,0.14)',
+  gold: '#d4a843', green: '#2ecc7a', red: '#e8445a'
+} as const
+
+export function fmt(n: number): string { return n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n) }
+
+export function Avi({ initials, grad, size = 40, uri, verified = false }: { initials: string; grad: readonly [string, string]; size?: number; uri?: string | null; verified?: boolean }) {
+  return (
+    <View style={{ width: size, height: size, position: 'relative', flexShrink: 0 }}>
+      <LinearGradient colors={grad as [string, string]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+        style={{ width: size, height: size, borderRadius: size / 2, justifyContent: 'center', alignItems: 'center' }}>
+        {uri ? <Image source={{ uri }} style={{ width: size, height: size, borderRadius: size / 2, position: 'absolute' }} /> : <Text style={{ fontSize: size * 0.34, fontWeight: '800', color: '#fff' }}>{initials}</Text>}
+      </LinearGradient>
+      {verified && (
+        <View style={{ position: 'absolute', bottom: -1, right: -1, width: 15, height: 15, borderRadius: 8, backgroundColor: T.accent, borderWidth: 2, borderColor: T.bg, justifyContent: 'center', alignItems: 'center' }}>
+          <Text style={{ fontSize: 8, color: '#fff', fontWeight: '800' }}>âœ“</Text>
+        </View>
+      )}
+    </View>
+  )
+}
+
+export function RichText({ text, style, onHashtag }: { text: string; style?: any; onHashtag?: (tag: string) => void }) {
+  const parts = text.split(/(#\w+|@\w+)/g)
+  return (
+    <Text style={[pr.postText, style]}>
+      {parts.map((p, i) => {
+        if (p.startsWith('#')) return <Text key={i} style={{ color: T.accent, fontWeight: '600' }} onPress={() => onHashtag?.(p)}>{p}</Text>
+        if (p.startsWith('@')) return <Text key={i} style={{ color: T.accent, fontWeight: '600' }}>{p}</Text>
+        return p
+      })}
+    </Text>
+  )
+}
+
+type AV = 'reply' | 'repost' | 'like' | 'bookmark' | 'share'
+export const AC: Record<AV, string> = { reply: T.accent, repost: T.green, like: T.red, bookmark: T.gold, share: T.accent }
+
+export function ActionBtn({ variant, icon, activeIcon, label, active, onPress }: { variant: AV; icon: string; activeIcon?: string; label?: string | number; active?: boolean; onPress?: () => void }) {
+  const scale = useRef(new Animated.Value(1)).current
+  const col = active ? AC[variant] : T.muted
+  const handlePress = () => {
+    Animated.sequence([
+      Animated.spring(scale, { toValue: 1.35, useNativeDriver: true }),
+      Animated.spring(scale, { toValue: 1, useNativeDriver: true }),
+    ]).start()
+    onPress?.()
+  }
+  return (
+    <TouchableOpacity onPress={handlePress} activeOpacity={0.7} style={pr.action}>
+      <Animated.Text style={[pr.actionIcon, { color: col, transform: [{ scale }] }]}>{active && activeIcon ? activeIcon : icon}</Animated.Text>
+      {label !== undefined && Number(label) > 0 && <Text style={[pr.actionCount, { color: col }]}>{fmt(Number(label))}</Text>}
+    </TouchableOpacity>
+  )
+}
+
+type PollOpt = { label: string; pct: number; winning?: boolean }
+export function Poll({ options, meta, onVote }: { options: PollOpt[]; meta?: string; onVote: (i: number) => void }) {
+  return (
+    <View style={pr.poll}>
+      {options.map((opt, i) => (
+        <TouchableOpacity key={i} onPress={() => onVote(i)} activeOpacity={0.85} style={[pr.pollOption, opt.winning && { borderColor: T.accent }]}>
+          <View style={[pr.pollBar, { width: `${opt.pct}%` as any, backgroundColor: opt.winning ? T.accent : 'rgba(255,255,255,0.04)' }]} />
+          <Text style={pr.pollLabel}>{opt.label}</Text>
+          <Text style={pr.pollPct}>{opt.pct}%</Text>
+        </TouchableOpacity>
+      ))}
+      {meta && <Text style={pr.pollMeta}>{meta}</Text>}
+    </View>
+  )
+}
+
+type Quote = { name: string; handle: string; avatarGrad: [string, string]; text: string }
+export function QuoteBox({ q }: { q: Quote }) {
+  return (
+    <View style={pr.quoteBox}>
+      <View style={pr.quoteHeader}>
+        <LinearGradient colors={q.avatarGrad as [string, string]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={pr.quoteAvi}>
+          <Text style={{ fontSize: 8, fontWeight: '700', color: '#fff' }}>{q.name.split(' ').map(w => w[0]).join('').slice(0, 2)}</Text>
+        </LinearGradient>
+        <Text style={pr.quoteName}>{q.name}</Text>
+        <Text style={pr.quoteHandle}>{q.handle}</Text>
+      </View>
+      <Text style={pr.quoteText} numberOfLines={3}>{q.text}</Text>
+    </View>
+  )
+}
+
+const pr = StyleSheet.create({
+  postText: { fontSize: 15, lineHeight: 24, color: T.text },
+  action: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 7, paddingHorizontal: 10, borderRadius: 50 },
+  actionIcon: { fontSize: 17 },
+  actionCount: { fontSize: 13, fontWeight: '600' },
+  poll: { marginBottom: 10, gap: 7 },
+  pollOption: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: T.border2, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14, overflow: 'hidden', position: 'relative' },
+  pollBar: { position: 'absolute', left: 0, top: 0, bottom: 0, borderRadius: 10 },
+  pollLabel: { fontSize: 14, fontWeight: '500', color: T.text, flex: 1, zIndex: 1 },
+  pollPct: { fontSize: 14, fontWeight: '700', color: T.accent, zIndex: 1 },
+  pollMeta: { fontSize: 13, color: T.muted },
+  quoteBox: { borderWidth: 1, borderColor: T.border2, borderRadius: 14, padding: 13, marginBottom: 10 },
+  quoteHeader: { flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 6 },
+  quoteAvi: { width: 18, height: 18, borderRadius: 9, justifyContent: 'center', alignItems: 'center' },
+  quoteName: { fontSize: 13, fontWeight: '700', color: T.text },
+  quoteHandle: { fontSize: 13, color: T.muted },
+  quoteText: { fontSize: 14, color: T.muted2, lineHeight: 20 },
+})
+import type { Notif } from '@/features/forum/types'
+import { supabase } from '@/lib/supabase'
+import { Ionicons } from '@expo/vector-icons'
+import { LinearGradient } from 'expo-linear-gradient'
+import { useEffect, useState } from 'react'
+import {
+  ActivityIndicator,
+  FlatList,
+  Image,
+  Modal,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
+
+const T = {
+  bg: '#07080c',
+  bg2: '#0e0f14',
+  bg3: '#16171e',
+  border: 'rgba(236,91,19,0.12)',
+  text: '#f0ede8',
+  muted: '#5e5b56',
+  accent: '#ec5b13',
+  red: '#e8445a',
+  green: '#2ecc7a',
+  gold: '#d4a843',
+} as const
+
+const NOTIF_META: { [k: string]: { icon: string; color: string; verb: string } } = {
+  like: { icon: 'â¤ï¸', color: T.red, verb: 'liked your post' },
+  reply: { icon: 'ðŸ’¬', color: T.accent, verb: 'replied to your post' },
+  repost: { icon: 'ðŸ”„', color: T.green, verb: 'reposted your post' },
+  follow: { icon: 'ðŸ‘¤', color: T.gold, verb: 'followed you' },
+}
+
+function Avatar({
+  initials,
+  grad,
+  uri,
+}: {
+  initials: string
+  grad: [string, string]
+  uri?: string | null
+}) {
+  return (
+    <LinearGradient colors={grad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.avatar}>
+      {uri ? (
+        <Image source={{ uri }} style={styles.avatarImage} />
+      ) : (
+        <Text style={styles.avatarText}>{initials}</Text>
+      )}
+    </LinearGradient>
+  )
+}
+
+export function NotificationsModal({
+  visible,
+  onClose,
+  userId,
+  mapNotifRow,
+}: {
+  visible: boolean
+  onClose: () => void
+  userId: string
+  mapNotifRow: (row: any) => Notif
+}) {
+  const insets = useSafeAreaInsets()
+  const [notifs, setNotifs] = useState<Notif[]>([])
+  const [loading, setLoading] = useState(false)
+  const [tab, setTab] = useState<'all' | 'mentions'>('all')
+
+  useEffect(() => {
+    if (!visible || !userId) return
+    void loadNotifs()
+  }, [visible, userId])
+
+  const loadNotifs = async () => {
+    setLoading(true)
+    const { data } = await supabase
+      .from('sq_notifications')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(60)
+
+    setLoading(false)
+    if (data) setNotifs(data.map(mapNotifRow))
+    await supabase.from('sq_notifications').update({ read: true }).eq('user_id', userId).eq('read', false)
+  }
+
+  const filtered = tab === 'mentions' ? notifs.filter(n => n.type === 'reply') : notifs
+
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+      <View style={[styles.root, { paddingTop: insets.top > 0 ? insets.top : 16 }]}>
+        <View style={styles.header}>
+          <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
+            <Ionicons name="close" size={20} color={T.text} />
+          </TouchableOpacity>
+          <Text style={styles.title}>Notifications</Text>
+          <TouchableOpacity onPress={() => void loadNotifs()} style={styles.closeBtn}>
+            <Ionicons name="refresh-outline" size={19} color={T.muted} />
+          </TouchableOpacity>
+        </View>
+        <View style={styles.tabs}>
+          {(['all', 'mentions'] as const).map(t => (
+            <TouchableOpacity key={t} style={styles.tab} onPress={() => setTab(t)}>
+              <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>{t === 'all' ? 'All' : 'Mentions'}</Text>
+              {tab === t && <View style={styles.tabIndicator} />}
+            </TouchableOpacity>
+          ))}
+        </View>
+        {loading ? (
+          <View style={styles.centerFill}>
+            <ActivityIndicator color={T.accent} size="large" />
+          </View>
+        ) : filtered.length === 0 ? (
+          <View style={styles.empty}>
+            <Text style={{ fontSize: 48, marginBottom: 16 }}>ðŸ””</Text>
+            <Text style={styles.emptyTitle}>Nothing here yet</Text>
+            <Text style={styles.emptySub}>When someone interacts with your posts, it'll show here.</Text>
+          </View>
+        ) : (
+          <FlatList
+            data={filtered}
+            keyExtractor={n => n.id}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}
+            ItemSeparatorComponent={() => <View style={styles.separator} />}
+            renderItem={({ item: n }) => {
+              const meta = NOTIF_META[n.type] ?? { icon: 'ðŸ””', color: T.accent, verb: 'interacted with your post' }
+              return (
+                <View style={[styles.row, !n.read && styles.rowUnread]}>
+                  {!n.read && <View style={styles.unreadDot} />}
+                  <View style={{ position: 'relative', marginRight: 14 }}>
+                    <Avatar initials={n.actorInitials} grad={n.actorGrad} uri={n.actorAvatar} />
+                    <View style={[styles.typeBadge, { backgroundColor: meta.color }]}>
+                      <Text style={{ fontSize: 11 }}>{meta.icon}</Text>
+                    </View>
+                  </View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={styles.actorName} numberOfLines={1}>
+                      <Text style={{ fontWeight: '800' }}>{n.actorName}</Text>
+                      <Text style={{ color: T.muted }}> {n.actorHandle}</Text>
+                    </Text>
+                    <Text style={styles.verb}>{meta.verb}</Text>
+                    {n.postPreview && <Text style={styles.preview} numberOfLines={2}>"{n.postPreview}"</Text>}
+                  </View>
+                  <Text style={styles.time}>{n.time}</Text>
+                </View>
+              )
+            }}
+          />
+        )}
+      </View>
+    </Modal>
+  )
+}
+
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: T.bg },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: T.border },
+  closeBtn: { width: 36, height: 36, borderRadius: 12, backgroundColor: T.bg3, justifyContent: 'center', alignItems: 'center' },
+  title: { fontSize: 20, fontWeight: '800', color: T.text, fontFamily: 'serif' },
+  tabs: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: T.border, backgroundColor: T.bg2 },
+  tab: { flex: 1, alignItems: 'center', paddingVertical: 14, position: 'relative' },
+  tabText: { fontSize: 13, fontWeight: '600', color: T.muted },
+  tabTextActive: { color: T.text, fontWeight: '800' },
+  tabIndicator: { position: 'absolute', bottom: 0, height: 2.5, width: 32, borderRadius: 2, backgroundColor: T.accent },
+  centerFill: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  empty: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 36 },
+  emptyTitle: { fontSize: 20, fontWeight: '800', color: T.text, marginBottom: 8, fontFamily: 'serif' },
+  emptySub: { fontSize: 14, color: T.muted, textAlign: 'center', lineHeight: 22 },
+  separator: { height: 1, backgroundColor: T.border },
+  row: { flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: 16, paddingVertical: 16 },
+  rowUnread: { backgroundColor: 'rgba(236,91,19,0.04)' },
+  unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: T.accent, marginRight: 10, marginTop: 18 },
+  typeBadge: { position: 'absolute', right: -4, bottom: -4, width: 20, height: 20, borderRadius: 10, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: T.bg },
+  actorName: { fontSize: 14, color: T.text, marginBottom: 3 },
+  verb: { fontSize: 13, color: T.muted, marginBottom: 5 },
+  preview: { fontSize: 13, color: T.text, lineHeight: 19 },
+  time: { fontSize: 12, color: T.muted, marginLeft: 10, marginTop: 2 },
+  avatar: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  avatarImage: { width: 44, height: 44, borderRadius: 22, position: 'absolute' },
+  avatarText: { color: '#fff', fontSize: 14, fontWeight: '800' },
+})
+import type { Post, UserProfile } from '@/features/forum/types'
+import { supabase } from '@/lib/supabase'
+import { Ionicons } from '@expo/vector-icons'
+import { LinearGradient } from 'expo-linear-gradient'
+import { useEffect, useState } from 'react'
+import {
+  ActivityIndicator,
+  FlatList,
+  Image,
+  Modal,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
+
+// Local design tokens subset
+const T = {
+  bg:       '#07080c',
+  bg2:      '#0e0f14',
+  bg3:      '#16171e',
+  border:   'rgba(236,91,19,0.12)',
+  border2:  'rgba(236,91,19,0.20)',
+  text:     '#f0ede8',
+  textSub:  '#9a9590',
+  muted:    '#5e5b56',
+  muted2:   '#b0ada8',
+  accent:   '#ec5b13',
+  accentDim:'rgba(236,91,19,0.14)',
+  gold:     '#d4a843',
+} as const
+
+function fmt(n: number): string { return n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n) }
+function timeAgo(iso: string): string {
+  const d = Date.now() - new Date(iso).getTime(), sv = Math.floor(d / 1000)
+  if (sv < 60) return `${sv}s`; if (sv < 3600) return `${Math.floor(sv / 60)}m`
+  if (sv < 86400) return `${Math.floor(sv / 3600)}h`; return `${Math.floor(sv / 86400)}d`
+}
+
+// Minimal Post mapping used by this modal (copied from ForumScreen)
+function rowToPost(row: any, myL: Set<string>, myR: Set<string>, myB: Set<string>): Post {
+  const isAnon = !!row.is_anonymous;
+  return {
+    id: row.id, isSeed: false,
+    type: (row.post_type as Post['type']) || (row.poll_options ? 'poll' : 'normal'),
+    authorId: row.user_id || row.author_id,
+    name: isAnon ? 'Anonymous' : (row.author_name || row.profiles?.full_name || 'Anonymous'),
+    handle: isAnon ? '@anonymous' : (row.profiles?.forum_handle ? (row.profiles.forum_handle.startsWith('@') ? row.profiles.forum_handle : `@${row.profiles.forum_handle}`) : `@user`),
+    verified: isAnon ? false : (row.author_verified || row.profiles?.is_verified || false),
+    time: timeAgo(row.created_at || new Date().toISOString()),
+    avatar: isAnon ? 'ðŸ•µï¸' : (row.author_initials || row.profiles?.full_name?.slice(0, 2).toUpperCase() || '??'),
+    avatarGrad: isAnon ? ['#3e4144', '#16181c'] : ((row.author_grad || ['#1DA1F2', '#1DA1F2']) as [string, string]),
+    avatarUri: isAnon ? null : (row.author_avatar_url || row.profiles?.avatar_url || null),
+    text: row.body || '',
+    imageUrl: row.image_url || null,
+    replies: row.comment_count || row.replies_count || 0, reposts: row.repost_count || row.reposts_count || 0,
+    likes: row.upvotes || row.like_count || row.likes_count || 0,
+    views: fmt(row.view_count || row.views_count || 0),
+    bookmarks: row.bookmark_count || row.bookmarks_count || 0,
+    liked: myL.has(row.id), reposted: myR.has(row.id), bookmarked: myB.has(row.id),
+  }
+}
+
+// Small Avatar component used here
+function Avi({ initials, grad, size = 40, uri, verified = false }: {
+  initials: string; grad: readonly [string, string]; size?: number; uri?: string | null; verified?: boolean
+}) {
+  return (
+    <View style={{ width: size, height: size, position: 'relative', flexShrink: 0 }}>
+      <LinearGradient colors={grad as [string, string]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+        style={{ width: size, height: size, borderRadius: size / 2, justifyContent: 'center', alignItems: 'center' }}>
+        {uri
+          ? <Image source={{ uri }} style={{ width: size, height: size, borderRadius: size / 2, position: 'absolute' }} />
+          : <Text style={{ fontSize: size * 0.34, fontWeight: '800', color: '#fff', letterSpacing: -0.3 }}>{initials}</Text>}
+      </LinearGradient>
+      {verified && (
+        <View style={{ position: 'absolute', bottom: -1, right: -1, width: 15, height: 15, borderRadius: 8, backgroundColor: T.accent, borderWidth: 2, borderColor: T.bg, justifyContent: 'center', alignItems: 'center' }}>
+          <Text style={{ fontSize: 8, color: '#fff', fontWeight: '800' }}>âœ“</Text>
+        </View>
+      )}
+    </View>
+  )
+}
+
+type ProfileUser = {
+  id: string; fullName: string; handle: string; initials: string
+  grad: [string, string]; avatar: string | null; verified: boolean; bio: string | null
+  college: string | null; className: string | null
+  followersCount: number; followingCount: number; postsCount: number
+}
+
+type Conversation = {
+  id: string; otherId: string; otherName: string; otherHandle: string
+  otherInitials: string; otherGrad: [string, string]; otherAvatar: string | null
+  lastMessage: string | null; lastMessageAt: string | null; unread: number
+}
+
+export function ProfileCardModal({ userId, visible, onClose, currentUserId, onHashtag, onLike, onRepost, onBookmark, onShare, onOpen, onVote, onStartDM }: {
+  userId: string | null; visible: boolean; onClose: () => void; currentUserId: string;
+  onHashtag?: (tag: string) => void; onLike: (id: string) => void; onRepost: (id: string) => void;
+  onBookmark: (id: string) => void; onShare: (p: Post) => void; onOpen: (p: Post) => void;
+  onVote: (id: string, i: number) => void; onStartDM?: (conv: Conversation) => void;
+}) {
+  const insets = useSafeAreaInsets()
+  const [user, setUser] = useState<ProfileUser | null>(null)
+  const [posts, setPosts] = useState<Post[]>([])
+  const [loading, setLoading] = useState(false)
+  const [following, setFollowing] = useState(false)
+  const [followersCount, setFollowersCount] = useState(0)
+  const [followingCount, setFollowingCount] = useState(0)
+  const [followLoading, setFollowLoading] = useState(false)
+  const isOwnProfile = userId === currentUserId
+
+  useEffect(() => {
+    if (!visible || !userId) return
+    setUser(null); setPosts([]); setLoading(true); setFollowing(false)
+    loadProfile(userId)
+  }, [visible, userId])
+
+  const loadProfile = async (uid: string) => {
+    const [profRes, postsRes, followRes] = await Promise.all([
+      supabase.from('profiles')
+        .select('id,full_name,forum_handle,forum_initials,forum_grad,avatar_url,is_verified,bio,followers_count,following_count,colleges(name),classes(name)')
+        .eq('id', uid).single(),
+      supabase.from('sq_posts').select('*, profiles(full_name, forum_handle, avatar_url, is_verified)').eq('author_id', uid).is('reply_to_id', null).order('created_at', { ascending: false }).limit(20),
+      currentUserId
+        ? supabase.from('sq_follows').select('follower_id', { count: 'exact', head: true })
+          .eq('follower_id', currentUserId).eq('following_id', uid)
+        : Promise.resolve({ count: 0 } as any),
+    ])
+    setLoading(false)
+    if (profRes.data) {
+      const d = profRes.data as any
+      setUser({
+        id: d.id,
+        fullName: d.full_name ?? 'User',
+        handle: d.forum_handle ? (d.forum_handle.startsWith('@') ? d.forum_handle : `@${d.forum_handle}`) : `@${(d.full_name ?? 'user').split(' ')[0].toLowerCase().replace(/[^a-z0-9]/g, '')}`,
+        initials: d.forum_initials ?? (d.full_name?.slice(0,2).toUpperCase() || '??'),
+        grad: (d.forum_grad ?? ['#1DA1F2', '#1DA1F2']) as [string, string],
+        avatar: d.avatar_url ?? null,
+        verified: d.is_verified ?? false,
+        bio: d.bio ?? null,
+        college: (d.colleges as any)?.name ?? null,
+        className: (d.classes as any)?.name ?? null,
+        followersCount: d.followers_count ?? 0,
+        followingCount: d.following_count ?? 0,
+        postsCount: 0,
+      })
+      setFollowersCount(d.followers_count ?? 0)
+      setFollowingCount(d.following_count ?? 0)
+    }
+    if ((followRes as any).count != null) setFollowing((followRes as any).count > 0)
+    if (postsRes.data) {
+      const myL = new Set<string>()
+      const myR = new Set<string>()
+      const myB = new Set<string>()
+      if (currentUserId) {
+        const [lR, rR, bR] = await Promise.all([
+          supabase.from('sq_likes').select('post_id').eq('user_id', currentUserId),
+          supabase.from('sq_reposts').select('post_id').eq('user_id', currentUserId),
+          supabase.from('sq_bookmarks').select('post_id').eq('user_id', currentUserId),
+        ])
+        ;(lR.data ?? []).forEach((r: any) => myL.add(r.post_id))
+        ;(rR.data ?? []).forEach((r: any) => myR.add(r.post_id))
+        ;(bR.data ?? []).forEach((r: any) => myB.add(r.post_id))
+      }
+      setPosts((postsRes.data || []).map((row: any) => rowToPost(row, myL, myR, myB)))
+    }
+  }
+
+  const handleFollowToggle = async () => {
+    if (!userId || !currentUserId || followLoading) return
+    setFollowLoading(true)
+    const nowFollowing = !following
+    setFollowing(nowFollowing)
+    setFollowersCount(c => c + (nowFollowing ? 1 : -1))
+    if (nowFollowing) {
+      await supabase.from('sq_follows').insert({ follower_id: currentUserId, following_id: userId })
+    } else {
+      await supabase.from('sq_follows').delete().match({ follower_id: currentUserId, following_id: userId })
+    }
+    setFollowLoading(false)
+  }
+
+  if (!user && !loading) return null
+
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: T.bg }}>
+
+        {/* Cover gradient header */}
+        {user && (
+          <LinearGradient
+            colors={[...user.grad, T.bg2]}
+            start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+            style={[pf.cover, { paddingTop: insets.top }]}
+          >
+            <View style={pf.coverNav}>
+              <TouchableOpacity style={pf.navBtn} onPress={onClose}>
+                <Ionicons name="arrow-back" size={20} color="#fff" />
+              </TouchableOpacity>
+              <TouchableOpacity style={pf.navBtn}>
+                <Ionicons name="ellipsis-vertical" size={20} color="#fff" />
+              </TouchableOpacity>
+            </View>
+          </LinearGradient>
+        )}
+
+        {loading && !user ? (
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+            <ActivityIndicator color={T.accent} size="large" />
+          </View>
+        ) : (
+          <FlatList
+            data={posts}
+            keyExtractor={p => p.id}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ paddingBottom: insets.bottom + 60 }}
+            ListHeaderComponent={user ? (
+              <View>
+                {/* Avatar + action row */}
+                <View style={pf.avatarRow}>
+                  <View style={pf.avatarRing}>
+                    <LinearGradient colors={user.grad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={pf.avatarGrad}>
+                      {user.avatar
+                        ? <Image source={{ uri: user.avatar }} style={pf.avatarImg} />
+                        : <Text style={pf.avatarInitials}>{user.initials}</Text>}
+                    </LinearGradient>
+                  </View>
+                  {!isOwnProfile && (
+                    <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
+                      <TouchableOpacity style={pf.msgBtn} onPress={async () => {
+                        if (!currentUserId || !userId) return
+                        const { data: convData } = await supabase.rpc('ct_get_or_create_conversation', { user_a: currentUserId, user_b: userId })
+                        if (convData && onStartDM) onStartDM({
+                          id: convData, otherId: userId,
+                          otherName: user?.fullName ?? 'User', otherHandle: user?.handle ?? '',
+                          otherInitials: user?.initials ?? '??', otherGrad: user?.grad ?? ['#ec5b13', '#d4a843'],
+                          otherAvatar: user?.avatar ?? null, lastMessage: null, lastMessageAt: null, unread: 0,
+                        })
+                      }}>
+                        <Ionicons name="mail-outline" size={18} color={T.accent} />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[pf.followBtn, following && pf.followBtnActive, followLoading && { opacity: 0.6 }]}
+                        onPress={handleFollowToggle} disabled={followLoading}
+                      >
+                        <Text style={[pf.followBtnText, following && pf.followBtnTextActive]}>
+                          {following ? 'Following' : 'Follow'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+
+                {/* Bio */}
+                <View style={pf.info}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <Text style={pf.name}>{user.fullName}</Text>
+                    {user.verified && <Ionicons name="checkmark-circle" size={20} color={T.accent} />}
+                  </View>
+                  <Text style={pf.handle}>{user.handle}</Text>
+                  {(user.college || user.className) && (
+                    <Text style={pf.collegeLine}>
+                      {[user.college, user.className].filter(Boolean).join(' Â· ')}
+                    </Text>
+                  )}
+                  {user.bio && <Text style={pf.bio}>{user.bio}</Text>}
+                </View>
+
+                {/* Stats row â€” matching mockup */}
+                <View style={pf.statsRow}>
+                  <View style={pf.statItem}>
+                    <Text style={pf.statNum}>{fmt(followingCount)}</Text>
+                    <Text style={pf.statLabel}>Following</Text>
+                  </View>
+                  <View style={pf.statDivider} />
+                  <View style={pf.statItem}>
+                    <Text style={pf.statNum}>{fmt(followersCount)}</Text>
+                    <Text style={pf.statLabel}>{followersCount === 1 ? 'Follower' : 'Followers'}</Text>
+                  </View>
+                  <View style={pf.statDivider} />
+                  <View style={pf.statItem}>
+                    <Text style={pf.statNum}>{posts.length}</Text>
+                    <Text style={pf.statLabel}>Posts</Text>
+                  </View>
+                  <View style={pf.statDivider} />
+                  <View style={pf.statItem}>
+                    <Text style={[pf.statNum, { color: T.accent }]}>Top 5%</Text>
+                    <Text style={pf.statLabel}>Study Rank</Text>
+                  </View>
+                </View>
+
+                {/* Posts label */}
+                <View style={pf.postsLabel}>
+                  <View style={pf.postsLabelLine} />
+                  <Text style={pf.postsLabelText}>RECENT POSTS</Text>
+                </View>
+                <View style={{ height: 1, backgroundColor: T.border }} />
+              </View>
+            ) : null}
+            ListEmptyComponent={!loading ? (
+              <View style={{ alignItems: 'center', paddingTop: 48, gap: 10 }}>
+                <Text style={{ fontSize: 36 }}>ðŸ“­</Text>
+                <Text style={{ fontSize: 16, fontWeight: '700', color: T.text }}>No posts yet</Text>
+              </View>
+            ) : null}
+            renderItem={({ item }) => (
+              // Reuse a minimal post layout here â€” parent handles full PostCard rendering if needed
+              <TouchableOpacity onPress={() => onOpen(item)} style={{ padding: 12 }}>
+                <View style={{ flexDirection: 'row', gap: 12 }}>
+                  <Avi initials={item.avatar} grad={item.avatarGrad} size={44} uri={item.avatarUri} verified={item.verified} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: T.text, fontWeight: '800' }}>{item.name}</Text>
+                    <Text style={{ color: T.muted }}>{item.time} Â· {fmt(item.likes)}</Text>
+                    <Text style={{ color: T.muted2 }} numberOfLines={2}>{item.text}</Text>
+                  </View>
+                </View>
+              </TouchableOpacity>
+            )}
+          />
+        )}
+      </View>
+    </Modal>
+  )
+}
+
+const pf = StyleSheet.create({
+  cover:     { height: 130, width: '100%', paddingHorizontal: 16, paddingVertical: 12 },
+  coverNav:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  navBtn:    { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' },
+  avatarRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', paddingHorizontal: 16, marginTop: -44 },
+  avatarRing:{ width: 88, height: 88, borderRadius: 44, borderWidth: 3, borderColor: T.bg, overflow: 'hidden' },
+  avatarGrad:{ width: 88, height: 88, justifyContent: 'center', alignItems: 'center' },
+  avatarImg: { width: 88, height: 88, borderRadius: 44, position: 'absolute' },
+  avatarInitials: { fontSize: 30, fontWeight: '900', color: '#fff' },
+  followBtn: { backgroundColor: T.text, borderRadius: 100, paddingHorizontal: 22, paddingVertical: 10, marginBottom: 4 },
+  followBtnActive: { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: T.border2 },
+  followBtnText: { fontSize: 14, fontWeight: '800', color: T.bg },
+  followBtnTextActive: { color: T.text },
+  msgBtn:    { width: 40, height: 40, borderRadius: 20, borderWidth: 1.5, borderColor: T.accent, justifyContent: 'center', alignItems: 'center', marginBottom: 4 },
+  info:      { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 16 },
+  name:      { fontSize: 22, fontWeight: '900', color: T.text, fontFamily: 'serif' },
+  handle:    { fontSize: 14, color: T.muted, marginTop: 2, marginBottom: 6 },
+  collegeLine:{ fontSize: 13, color: T.accent, fontWeight: '600', marginBottom: 6 },
+  bio:       { fontSize: 14, color: T.muted2, lineHeight: 22 },
+
+  statsRow:   { flexDirection: 'row', borderTopWidth: 1, borderBottomWidth: 1, borderColor: T.border, paddingVertical: 16, marginBottom: 4 },
+  statItem:   { flex: 1, alignItems: 'center', gap: 3 },
+  statNum:    { fontSize: 19, fontWeight: '900', color: T.text, fontFamily: 'serif' },
+  statLabel:  { fontSize: 9, fontWeight: '700', letterSpacing: 1.5, color: T.muted, textTransform: 'uppercase' },
+  statDivider:{ width: 1, backgroundColor: T.border, marginVertical: 4 },
+
+  postsLabel:     { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 14 },
+  postsLabelLine: { width: 16, height: 1.5, backgroundColor: T.accent, opacity: 0.7, borderRadius: 1 },
+  postsLabelText: { fontSize: 9.5, fontWeight: '800', color: T.muted, letterSpacing: 2.5 },
+})
+import { Ionicons } from '@expo/vector-icons'
+import { useEffect, useRef, useState, useCallback } from 'react'
+import {
+  Modal,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+  ScrollView,
+  ActivityIndicator
+} from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { supabase } from '@/lib/supabase'
+
+const T = {
+  bg: '#000000',
+  bg3: '#202327',
+  border: '#2f3336',
+  text: '#e7e9ea',
+  muted: '#71767b',
+  accent: '#1DA1F2',
+} as const
+
+type TrendingTag = { tag: string; count: number }
+type WhoItem = { id: string; full_name: string; forum_handle: string }
+
+export function SearchModal({
+  visible,
+  onClose,
+  initialQuery = '',
+  currentUserId,
+}: {
+  visible: boolean
+  onClose: () => void
+  initialQuery?: string
+  currentUserId?: string | null
+}) {
+  const insets = useSafeAreaInsets()
+  const [query, setQuery] = useState(initialQuery)
+  const inputRef = useRef<TextInput>(null)
+  
+  const [loading, setLoading] = useState(false)
+  const [tags, setTags] = useState<TrendingTag[]>([])
+  const [who, setWho] = useState<WhoItem[]>([])
+
+  const loadData = useCallback(async () => {
+    setLoading(true)
+    try {
+      const { data: tagData } = await supabase.rpc('sq_get_trending_tags', { limit_count: 5 })
+      if (tagData) setTags(tagData)
+      
+      if (currentUserId) {
+        const { data: whoData } = await supabase.rpc('sq_get_who_to_follow', { current_user_id: currentUserId, limit_count: 4 })
+        if (whoData) setWho(whoData)
+      }
+    } catch (e) {
+    } finally {
+      setLoading(false)
+    }
+  }, [currentUserId])
+
+  useEffect(() => {
+    if (visible) {
+      setQuery(initialQuery)
+      loadData()
+      setTimeout(() => inputRef.current?.focus(), 300)
+    }
+  }, [visible, initialQuery, loadData])
+
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
+      <View style={[styles.root, { paddingTop: insets.top > 0 ? insets.top : 16 }]}>
+        <View style={styles.topRow}>
+          <TouchableOpacity style={styles.backBtn} onPress={onClose}>
+            <Ionicons name="arrow-back" size={20} color={T.text} />
+          </TouchableOpacity>
+          <View style={styles.inputWrap}>
+            <Ionicons name="search" size={16} color={T.muted} style={{ marginRight: 8 }} />
+            <TextInput
+              ref={inputRef}
+              style={styles.input}
+              value={query}
+              onChangeText={setQuery}
+              placeholder="Search StudentSquare"
+              placeholderTextColor={T.muted}
+              returnKeyType="search"
+              autoCorrect={false}
+              autoCapitalize="none"
+            />
+            {query.length > 0 && (
+              <TouchableOpacity onPress={() => setQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Ionicons name="close-circle" size={17} color={T.muted} />
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+        <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled">
+          {query.length === 0 ? (
+            <View style={styles.exploreSection}>
+              {loading ? (
+                <ActivityIndicator size="small" color={T.accent} style={{ marginTop: 40 }} />
+              ) : (
+                <>
+                  <Text style={styles.sectionTitle}>Trending Tags</Text>
+                  {tags.length > 0 ? tags.map((t, i) => (
+                    <TouchableOpacity key={i} style={styles.trendItem} onPress={() => setQuery(t.tag)}>
+                      <Text style={styles.trendCat}>Trending</Text>
+                      <Text style={styles.trendTag}>{t.tag}</Text>
+                      <Text style={styles.trendCount}>{t.count} posts</Text>
+                    </TouchableOpacity>
+                  )) : (
+                    <Text style={styles.emptyText}>No tags trending yet.</Text>
+                  )}
+
+                  {currentUserId && (
+                    <>
+                      <Text style={[styles.sectionTitle, { marginTop: 20 }]}>Who to Follow</Text>
+                      {who.length > 0 ? who.map((w, i) => (
+                        <View key={i} style={styles.whoItem}>
+                          <View style={styles.whoAvi}>
+                            <Ionicons name="person" size={16} color="#fff" />
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.whoName}>{w.full_name}</Text>
+                            <Text style={styles.whoHandle}>@{w.forum_handle}</Text>
+                          </View>
+                          <TouchableOpacity style={styles.followBtn}>
+                            <Text style={styles.followBtnText}>Follow</Text>
+                          </TouchableOpacity>
+                        </View>
+                      )) : (
+                        <Text style={styles.emptyText}>No suggestions available.</Text>
+                      )}
+                    </>
+                  )}
+                </>
+              )}
+            </View>
+          ) : (
+            <View style={styles.emptyState}>
+              <Text style={{ fontSize: 40, marginBottom: 12 }}>ðŸ”</Text>
+              <Text style={styles.emptyTitle}>Search StudentSquare</Text>
+              <Text style={styles.emptySub}>Results for "{query}"</Text>
+            </View>
+          )}
+        </ScrollView>
+      </View>
+    </Modal>
+  )
+}
+
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: T.bg },
+  topRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: T.border },
+  backBtn: { width: 36, height: 36, borderRadius: 12, backgroundColor: T.bg3, justifyContent: 'center', alignItems: 'center' },
+  inputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: T.bg3, borderWidth: 1, borderColor: T.border, borderRadius: 14, paddingHorizontal: 14, minHeight: 48 },
+  input: { flex: 1, fontSize: 16, color: T.text },
+  exploreSection: { padding: 16 },
+  sectionTitle: { fontSize: 18, fontWeight: '800', color: T.text, marginBottom: 16 },
+  trendItem: { marginBottom: 16 },
+  trendCat: { fontSize: 13, color: T.muted },
+  trendTag: { fontSize: 15, fontWeight: '700', color: T.text, marginVertical: 3 },
+  trendCount: { fontSize: 13, color: T.muted },
+  whoItem: { flexDirection: 'row', alignItems: 'center', marginBottom: 16, gap: 12 },
+  whoAvi: { width: 40, height: 40, borderRadius: 20, backgroundColor: T.accent, justifyContent: 'center', alignItems: 'center' },
+  whoName: { fontSize: 15, fontWeight: '700', color: T.text },
+  whoHandle: { fontSize: 13, color: T.muted },
+  followBtn: { backgroundColor: '#fff', borderRadius: 16, paddingHorizontal: 16, paddingVertical: 6 },
+  followBtnText: { color: '#000', fontWeight: '700', fontSize: 13 },
+  emptyText: { color: T.muted, fontSize: 14 },
+  emptyState: { alignItems: 'center', paddingTop: 60, paddingHorizontal: 36 },
+  emptyTitle: { fontSize: 22, fontWeight: '800', color: T.text, marginBottom: 8 },
+  emptySub: { fontSize: 14, lineHeight: 22, color: T.muted, textAlign: 'center' },
+})
+import type { Post, Reply, UserProfile } from '@/features/forum/types'
+import { supabase } from '@/lib/supabase'
+import { Ionicons } from '@expo/vector-icons'
+import { LinearGradient } from 'expo-linear-gradient'
+import { useEffect, useState } from 'react'
+import {
+  ActivityIndicator,
+  Image,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
+
+const T = {
+  bg:      '#000000',
+  bg3:     '#16181c',
+  border:  '#2f3336',
+  border2: '#3e4144',
+  text:    '#e7e9ea',
+  muted:   '#71767b',
+  accent:  '#1DA1F2',
+  green:   '#00ba7c',
+  red:     '#f91880',
+  gold:    '#ffd400',
+} as const
+
+// â”€â”€ Avatar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function Avi({
+  initials, grad, size = 40, uri, verified = false,
+}: {
+  initials: string; grad: readonly [string, string]; size?: number; uri?: string | null; verified?: boolean
+}) {
+  return (
+    <View style={{ width: size, height: size, position: 'relative', flexShrink: 0 }}>
+      <LinearGradient
+        colors={grad as [string, string]}
+        start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+        style={{ width: size, height: size, borderRadius: size / 2, justifyContent: 'center', alignItems: 'center' }}
+      >
+        {uri
+          ? <Image source={{ uri }} style={{ width: size, height: size, borderRadius: size / 2, position: 'absolute' }} resizeMode="cover" />
+          : <Text style={{ fontSize: size * 0.34, fontWeight: '800', color: '#fff' }}>{initials}</Text>}
+      </LinearGradient>
+      {verified && (
+        <View style={{ position: 'absolute', bottom: -1, right: -1, width: 15, height: 15, borderRadius: 8, backgroundColor: T.accent, borderWidth: 2, borderColor: T.bg, justifyContent: 'center', alignItems: 'center' }}>
+          <Text style={{ fontSize: 8, color: '#fff', fontWeight: '800' }}>âœ“</Text>
+        </View>
+      )}
+    </View>
+  )
+}
+
+function timeAgo(iso: string): string {
+  const d = Date.now() - new Date(iso).getTime(), sv = Math.floor(d / 1000)
+  if (sv < 60) return `${sv}s`
+  if (sv < 3600) return `${Math.floor(sv / 60)}m`
+  if (sv < 86400) return `${Math.floor(sv / 3600)}h`
+  return `${Math.floor(sv / 86400)}d`
+}
+
+function mapRowToReply(row: any): Reply {
+  const isAnon = !!row.is_anonymous
+  const handle = isAnon
+    ? '@anonymous'
+    : (row.profiles?.forum_handle
+        ? (row.profiles.forum_handle.startsWith('@') ? row.profiles.forum_handle : `@${row.profiles.forum_handle}`)
+        : `@${(row.profiles?.full_name || 'user').split(' ')[0].toLowerCase()}`)
+  return {
+    id:        row.id,
+    postId:    row.reply_to_id,
+    name:      isAnon ? 'Anonymous' : (row.profiles?.full_name || row.author_name || 'Anonymous'),
+    handle,
+    initials:  isAnon ? 'ðŸ•µï¸' : (row.profiles?.full_name?.slice(0, 2).toUpperCase() || row.author_initials || '??'),
+    grad:      isAnon ? ['#3e4144', '#16181c'] as [string, string] : (row.author_grad ?? ['#1DA1F2', '#1DA1F2'] as [string, string]),
+    avatarUri: isAnon ? null : (row.profiles?.avatar_url || row.author_avatar_url || null),
+    verified:  isAnon ? false : !!row.profiles?.is_verified,
+    text:      row.body || '',
+    likes:     row.like_count ?? row.likes_count ?? 0,
+    time:      timeAgo(row.created_at),
+  }
+}
+
+// â”€â”€ Twitter-style Reply Row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function ReplyRow({ reply, postHandle, isLast }: { reply: Reply; postHandle: string; isLast: boolean }) {
+  return (
+    <View style={st.replyRow}>
+      {/* Left column: avatar + connector line */}
+      <View style={st.replyLeft}>
+        <Avi
+          initials={reply.initials}
+          grad={reply.grad as [string, string]}
+          size={40}
+          uri={reply.avatarUri}
+          verified={reply.verified}
+        />
+        {/* Connector line to next reply (hide on last) */}
+        {!isLast && <View style={st.connector} />}
+      </View>
+
+      {/* Right column: content */}
+      <View style={st.replyBody}>
+        {/* Header row */}
+        <View style={st.replyHeader}>
+          <Text style={st.replyName} numberOfLines={1}>{reply.name}</Text>
+          {reply.verified && <Ionicons name="checkmark-circle" size={13} color={T.accent} style={{ marginLeft: 2 }} />}
+          <Text style={st.replyHandle} numberOfLines={1}>{reply.handle}</Text>
+          <Text style={st.replyDot}>Â·</Text>
+          <Text style={st.replyTime}>{reply.time}</Text>
+        </View>
+
+        {/* "Replying to @handle" label */}
+        <Text style={st.replyingTo}>
+          Replying to <Text style={{ color: T.accent }}>{postHandle}</Text>
+        </Text>
+
+        {/* Reply text */}
+        <Text style={st.replyText}>{reply.text}</Text>
+
+        {/* Action row (lightweight) */}
+        <View style={st.replyActions}>
+          <TouchableOpacity style={st.replyAction}>
+            <Ionicons name="chatbubble-outline" size={16} color={T.muted} />
+          </TouchableOpacity>
+          <TouchableOpacity style={st.replyAction}>
+            <Ionicons name="repeat" size={16} color={T.muted} />
+          </TouchableOpacity>
+          <TouchableOpacity style={st.replyAction}>
+            <Ionicons name="heart-outline" size={16} color={T.muted} />
+            {reply.likes > 0 && <Text style={st.replyActionCount}>{reply.likes}</Text>}
+          </TouchableOpacity>
+          <TouchableOpacity style={st.replyAction}>
+            <Ionicons name="share-outline" size={16} color={T.muted} />
+          </TouchableOpacity>
+        </View>
+      </View>
+    </View>
+  )
+}
+
+// â”€â”€ ThreadModal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+export function ThreadModal({
+  post, visible, onClose, onLike, onRepost, onBookmark, onShare, profile, onNewReply,
+}: {
+  post: Post | null
+  visible: boolean
+  onClose: () => void
+  onLike: (id: string, authorId?: string) => void
+  onRepost: (id: string, authorId?: string) => void
+  onBookmark: (id: string) => void
+  onShare: (p: Post) => void
+  profile: UserProfile
+  onNewReply: (postId: string, text: string, isAnon?: boolean) => void
+}) {
+  const insets              = useSafeAreaInsets()
+  const [replies, setReplies] = useState<Reply[]>([])
+  const [loading, setLoading] = useState(false)
+  const [replyText, setReplyText] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  // Load replies + subscribe to real-time inserts
+  useEffect(() => {
+    if (!post || !visible) { setReplies([]); return }
+
+    const load = async () => {
+      setLoading(true)
+      const { data } = await supabase
+        .from('sq_posts')
+        .select('*, profiles(full_name, forum_handle, avatar_url, is_verified, forum_initials, forum_grad)')
+        .eq('reply_to_id', post.id)
+        .order('created_at', { ascending: true })
+      setLoading(false)
+      if (data) setReplies(data.map(mapRowToReply))
+    }
+    load()
+
+    const ch = supabase
+      .channel(`thread_replies_${post.id}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'sq_posts', filter: `reply_to_id=eq.${post.id}` },
+        async (payload: any) => {
+          const { data } = await supabase
+            .from('sq_posts')
+            .select('*, profiles(full_name, forum_handle, avatar_url, is_verified, forum_initials, forum_grad)')
+            .eq('id', payload.new.id)
+            .single()
+          if (data) setReplies(prev => prev.some(r => r.id === data.id) ? prev : [...prev, mapRowToReply(data)])
+        },
+      )
+      .subscribe()
+
+    return () => { supabase.removeChannel(ch) }
+  }, [post?.id, visible])
+
+  const handleQuickReply = async () => {
+    if (!replyText.trim() || !post || submitting) return
+    setSubmitting(true)
+    const txt = replyText.trim()
+    setReplyText('')
+
+    // Optimistic reply shown immediately
+    const temp: Reply = {
+      id:        `temp-${Date.now()}`,
+      postId:    post.id,
+      name:      profile.name,
+      handle:    profile.handle,
+      initials:  profile.initials,
+      grad:      profile.grad,
+      avatarUri: profile.avatarUri,
+      verified:  profile.verified,
+      text:      txt,
+      likes:     0,
+      time:      'now',
+    }
+    setReplies(prev => [...prev, temp])
+
+    onNewReply(post.id, txt)
+    setSubmitting(false)
+  }
+
+  if (!post) return null
+
+  const postTime = new Date(Date.now()).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  const postDate = new Date(Date.now()).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
+
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
+      <KeyboardAvoidingView
+        style={{ flex: 1, backgroundColor: T.bg }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        {/* Header */}
+        <View style={[st.header, { paddingTop: insets.top + 6 }]}>
+          <TouchableOpacity style={st.backBtn} onPress={onClose}>
+            <Ionicons name="arrow-back" size={22} color={T.text} />
+          </TouchableOpacity>
+          <Text style={st.headerTitle}>Post</Text>
+        </View>
+
+        <ScrollView contentContainerStyle={{ paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
+          {/* â”€â”€ Expanded original post (Twitter-style) â”€â”€ */}
+          <View style={st.expanded}>
+            {/* Author row */}
+            <View style={st.expAuthorRow}>
+              <Avi initials={post.avatar} grad={post.avatarGrad} size={48} uri={post.avatarUri} verified={post.verified} />
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={st.expName}>{post.name}</Text>
+                <Text style={st.expHandle}>{post.handle}</Text>
+              </View>
+            </View>
+
+            {/* Post text */}
+            <Text style={st.expText}>{post.text}</Text>
+
+            {/* Post image */}
+            {post.imageUrl ? (
+              <View style={st.imgWrap}>
+                <Image source={{ uri: post.imageUrl }} style={st.img} resizeMode="cover" />
+              </View>
+            ) : null}
+
+            {/* Timestamp */}
+            <Text style={st.timestamp}>{postTime} Â· {postDate}</Text>
+
+            <View style={st.divider} />
+
+            {/* Stats row */}
+            <View style={st.statsRow}>
+              <Text style={st.statItem}>
+                <Text style={st.statNum}>{post.replies}</Text>
+                <Text style={st.statLabel}> Replies</Text>
+              </Text>
+              <Text style={st.statItem}>
+                <Text style={st.statNum}>{post.reposts}</Text>
+                <Text style={st.statLabel}> Reposts</Text>
+              </Text>
+              <Text style={st.statItem}>
+                <Text style={st.statNum}>{post.likes}</Text>
+                <Text style={st.statLabel}> Likes</Text>
+              </Text>
+              <Text style={st.statItem}>
+                <Text style={st.statNum}>{post.bookmarks}</Text>
+                <Text style={st.statLabel}> Bookmarks</Text>
+              </Text>
+            </View>
+
+            <View style={st.divider} />
+
+            {/* Action bar */}
+            <View style={st.actionBar}>
+              <TouchableOpacity style={st.actionBtn}>
+                <Ionicons name="chatbubble-outline" size={22} color={T.muted} />
+              </TouchableOpacity>
+              <TouchableOpacity style={st.actionBtn} onPress={() => onRepost(post.id, post.authorId)}>
+                <Ionicons name="repeat" size={22} color={post.reposted ? T.green : T.muted} />
+              </TouchableOpacity>
+              <TouchableOpacity style={st.actionBtn} onPress={() => onLike(post.id, post.authorId)}>
+                <Ionicons name={post.liked ? 'heart' : 'heart-outline'} size={22} color={post.liked ? T.red : T.muted} />
+              </TouchableOpacity>
+              <TouchableOpacity style={st.actionBtn} onPress={() => onBookmark(post.id)}>
+                <Ionicons name={post.bookmarked ? 'bookmark' : 'bookmark-outline'} size={22} color={post.bookmarked ? T.accent : T.muted} />
+              </TouchableOpacity>
+              <TouchableOpacity style={st.actionBtn} onPress={() => onShare(post)}>
+                <Ionicons name="share-outline" size={22} color={T.muted} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={st.divider} />
+          </View>
+
+          {/* â”€â”€ Replies â”€â”€ */}
+          {loading ? (
+            <ActivityIndicator color={T.accent} style={{ marginTop: 24 }} />
+          ) : replies.length === 0 ? (
+            <View style={{ alignItems: 'center', paddingTop: 40, paddingHorizontal: 40 }}>
+              <Text style={{ fontSize: 20, fontWeight: '800', color: T.text, marginBottom: 6 }}>No replies yet</Text>
+              <Text style={{ color: T.muted, fontSize: 14, textAlign: 'center', lineHeight: 22 }}>Be the first to reply!</Text>
+            </View>
+          ) : (
+            <View>
+              {replies.map((r, idx) => (
+                <ReplyRow
+                  key={r.id}
+                  reply={r}
+                  postHandle={post.handle}
+                  isLast={idx === replies.length - 1}
+                />
+              ))}
+            </View>
+          )}
+        </ScrollView>
+
+        {/* â”€â”€ Reply composer bar â”€â”€ */}
+        <View style={[st.replyBar, { paddingBottom: insets.bottom + 8 }]}>
+          <Avi initials={profile.initials} grad={profile.grad} size={36} uri={profile.avatarUri} />
+          <TextInput
+            style={st.replyInput}
+            placeholder="Post your replyâ€¦"
+            placeholderTextColor={T.muted}
+            value={replyText}
+            onChangeText={setReplyText}
+            multiline
+            maxLength={280}
+          />
+          <TouchableOpacity
+            style={[st.replyBtn, (!replyText.trim() || submitting) && { opacity: 0.45 }]}
+            onPress={handleQuickReply}
+            disabled={!replyText.trim() || submitting}
+          >
+            <Text style={{ color: '#fff', fontWeight: '800', fontSize: 14 }}>Reply</Text>
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  )
+}
+
+const st = StyleSheet.create({
+  header:       { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: '#2f3336' },
+  backBtn:      { width: 40, paddingVertical: 4, justifyContent: 'center' },
+  headerTitle:  { fontSize: 20, fontWeight: '800', color: '#e7e9ea', paddingLeft: 8 },
+
+  expanded:     { padding: 16 },
+  expAuthorRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
+  expName:      { fontSize: 17, fontWeight: '800', color: '#e7e9ea' },
+  expHandle:    { fontSize: 15, color: '#71767b', marginTop: 1 },
+  expText:      { fontSize: 20, color: '#e7e9ea', lineHeight: 30, marginBottom: 14 },
+  imgWrap:      { borderRadius: 16, overflow: 'hidden', marginBottom: 14, borderWidth: 1, borderColor: '#2f3336' },
+  img:          { width: '100%', aspectRatio: 16 / 9 },
+  timestamp:    { fontSize: 15, color: '#71767b', marginBottom: 14 },
+  divider:      { height: 1, backgroundColor: '#2f3336' },
+  statsRow:     { flexDirection: 'row', gap: 16, paddingVertical: 14, flexWrap: 'wrap' },
+  statItem:     { fontSize: 15 },
+  statNum:      { fontWeight: '800', color: '#e7e9ea' },
+  statLabel:    { color: '#71767b' },
+  actionBar:    { flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 6 },
+  actionBtn:    { padding: 10 },
+
+  // Twitter-style reply rows
+  replyRow:     { flexDirection: 'row', paddingLeft: 16, paddingRight: 16, paddingTop: 16 },
+  replyLeft:    { alignItems: 'center', marginRight: 12, width: 40 },
+  connector:    { width: 2, flex: 1, backgroundColor: '#2f3336', marginTop: 6, borderRadius: 1, minHeight: 24 },
+  replyBody:    { flex: 1, paddingBottom: 16 },
+  replyHeader:  { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 2, flexWrap: 'wrap' },
+  replyName:    { fontSize: 15, fontWeight: '800', color: '#e7e9ea', flexShrink: 1 },
+  replyHandle:  { fontSize: 14, color: '#71767b', flexShrink: 1 },
+  replyDot:     { color: '#71767b', fontSize: 14 },
+  replyTime:    { fontSize: 14, color: '#71767b', flexShrink: 0 },
+  replyingTo:   { fontSize: 14, color: '#71767b', marginBottom: 6 },
+  replyText:    { fontSize: 16, color: '#e7e9ea', lineHeight: 24, marginBottom: 10 },
+  replyActions: { flexDirection: 'row', gap: 20 },
+  replyAction:  { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  replyActionCount: { fontSize: 13, color: '#71767b' },
+
+  replyBar:     { paddingHorizontal: 16, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#2f3336', backgroundColor: '#000', flexDirection: 'row', gap: 12, alignItems: 'flex-end' },
+  replyInput:   { flex: 1, color: '#e7e9ea', fontSize: 16, maxHeight: 100, paddingVertical: 8 },
+  replyBtn:     { backgroundColor: '#1DA1F2', paddingHorizontal: 18, paddingVertical: 9, borderRadius: 20 },
+})
+import { useEffect, useRef } from 'react'
+import { Animated, StyleSheet, Text } from 'react-native'
+
+const T = {
+  bg3: '#16171e',
+  border2: 'rgba(236,91,19,0.20)',
+  text: '#f0ede8',
+} as const
+
+export function Toast({ message, visible }: { message: string; visible: boolean }) {
+  const y = useRef(new Animated.Value(100)).current
+  const opa = useRef(new Animated.Value(0)).current
+
+  useEffect(() => {
+    if (visible) {
+      Animated.parallel([
+        Animated.timing(y, { toValue: 0, duration: 260, useNativeDriver: true }),
+        Animated.timing(opa, { toValue: 1, duration: 260, useNativeDriver: true }),
+      ]).start()
+    } else {
+      Animated.parallel([
+        Animated.timing(y, { toValue: 100, duration: 240, useNativeDriver: true }),
+        Animated.timing(opa, { toValue: 0, duration: 240, useNativeDriver: true }),
+      ]).start()
+    }
+  }, [opa, visible, y])
+
+  return (
+    <Animated.View pointerEvents="none" style={[styles.box, { transform: [{ translateY: y }], opacity: opa }]}>
+      <Text style={styles.text}>{message}</Text>
+    </Animated.View>
+  )
+}
+
+const styles = StyleSheet.create({
+  box: {
+    position: 'absolute',
+    left: 18,
+    right: 18,
+    bottom: 26,
+    backgroundColor: T.bg3,
+    borderWidth: 1,
+    borderColor: T.border2,
+    borderRadius: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+  },
+  text: { color: T.text, fontSize: 14, fontWeight: '700', textAlign: 'center' },
+})
+import { supabase } from '@/lib/supabase'
+import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
+import { useCallback } from 'react'
+import { Share } from 'react-native'
+import type { Post, UserProfile } from '../types'
+
+type UseForumInteractionsParams = {
+  mediaBucket: string
+  profile: UserProfile
+  showToast: (message: string) => void
+  setPosts: Dispatch<SetStateAction<Post[]>>
+  setThreadPost: Dispatch<SetStateAction<Post | null>>
+  likedIds: MutableRefObject<Set<string>>
+  repostedIds: MutableRefObject<Set<string>>
+  bookmarkedIds: MutableRefObject<Set<string>>
+  mapRowToPost: (row: any, myL: Set<string>, myR: Set<string>, myB: Set<string>) => Post
+}
+
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Helper: insert a notification row (fire-and-forget, never throws)
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+async function sendNotification(params: {
+  recipientId: string
+  actorId: string
+  actorName: string
+  actorHandle: string
+  actorInitials: string
+  actorGrad: [string, string]
+  actorAvatarUrl: string | null
+  type: 'like' | 'repost' | 'reply' | 'follow'
+  postPreview?: string | null
+}) {
+  // Never notify yourself
+  if (params.recipientId === params.actorId) return
+  try {
+    await supabase.from('sq_notifications').insert({
+      user_id:         params.recipientId,
+      type:            params.type,
+      actor_id:        params.actorId,
+      actor_name:      params.actorName,
+      actor_handle:    params.actorHandle,
+      actor_initials:  params.actorInitials,
+      actor_grad:      params.actorGrad,
+      actor_avatar_url: params.actorAvatarUrl,
+      post_preview:    params.postPreview ?? null,
+      read:            false,
+    })
+  } catch {
+    // Notifications are best-effort â€“ don't crash interactions
+  }
+}
+
+export function useForumInteractions({
+  mediaBucket,
+  profile,
+  showToast,
+  setPosts,
+  setThreadPost,
+  likedIds,
+  repostedIds,
+  bookmarkedIds,
+  mapRowToPost,
+}: UseForumInteractionsParams) {
+
+  // â”€â”€â”€ Image Upload â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const uploadImage = useCallback(async (localUri: string): Promise<string | null> => {
+    if (!profile.userId) return null
+    try {
+      const ext  = localUri.split('.').pop()?.toLowerCase() ?? 'jpg'
+      const mime = ext === 'png' ? 'image/png' : ext === 'gif' ? 'image/gif' : 'image/jpeg'
+      const path = `${profile.userId}/${Date.now()}.${ext}`
+      const blob = await (await fetch(localUri)).blob()
+      const { error } = await supabase.storage.from(mediaBucket).upload(path, blob, {
+        contentType: mime,
+        upsert: false,
+      })
+      if (error) { console.warn('Image upload error:', error.message); return null }
+      return supabase.storage.from(mediaBucket).getPublicUrl(path).data.publicUrl
+    } catch (err) {
+      console.warn('uploadImage exception:', err)
+      return null
+    }
+  }, [mediaBucket, profile.userId])
+
+  // â”€â”€â”€ Like â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const handleLike = useCallback((id: string, postAuthorId?: string) => {
+    const nowLiked = !likedIds.current.has(id)
+    if (nowLiked) likedIds.current.add(id)
+    else          likedIds.current.delete(id)
+
+    setPosts(prev =>
+      prev.map(p => p.id !== id ? p : { ...p, liked: nowLiked, likes: p.likes + (nowLiked ? 1 : -1) })
+    )
+    setThreadPost(prev =>
+      prev?.id === id ? { ...prev, liked: nowLiked, likes: prev.likes + (nowLiked ? 1 : -1) } : prev
+    )
+
+    if (!id.startsWith('seed-') && profile.userId) {
+      if (nowLiked) {
+        void (async () => {
+          try {
+            await supabase.from('sq_likes').insert({ post_id: id, user_id: profile.userId })
+            if (postAuthorId) {
+              const { data: postData } = await supabase.from('sq_posts').select('body').eq('id', id).single()
+              await sendNotification({
+                recipientId:    postAuthorId,
+                actorId:        profile.userId,
+                actorName:      profile.name,
+                actorHandle:    profile.handle,
+                actorInitials:  profile.initials,
+                actorGrad:      profile.grad,
+                actorAvatarUrl: profile.avatarUri,
+                type:           'like',
+                postPreview:    postData?.body?.slice(0, 100) ?? null,
+              })
+            }
+          } catch {}
+        })()
+      } else {
+        void (async () => {
+          try { await supabase.from('sq_likes').delete().match({ post_id: id, user_id: profile.userId }) } catch {}
+        })()
+      }
+    }
+  }, [likedIds, profile, setPosts, setThreadPost])
+
+  // â”€â”€â”€ Repost â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const handleRepost = useCallback((id: string, postAuthorId?: string) => {
+    const nowReposted = !repostedIds.current.has(id)
+    if (nowReposted) repostedIds.current.add(id)
+    else             repostedIds.current.delete(id)
+
+    setPosts(prev =>
+      prev.map(p => p.id !== id ? p : { ...p, reposted: nowReposted, reposts: p.reposts + (nowReposted ? 1 : -1) })
+    )
+    setThreadPost(prev =>
+      prev?.id === id ? { ...prev, reposted: nowReposted, reposts: prev.reposts + (nowReposted ? 1 : -1) } : prev
+    )
+    showToast(nowReposted ? 'Reposted!' : 'Repost removed')
+
+    if (!id.startsWith('seed-') && profile.userId) {
+      if (nowReposted) {
+        void (async () => {
+          try {
+            await supabase.from('sq_reposts').insert({ post_id: id, user_id: profile.userId })
+            if (postAuthorId) {
+              const { data: postData } = await supabase.from('sq_posts').select('body').eq('id', id).single()
+              await sendNotification({
+                recipientId:    postAuthorId,
+                actorId:        profile.userId,
+                actorName:      profile.name,
+                actorHandle:    profile.handle,
+                actorInitials:  profile.initials,
+                actorGrad:      profile.grad,
+                actorAvatarUrl: profile.avatarUri,
+                type:           'repost',
+                postPreview:    postData?.body?.slice(0, 100) ?? null,
+              })
+            }
+          } catch {}
+        })()
+      } else {
+        void (async () => {
+          try { await supabase.from('sq_reposts').delete().match({ post_id: id, user_id: profile.userId }) } catch {}
+        })()
+      }
+    }
+  }, [profile, repostedIds, setPosts, setThreadPost, showToast])
+
+  // â”€â”€â”€ Bookmark â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const handleBookmark = useCallback((id: string) => {
+    const nowBookmarked = !bookmarkedIds.current.has(id)
+    if (nowBookmarked) bookmarkedIds.current.add(id)
+    else               bookmarkedIds.current.delete(id)
+
+    setPosts(prev =>
+      prev.map(p => p.id !== id ? p : { ...p, bookmarked: nowBookmarked, bookmarks: p.bookmarks + (nowBookmarked ? 1 : -1) })
+    )
+    showToast(nowBookmarked ? 'Added to Bookmarks' : 'Removed from Bookmarks')
+
+    if (!id.startsWith('seed-') && profile.userId) {
+      void (async () => {
+        try {
+          if (nowBookmarked)
+            await supabase.from('sq_bookmarks').insert({ post_id: id, user_id: profile.userId })
+          else
+            await supabase.from('sq_bookmarks').delete().match({ post_id: id, user_id: profile.userId })
+        } catch {}
+      })()
+    }
+  }, [bookmarkedIds, profile.userId, setPosts, showToast])
+
+  // â”€â”€â”€ Share â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const handleShare = useCallback(async (post: Post) => {
+    try {
+      await Share.share({ message: `${post.name}: ${post.text}` })
+    } catch {}
+  }, [])
+
+  // â”€â”€â”€ Vote on Poll â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const handleVote = useCallback((id: string, optionIndex: number) => {
+    if (!profile.userId) { showToast('Sign in to vote'); return }
+
+    // Optimistic update: recalculate all percentages properly
+    setPosts(prev => prev.map(p => {
+      if (p.id !== id || !p.poll) return p
+
+      // Build vote counts array (assume equal votes initially if none stored)
+      const currentVotes = (p as any)._voteCounts as number[] | undefined
+      const votes = currentVotes
+        ? [...currentVotes]
+        : p.poll.map(o => Math.round((o.pct / 100) * Math.max(1, (p as any)._totalVotes ?? 1)))
+
+      votes[optionIndex] = (votes[optionIndex] ?? 0) + 1
+      const total = votes.reduce((a, b) => a + b, 0)
+
+      const newPoll = p.poll.map((o, i) => ({
+        ...o,
+        pct: Math.round((votes[i] / total) * 100),
+        winning: votes[i] === Math.max(...votes),
+      }))
+
+      return {
+        ...p,
+        poll: newPoll,
+        pollMeta: `${total} vote${total !== 1 ? 's' : ''}`,
+        _voteCounts: votes,
+        _totalVotes: total,
+      } as Post
+    }))
+
+    showToast('Vote recorded!')
+
+    if (!id.startsWith('seed-')) {
+      void (async () => {
+        try {
+          const { data, error } = await supabase
+            .rpc('sq_record_poll_vote', { p_post_id: id, p_option_index: optionIndex, p_user_id: profile.userId })
+          if (error) { console.warn('Poll vote error:', error.message); return }
+          if (data) {
+            setPosts(prev => prev.map(p => {
+              if (p.id !== id) return p
+              const opts = Array.isArray(data.poll_options) ? data.poll_options : p.poll
+              const total: number = data.total_votes ?? (opts as any[]).reduce((a: number, o: any) => a + (o.votes ?? 0), 0)
+              return {
+                ...p,
+                poll: (opts as any[]).map((o: any) => ({
+                  label:   o.label,
+                  pct:     total > 0 ? Math.round(((o.votes ?? 0) / total) * 100) : 0,
+                  winning: (o.votes ?? 0) === Math.max(...(opts as any[]).map((x: any) => x.votes ?? 0)),
+                })),
+                pollMeta: `${total} vote${total !== 1 ? 's' : ''}`,
+              }
+            }))
+          }
+        } catch {}
+      })()
+    }
+  }, [profile.userId, setPosts, showToast])
+
+  // â”€â”€â”€ New Post â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const handleNewPost = useCallback(async (
+    text: string,
+    localImageUri?: string,
+    pollOptions?: string[],
+    replyToId?: string,
+    isAnonymous?: boolean,
+  ) => {
+    if (!profile.userId) { showToast('Please sign in to post'); return }
+
+    const tempId   = `temp-${Date.now()}`
+    const isPoll   = !!(pollOptions && pollOptions.filter(o => o.trim()).length >= 2)
+    const mockPoll = isPoll
+      ? pollOptions!.filter(o => o.trim()).map(o => ({ label: o, pct: 0 }))
+      : undefined
+
+    // â”€â”€ Optimistic insert (always shows poster's real identity locally) â”€â”€
+    setPosts(prev => [{
+      id:         tempId,
+      isSeed:     false,
+      type:       isPoll ? 'poll' : 'normal',
+      authorId:   profile.userId,
+      name:       isAnonymous ? 'Anonymous' : profile.name,
+      handle:     isAnonymous ? '@anonymous' : profile.handle,
+      verified:   isAnonymous ? false : profile.verified,
+      time:       'now',
+      avatar:     isAnonymous ? 'ðŸ•µï¸' : profile.initials,
+      avatarGrad: isAnonymous ? ['#3e4144', '#16181c'] as [string,string] : profile.grad,
+      avatarUri:  isAnonymous ? null : profile.avatarUri,
+      text,
+      // Show local preview of image immediately
+      imageUrl:   localImageUri ?? null,
+      poll:       mockPoll,
+      pollMeta:   isPoll ? '0 votes' : undefined,
+      replies:    0, reposts: 0, likes: 0,
+      views:      '0', bookmarks: 0,
+      liked: false, reposted: false, bookmarked: false,
+    }, ...prev])
+
+    showToast('Your post is live!')
+
+    // â”€â”€ Upload image first (if any) â”€â”€
+    let imageUrl: string | null = null
+    if (localImageUri) {
+      imageUrl = await uploadImage(localImageUri)
+      if (!imageUrl) showToast('Image upload failed â€“ post saved without image')
+    }
+
+    const poll_options = isPoll
+      ? pollOptions!.filter(o => o.trim()).map(o => ({ label: o, votes: 0 }))
+      : null
+
+    // â”€â”€ Insert post with author_id so other users see real profile â”€â”€
+    const { data, error } = await supabase
+      .from('sq_posts')
+      .insert({
+        author_id:    profile.userId,
+        body:         text,
+        image_url:    imageUrl,          // â† real CDN URL, not local
+        poll_options: poll_options,
+        reply_to_id:  replyToId ?? null,
+        is_anonymous: isAnonymous ?? false,
+        // Store denormalised author fields so feed queries don't need a join
+        author_name:       profile.name,
+        author_handle:     profile.handle,
+        author_initials:   profile.initials,
+        author_grad:       profile.grad,
+        author_avatar_url: profile.avatarUri,
+        author_verified:   profile.verified,
+      })
+      .select('*, profiles(full_name, forum_handle, avatar_url, is_verified, forum_initials, forum_grad)')
+      .single()
+
+    if (error) {
+      console.error('Post insertion error:', error)
+      setPosts(prev => prev.filter(p => p.id !== tempId))
+      showToast(`Failed to save post: ${error.message}`)
+      return
+    }
+
+    if (data) {
+      // Replace temp post with real DB row (includes real image_url)
+      setPosts(prev => prev.map(p =>
+        p.id === tempId
+          ? mapRowToPost(data, likedIds.current, repostedIds.current, bookmarkedIds.current)
+          : p
+      ))
+    }
+  }, [bookmarkedIds, likedIds, mapRowToPost, profile, repostedIds, setPosts, showToast, uploadImage])
+
+  // â”€â”€â”€ New Reply â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const handleNewReply = useCallback(async (postId: string, text: string, isAnonymous?: boolean) => {
+    // Increment reply count optimistically
+    setPosts(prev => prev.map(p => p.id === postId ? { ...p, replies: p.replies + 1 } : p))
+    setThreadPost(prev => prev?.id === postId ? { ...prev, replies: prev.replies + 1 } : prev)
+
+    await handleNewPost(text, undefined, undefined, postId, isAnonymous)
+
+    // Send reply notification to the post author
+    if (!isAnonymous && profile.userId) {
+      const { data: parentPost } = await supabase
+        .from('sq_posts').select('author_id, body').eq('id', postId).single()
+      if (parentPost?.author_id) {
+        await sendNotification({
+          recipientId:    parentPost.author_id,
+          actorId:        profile.userId,
+          actorName:      profile.name,
+          actorHandle:    profile.handle,
+          actorInitials:  profile.initials,
+          actorGrad:      profile.grad,
+          actorAvatarUrl: profile.avatarUri,
+          type:           'reply',
+          postPreview:    parentPost.body?.slice(0, 100) ?? null,
+        })
+      }
+    }
+  }, [handleNewPost, profile, setPosts, setThreadPost])
+
+  return {
+    handleBookmark,
+    handleLike,
+    handleNewPost,
+    handleNewReply,
+    handleRepost,
+    handleShare,
+    handleVote,
+  }
+}
+/**
+ * ForumScreen.tsx  â€“  StudentSquare Forum
+ *
+ * Fixes applied:
+ *  1. rowToPost / sqPostToPost: other users now see real author info (not
+ *     "Anonymous") because the insert stores denormalised author fields and
+ *     we join profiles correctly.
+ *  2. Campus tab: filters sq_posts by profiles.college_id = viewer's college.
+ *  3. Classes tab: filters sq_posts by profiles.class_id = viewer's class.
+ *  4. Poll voting: proper percentage calculation + server sync.
+ *  5. Image posts: local URI shown optimistically; CDN URL saved to DB.
+ *  6. ComposeModal avatar: always shows real profile picture.
+ *  7. Notifications: sent on like / repost / reply.
+ *  8. ThreadModal: Twitter-style replies with connector lines.
+ */
+
+import { BookmarksModal }      from '@/features/forum/components/BookmarksModal'
+import { ComposeModal }        from '@/features/forum/components/ComposeModal'
+import { NotificationsModal }  from '@/features/forum/components/NotificationsModal'
+import { SearchModal }         from '@/features/forum/components/SearchModal'
+import { ThreadModal }         from '@/features/forum/components/ThreadModal'
+import { Toast }               from '@/features/forum/components/Toast'
+import { useForumInteractions } from '@/features/forum/hooks/useForumInteractions'
+import type { Notif, Post, Reply, UserProfile } from '@/features/forum/types'
+import { useNetworkStatus }    from '@/hooks/useNetworkStatus'
+import { useAuth }             from '@/hooks/useAuth'
+import { supabase }            from '@/lib/supabase'
+import { Ionicons }            from '@expo/vector-icons'
+import * as ImagePicker        from 'expo-image-picker'
+import { LinearGradient }      from 'expo-linear-gradient'
+import { useRouter }           from 'expo-router'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  ActivityIndicator,
+  Animated,
+  FlatList,
+  Image,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
+
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Design tokens
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const T = {
+  bg:        '#000000',
+  bg2:       '#0d0d0d',
+  bg3:       '#16181c',
+  bg4:       '#202327',
+  border:    '#2f3336',
+  border2:   '#3e4144',
+  text:      '#e7e9ea',
+  muted:     '#71767b',
+  muted2:    '#8b98a5',
+  accent:    '#1DA1F2',
+  accentDim: 'rgba(29,161,242,0.12)',
+  accentGlow:'rgba(29,161,242,0.2)',
+  green:     '#00ba7c',
+  red:       '#f91880',
+  amber:     '#ffd400',
+  gold:      '#ffd400',
+} as const
+
+const CT_MEDIA_BUCKET = 'ct-media'
+const MAX_CHARS = 280
+
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Helpers
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function fmt(n: number): string { return n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n) }
+
+function timeAgo(iso: string): string {
+  const d = Date.now() - new Date(iso).getTime(), sv = Math.floor(d / 1000)
+  if (sv < 60) return `${sv}s`
+  if (sv < 3600) return `${Math.floor(sv / 60)}m`
+  if (sv < 86400) return `${Math.floor(sv / 3600)}h`
+  return `${Math.floor(sv / 86400)}d`
+}
+
+function ensureHandle(raw?: string | null, fallbackName?: string): string {
+  if (!raw) return `@${(fallbackName || 'user').split(' ')[0].toLowerCase().replace(/[^a-z0-9_]/g, '')}`
+  return raw.startsWith('@') ? raw : `@${raw}`
+}
+
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// rowToPost
+//
+// FIX: A post is anonymous ONLY when is_anonymous === true.
+// Otherwise always use profiles join data (real name/avatar).
+// We store denormalised author_* fields on insert so both paths work.
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function rowToPost(row: any, myL: Set<string>, myR: Set<string>, myB: Set<string>): Post {
+  const isAnon = !!row.is_anonymous
+
+  // Prefer denormalised columns, fall back to profiles join
+  const fullName   = row.author_name   || row.profiles?.full_name   || 'Student'
+  const forumHandle= row.author_handle || row.profiles?.forum_handle || null
+  const initials   = row.author_initials || row.profiles?.forum_initials || fullName.slice(0, 2).toUpperCase()
+  const grad       = (row.author_grad  || row.profiles?.forum_grad  || ['#1DA1F2', '#1DA1F2']) as [string, string]
+  const avatarUrl  = row.author_avatar_url || row.profiles?.avatar_url || null
+  const verified   = row.author_verified   ?? row.profiles?.is_verified ?? false
+
+  // Map poll_options from DB format [{label, votes}] â†’ [{label, pct, winning}]
+  let poll: Post['poll'] | undefined
+  let pollMeta: string | undefined
+  if (row.poll_options && Array.isArray(row.poll_options) && row.poll_options.length > 0) {
+    const total = (row.poll_options as any[]).reduce((a: number, o: any) => a + (o.votes ?? 0), 0)
+    poll = (row.poll_options as any[]).map((o: any) => {
+      const pct = total > 0 ? Math.round(((o.votes ?? 0) / total) * 100) : 0
+      return { label: o.label, pct, votes: o.votes ?? 0 }
+    })
+    const maxVotes = Math.max(...poll.map((o: any) => o.votes ?? 0))
+    poll = poll.map((o: any) => ({ ...o, winning: (o.votes ?? 0) === maxVotes && maxVotes > 0 }))
+    pollMeta = `${total} vote${total !== 1 ? 's' : ''}`
+  }
+
+  return {
+    id:         row.id,
+    isSeed:     false,
+    type:       (row.post_type as Post['type']) || (poll ? 'poll' : 'normal'),
+    authorId:   row.author_id || row.user_id,
+    name:       isAnon ? 'Anonymous' : fullName,
+    handle:     isAnon ? '@anonymous' : ensureHandle(forumHandle, fullName),
+    verified:   isAnon ? false : verified,
+    time:       timeAgo(row.created_at || new Date().toISOString()),
+    avatar:     isAnon ? 'ðŸ•µï¸' : initials,
+    avatarGrad: isAnon ? ['#3e4144', '#16181c'] as [string, string] : grad,
+    avatarUri:  isAnon ? null : avatarUrl,
+    text:       row.body || '',
+    imageUrl:   row.image_url || null,
+    poll,
+    pollMeta,
+    replies:    row.comment_count   || row.replies_count || 0,
+    reposts:    row.repost_count    || row.reposts_count || 0,
+    likes:      row.upvotes         || row.like_count    || row.likes_count    || 0,
+    views:      fmt(row.view_count  || row.views_count   || 0),
+    bookmarks:  row.bookmark_count  || row.bookmarks_count || 0,
+    liked:      myL.has(row.id),
+    reposted:   myR.has(row.id),
+    bookmarked: myB.has(row.id),
+  }
+}
+
+function rowToNotif(row: any): Notif {
+  return {
+    id:           row.id,
+    type:         row.type,
+    actorName:    row.actor_name    ?? 'Someone',
+    actorHandle:  row.actor_handle  ?? '',
+    actorInitials:row.actor_initials ?? '??',
+    actorGrad:    (row.actor_grad   ?? ['#1DA1F2', '#1DA1F2']) as [string, string],
+    actorAvatar:  row.actor_avatar_url ?? null,
+    postPreview:  row.post_preview  ?? null,
+    read:         row.read,
+    time:         timeAgo(row.created_at),
+  }
+}
+
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Default profile
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const DEFAULT_PROFILE: UserProfile = {
+  userId: '', name: 'You', handle: '@you', initials: 'YO',
+  grad: ['#1DA1F2', '#1DA1F2'] as [string, string],
+  avatarUri: null, collegeId: null, classId: null, verified: false,
+}
+
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Shared sub-components
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+function Avi({ initials, grad, size = 40, uri, verified = false }: {
+  initials: string; grad: readonly [string, string]; size?: number; uri?: string | null; verified?: boolean
+}) {
+  return (
+    <View style={{ width: size, height: size, position: 'relative', flexShrink: 0 }}>
+      <LinearGradient
+        colors={grad as [string, string]}
+        start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+        style={{ width: size, height: size, borderRadius: size / 2, justifyContent: 'center', alignItems: 'center' }}
+      >
+        {uri
+          ? <Image source={{ uri }} style={{ width: size, height: size, borderRadius: size / 2, position: 'absolute' }} resizeMode="cover" />
+          : <Text style={{ fontSize: size * 0.34, fontWeight: '800', color: '#fff', letterSpacing: -0.3 }}>{initials}</Text>}
+      </LinearGradient>
+      {verified && (
+        <View style={{ position: 'absolute', bottom: -1, right: -1, width: 15, height: 15, borderRadius: 8, backgroundColor: T.accent, borderWidth: 2, borderColor: T.bg, justifyContent: 'center', alignItems: 'center' }}>
+          <Text style={{ fontSize: 8, color: '#fff', fontWeight: '800' }}>âœ“</Text>
+        </View>
+      )}
+    </View>
+  )
+}
+
+function RichText({ text, style, onHashtag }: { text: string; style?: any; onHashtag?: (tag: string) => void }) {
+  const parts = text.split(/(#\w+|@\w+)/g)
+  return (
+    <Text style={[s.postText, style]}>
+      {parts.map((p, i) => {
+        if (p.startsWith('#')) return <Text key={i} style={{ color: T.accent, fontWeight: '600' }} onPress={() => onHashtag?.(p)}>{p}</Text>
+        if (p.startsWith('@')) return <Text key={i} style={{ color: T.accent, fontWeight: '600' }}>{p}</Text>
+        return p
+      })}
+    </Text>
+  )
+}
+
+type AV = 'reply' | 'repost' | 'like' | 'bookmark' | 'share'
+const AC: Record<AV, string> = { reply: T.accent, repost: T.green, like: T.red, bookmark: T.gold, share: T.accent }
+
+function ActionBtn({ variant, icon, activeIcon, label, active, onPress }: {
+  variant: AV; icon: string; activeIcon?: string; label?: string | number; active?: boolean; onPress: () => void
+}) {
+  const scale = useRef(new Animated.Value(1)).current
+  const col   = active ? AC[variant] : T.muted
+  const handlePress = () => {
+    Animated.sequence([
+      Animated.spring(scale, { toValue: 1.35, useNativeDriver: true, speed: 60, bounciness: 0 }),
+      Animated.spring(scale, { toValue: 1,    useNativeDriver: true, speed: 30, bounciness: 12 }),
+    ]).start()
+    onPress()
+  }
+  return (
+    <TouchableOpacity onPress={handlePress} activeOpacity={0.7} style={s.action}>
+      <Animated.Text style={[s.actionIcon, { color: col, transform: [{ scale }] }]}>
+        {active && activeIcon ? activeIcon : icon}
+      </Animated.Text>
+      {label !== undefined && Number(label) > 0 && (
+        <Text style={[s.actionCount, { color: col }]}>{fmt(Number(label))}</Text>
+      )}
+    </TouchableOpacity>
+  )
+}
+
+// â”€â”€â”€ Poll â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+type PollOpt = { label: string; pct: number; winning?: boolean }
+function Poll({ options, meta, onVote, voted }: {
+  options: PollOpt[]; meta?: string; onVote: (i: number) => void; voted?: boolean
+}) {
+  return (
+    <View style={s.poll}>
+      {options.map((opt, i) => (
+        <TouchableOpacity
+          key={i}
+          onPress={() => !voted && onVote(i)}
+          activeOpacity={voted ? 1 : 0.85}
+          style={[s.pollOption, opt.winning && s.pollOptionWinning]}
+        >
+          <View style={[s.pollBar, { width: `${opt.pct}%` as any, backgroundColor: opt.winning ? T.accentDim : 'rgba(255,255,255,0.05)' }]} />
+          <Text style={s.pollLabel}>{opt.label}</Text>
+          <Text style={[s.pollPct, opt.winning && { color: T.accent }]}>{opt.pct}%</Text>
+        </TouchableOpacity>
+      ))}
+      {meta && <Text style={s.pollMeta}>{meta}</Text>}
+    </View>
+  )
+}
+
+// â”€â”€â”€ PostCard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function PostCard({ post, onLike, onRepost, onBookmark, onReply, onShare, onOpen, onVote, onHashtag, onAvatarPress }: {
+  post: Post
+  onLike: (id: string, authorId?: string) => void
+  onRepost: (id: string, authorId?: string) => void
+  onBookmark: (id: string) => void
+  onReply: (p: Post) => void
+  onShare: (p: Post) => void
+  onOpen: (p: Post) => void
+  onVote: (id: string, i: number) => void
+  onHashtag?: (tag: string) => void
+  onAvatarPress?: (userId: string, name: string) => void
+}) {
+  // Track if user has voted so we disable re-voting
+  const [hasVoted, setHasVoted] = useState(false)
+
+  const handleVote = (i: number) => {
+    if (hasVoted) return
+    setHasVoted(true)
+    onVote(post.id, i)
+  }
+
+  return (
+    <View>
+      {post.type === 'repost' && post.repostedBy && (
+        <View style={s.repostLabel}>
+          <Ionicons name="repeat" size={12} color={T.green} />
+          <Text style={s.repostLabelText}>{post.repostedBy} reposted</Text>
+        </View>
+      )}
+      <TouchableOpacity activeOpacity={0.97} onPress={() => onOpen(post)} style={s.post}>
+        <View style={s.postLeft}>
+          <TouchableOpacity activeOpacity={0.8} onPress={() => onAvatarPress?.(post.authorId ?? post.handle, post.name)}>
+            <Avi initials={post.avatar} grad={post.avatarGrad} size={42} uri={post.avatarUri} verified={post.verified} />
+          </TouchableOpacity>
+          {post.replies > 0 && <View style={s.threadLine} />}
+        </View>
+        <View style={s.postBody}>
+          <View style={s.postHeader}>
+            <TouchableOpacity
+              onPress={() => onAvatarPress?.(post.authorId ?? post.handle, post.name)}
+              activeOpacity={0.7}
+              style={{ flex: 1, minWidth: 0 }}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+                <Text style={s.postName} numberOfLines={1}>{post.name}</Text>
+                {post.verified && <Ionicons name="checkmark-circle" size={14} color={T.accent} />}
+                <Text style={s.postHandle} numberOfLines={1}>{post.handle}</Text>
+                <Text style={s.postDot}>Â·</Text>
+                <Text style={s.postTime}>{post.time}</Text>
+              </View>
+            </TouchableOpacity>
+            <TouchableOpacity hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="ellipsis-horizontal" size={16} color={T.muted} />
+            </TouchableOpacity>
+          </View>
+
+          <RichText text={post.text} onHashtag={onHashtag} />
+
+          {post.type === 'poll' && post.poll && (
+            <Poll options={post.poll} meta={post.pollMeta} onVote={handleVote} voted={hasVoted} />
+          )}
+
+          {/* Image â€“ shown when present */}
+          {post.imageUrl ? (
+            <View style={s.postImageWrap}>
+              <Image source={{ uri: post.imageUrl }} style={s.postImage} resizeMode="cover" />
+            </View>
+          ) : null}
+
+          <View style={s.postActions}>
+            <ActionBtn variant="reply"    icon="ðŸ’¬" label={post.replies}  onPress={() => onReply(post)} />
+            <ActionBtn variant="repost"   icon="ðŸ”„" label={post.reposts}  active={post.reposted}   onPress={() => onRepost(post.id, post.authorId)} />
+            <ActionBtn variant="like"     icon="ðŸ¤" activeIcon="â¤ï¸" label={post.likes} active={post.liked} onPress={() => onLike(post.id, post.authorId)} />
+            <ActionBtn variant="bookmark" icon="ðŸ·ï¸" activeIcon="ðŸ”–" active={post.bookmarked} onPress={() => onBookmark(post.id)} />
+            <ActionBtn variant="share"    icon="ðŸ“¤" label={post.views as any} onPress={() => onShare(post)} />
+          </View>
+        </View>
+      </TouchableOpacity>
+      <View style={s.divider} />
+    </View>
+  )
+}
+
+// â”€â”€â”€ InlineComposer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function InlineComposer({ onFocus, onPost, profile }: {
+  onFocus: () => void
+  onPost: (text: string, img?: string) => void
+  profile: UserProfile
+}) {
+  const [text, setText]         = useState('')
+  const [imageUri, setImageUri] = useState<string | null>(null)
+  const remaining   = MAX_CHARS - text.length
+  const charColor   = remaining < 20 ? T.red : remaining < 50 ? T.amber : T.muted
+
+  const pickImage = async () => {
+    const r = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.85, allowsEditing: true,
+    })
+    if (!r.canceled && r.assets[0]) setImageUri(r.assets[0].uri)
+  }
+
+  const handleSend = () => {
+    if (!text.trim()) return
+    onPost(text.trim(), imageUri ?? undefined)
+    setText('')
+    setImageUri(null)
+  }
+
+  return (
+    <View style={ic.composer}>
+      {/* FIX: Show real profile avatar in composer */}
+      <Avi initials={profile.initials} grad={profile.grad} size={42} uri={profile.avatarUri} />
+      <View style={ic.body}>
+        <TextInput
+          style={ic.input}
+          placeholder="What's happening?"
+          placeholderTextColor={T.muted}
+          multiline
+          value={text}
+          onChangeText={setText}
+          onFocus={onFocus}
+          maxLength={MAX_CHARS + 10}
+        />
+        {imageUri && (
+          <View style={{ marginBottom: 8, position: 'relative' }}>
+            <Image source={{ uri: imageUri }} style={{ width: '100%', borderRadius: 12, aspectRatio: 16 / 9 }} resizeMode="cover" />
+            <TouchableOpacity onPress={() => setImageUri(null)} style={ic.imgRemove}>
+              <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800' }}>âœ•</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+        <View style={ic.actions}>
+          <TouchableOpacity style={ic.toolBtn} onPress={pickImage}>
+            <Ionicons name="image-outline" size={18} color={T.accent} />
+          </TouchableOpacity>
+          <TouchableOpacity style={ic.toolBtn}>
+            <Ionicons name="bar-chart-outline" size={18} color={T.accent} />
+          </TouchableOpacity>
+          <Text style={[ic.charCount, { color: charColor }]}>{remaining}</Text>
+          <TouchableOpacity
+            style={[ic.sendBtn, !text.trim() && { opacity: 0.4 }]}
+            onPress={handleSend}
+            disabled={!text.trim()}
+          >
+            <Text style={ic.sendBtnText}>Post</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </View>
+  )
+}
+
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Feed tab types
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+type FeedTab = 'for-you' | 'following' | 'campus' | 'classes'
+const TABS: { key: FeedTab; label: string }[] = [
+  { key: 'for-you',   label: 'For You'  },
+  { key: 'following', label: 'Following' },
+  { key: 'campus',    label: 'Campus'   },
+  { key: 'classes',   label: 'Classes'  },
+]
+
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// MAIN SCREEN
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+export default function ForumScreen() {
+  const router  = useRouter()
+  const insets  = useSafeAreaInsets()
+  const { user } = useAuth()
+
+  // â”€â”€ Build profile from auth user + DB profile â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const [dbProfile, setDbProfile] = useState<{
+    forum_handle?: string; forum_initials?: string; forum_grad?: [string,string];
+    avatar_url?: string; is_verified?: boolean; college_id?: string; class_id?: string;
+  } | null>(null)
+
+  useEffect(() => {
+    if (!user?.id) return
+    supabase.from('profiles')
+      .select('forum_handle,forum_initials,forum_grad,avatar_url,is_verified,college_id,class_id')
+      .eq('id', user.id)
+      .single()
+      .then(({ data }) => { if (data) setDbProfile(data) })
+  }, [user?.id])
+
+  const profile: UserProfile = user ? {
+    userId:    user.id,
+    name:      dbProfile ? (user.user_metadata?.full_name || user.email?.split('@')[0] || 'Student')
+                         : (user.user_metadata?.full_name || user.email?.split('@')[0] || 'Student'),
+    handle:    ensureHandle(dbProfile?.forum_handle || user.user_metadata?.forum_handle, user.user_metadata?.full_name),
+    initials:  dbProfile?.forum_initials || (user.user_metadata?.full_name || user.email || '').slice(0, 2).toUpperCase() || 'ST',
+    grad:      (dbProfile?.forum_grad || user.user_metadata?.forum_grad || ['#1DA1F2', '#1DA1F2']) as [string, string],
+    // FIX: Use DB avatar_url (not just user_metadata) so it's always up to date
+    avatarUri: dbProfile?.avatar_url || user.user_metadata?.avatar_url || null,
+    collegeId: dbProfile?.college_id || user.user_metadata?.college_id || null,
+    classId:   dbProfile?.class_id   || user.user_metadata?.class_id   || null,
+    verified:  dbProfile?.is_verified ?? !!user.user_metadata?.is_verified,
+  } : DEFAULT_PROFILE
+
+  // â”€â”€ Feed state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const [feedTab, setFeedTab]         = useState<FeedTab>('for-you')
+  const [posts, setPosts]             = useState<Post[]>([])
+  const [postsLoading, setPostsLoading] = useState(false)
+  const [refreshing, setRefreshing]   = useState(false)
+  const { isOffline }                 = useNetworkStatus()
+
+  // â”€â”€ Interaction tracking refs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const likedIds      = useRef(new Set<string>())
+  const repostedIds   = useRef(new Set<string>())
+  const bookmarkedIds = useRef(new Set<string>())
+
+  // â”€â”€ UI state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const [unreadCount, setUnreadCount]     = useState(0)
+  const [showCompose, setShowCompose]     = useState(false)
+  const [showNotifs, setShowNotifs]       = useState(false)
+  const [showSearch, setShowSearch]       = useState(false)
+  const [searchQuery, setSearchQuery]     = useState('')
+  const [showBookmarks, setShowBookmarks] = useState(false)
+  const [profileUserId, setProfileUserId] = useState<string | null>(null)
+  const [threadPost, setThreadPost]       = useState<Post | null>(null)
+  const [replyTo, setReplyTo]             = useState<Post | null>(null)
+  const [toastMsg, setToastMsg]           = useState('')
+  const [toastVis, setToastVis]           = useState(false)
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const showToast = useCallback((msg: string) => {
+    setToastMsg(msg); setToastVis(true)
+    if (toastTimer.current) clearTimeout(toastTimer.current)
+    toastTimer.current = setTimeout(() => setToastVis(false), 2500)
+  }, [])
+
+  // â”€â”€ Load posts for the active tab â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const loadPosts = useCallback(async (tab: FeedTab) => {
+    if (!profile.userId) return
+    setPostsLoading(true)
+
+    let query = supabase
+      .from('sq_posts')
+      .select('*, profiles!sq_posts_author_id_fkey(full_name, forum_handle, forum_initials, forum_grad, avatar_url, is_verified, college_id, class_id)')
+      .is('reply_to_id', null)   // top-level posts only
+      .order('created_at', { ascending: false })
+      .limit(60)
+
+    if (tab === 'following') {
+      // Posts from people the current user follows
+      const { data: follows } = await supabase
+        .from('sq_follows').select('following_id').eq('follower_id', profile.userId)
+      const ids = (follows ?? []).map((f: any) => f.following_id as string)
+      if (ids.length === 0) { setPosts([]); setPostsLoading(false); return }
+      query = query.in('author_id', ids)
+    } else if (tab === 'campus') {
+      // FIX: Posts from users in the same college
+      if (!profile.collegeId) { setPosts([]); setPostsLoading(false); return }
+      // Get all user IDs in the same college
+      const { data: collegeUsers } = await supabase
+        .from('profiles').select('id').eq('college_id', profile.collegeId)
+      const ids = (collegeUsers ?? []).map((u: any) => u.id as string)
+      if (ids.length === 0) { setPosts([]); setPostsLoading(false); return }
+      query = query.in('author_id', ids)
+    } else if (tab === 'classes') {
+      // FIX: Posts from users in the same class
+      if (!profile.classId) { setPosts([]); setPostsLoading(false); return }
+      const { data: classUsers } = await supabase
+        .from('profiles').select('id').eq('class_id', profile.classId)
+      const ids = (classUsers ?? []).map((u: any) => u.id as string)
+      if (ids.length === 0) { setPosts([]); setPostsLoading(false); return }
+      query = query.in('author_id', ids)
+    }
+    // 'for-you' â†’ no extra filter (show everything)
+
+    const { data, error } = await query
+    if (error) { console.error('loadPosts error:', error.message); setPostsLoading(false); return }
+
+    // Load user's interaction state
+    const myL = new Set<string>(), myR = new Set<string>(), myB = new Set<string>()
+    if (data && data.length > 0) {
+      const postIds = data.map((p: any) => p.id)
+      const [lRes, rRes, bRes] = await Promise.all([
+        supabase.from('sq_likes').select('post_id').eq('user_id', profile.userId).in('post_id', postIds),
+        supabase.from('sq_reposts').select('post_id').eq('user_id', profile.userId).in('post_id', postIds),
+        supabase.from('sq_bookmarks').select('post_id').eq('user_id', profile.userId).in('post_id', postIds),
+      ])
+      ;(lRes.data ?? []).forEach((r: any) => { myL.add(r.post_id); likedIds.current.add(r.post_id) })
+      ;(rRes.data ?? []).forEach((r: any) => { myR.add(r.post_id); repostedIds.current.add(r.post_id) })
+      ;(bRes.data ?? []).forEach((r: any) => { myB.add(r.post_id); bookmarkedIds.current.add(r.post_id) })
+    }
+
+    setPosts((data ?? []).map((row: any) => rowToPost(row, myL, myR, myB)))
+    setPostsLoading(false)
+  }, [profile.userId, profile.collegeId, profile.classId])
+
+  useEffect(() => { loadPosts(feedTab) }, [feedTab, profile.userId])
+
+  // â”€â”€ Real-time subscription â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  useEffect(() => {
+    if (!profile.userId) return
+    const ch = supabase.channel('forum_feed_realtime')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'sq_posts' }, async (payload: any) => {
+        if (payload.new.reply_to_id) return // ignore replies in main feed
+        // Reload to get joined profile data
+        const { data } = await supabase
+          .from('sq_posts')
+          .select('*, profiles!sq_posts_author_id_fkey(full_name, forum_handle, forum_initials, forum_grad, avatar_url, is_verified, college_id, class_id)')
+          .eq('id', payload.new.id)
+          .single()
+        if (data) {
+          setPosts(prev => {
+            if (prev.some(p => p.id === data.id)) return prev
+            return [rowToPost(data, likedIds.current, repostedIds.current, bookmarkedIds.current), ...prev]
+          })
+        }
+      })
+      .subscribe()
+    return () => { supabase.removeChannel(ch) }
+  }, [profile.userId])
+
+  // â”€â”€ Notification badge â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  useEffect(() => {
+    if (!profile.userId) return
+    const fetchUnread = async () => {
+      const { count } = await supabase.from('sq_notifications')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', profile.userId).eq('read', false)
+      setUnreadCount(count ?? 0)
+    }
+    fetchUnread()
+    const ch = supabase.channel(`notif_badge_${profile.userId}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'sq_notifications', filter: `user_id=eq.${profile.userId}` }, fetchUnread)
+      .subscribe()
+    return () => { supabase.removeChannel(ch) }
+  }, [profile.userId])
+
+  // â”€â”€ Interactions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const { handleBookmark, handleLike, handleNewPost, handleNewReply, handleRepost, handleShare, handleVote } =
+    useForumInteractions({
+      mediaBucket: CT_MEDIA_BUCKET,
+      profile,
+      showToast,
+      setPosts,
+      setThreadPost,
+      likedIds,
+      repostedIds,
+      bookmarkedIds,
+      mapRowToPost: rowToPost,
+    })
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true)
+    await loadPosts(feedTab)
+    setRefreshing(false)
+    showToast('Feed refreshed!')
+  }, [feedTab, loadPosts, showToast])
+
+  const handleOpenThread = useCallback((post: Post) => {
+    setThreadPost(post)
+    if (!post.id.startsWith('temp-') && !post.id.startsWith('seed-')) {
+      void (async () => {
+        try { await supabase.rpc('sq_increment_view', { p_id: post.id }) } catch {}
+      })()
+    }
+  }, [])
+
+  const handleOpenSearch = useCallback((q?: string) => {
+    setSearchQuery(q || '')
+    setShowSearch(true)
+  }, [])
+
+  const handleOpenProfile = useCallback(async (uidOrHandle: string) => {
+    if (!uidOrHandle || uidOrHandle === '@anonymous' || uidOrHandle.startsWith('@user')) return
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(uidOrHandle)
+    if (isUuid) { setProfileUserId(uidOrHandle); return }
+    const handle = uidOrHandle.startsWith('@') ? uidOrHandle.slice(1) : uidOrHandle
+    const { data } = await supabase.from('profiles').select('id').eq('forum_handle', handle).single()
+    if (data?.id) setProfileUserId(data.id)
+  }, [])
+
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Render
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  return (
+    <View style={{ flex: 1, backgroundColor: T.bg }}>
+
+      {/* â”€â”€ Header â”€â”€ */}
+      <View style={[hd.header, { paddingTop: insets.top + 6 }]}>
+        <TouchableOpacity style={hd.iconBtn} onPress={() => router.back()}>
+          <Ionicons name="arrow-back" size={19} color={T.text} />
+        </TouchableOpacity>
+        <View style={hd.brand}>
+          <LinearGradient colors={[T.accent, T.accentGlow]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={hd.brandLogo}>
+            <Text style={hd.brandLogoText}>SQ</Text>
+          </LinearGradient>
+          <View>
+            <Text style={hd.brandName}>StudentSquare</Text>
+            <Text style={hd.brandSub}>FORUM</Text>
+          </View>
+        </View>
+        <View style={{ flexDirection: 'row', gap: 6 }}>
+          <TouchableOpacity style={hd.iconBtn} onPress={() => { setShowNotifs(true); setUnreadCount(0) }}>
+            <Ionicons name="notifications-outline" size={19} color={unreadCount > 0 ? T.accent : T.text} />
+            {unreadCount > 0 && (
+              <View style={hd.badge}>
+                <Text style={hd.badgeText}>{unreadCount > 99 ? '99+' : String(unreadCount)}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity style={hd.iconBtn} onPress={() => handleOpenSearch()}>
+            <Ionicons name="search-outline" size={19} color={T.text} />
+          </TouchableOpacity>
+          <TouchableOpacity style={hd.iconBtn} onPress={() => setShowBookmarks(true)}>
+            <Ionicons name="bookmark-outline" size={19} color={T.text} />
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* â”€â”€ Feed tabs â”€â”€ */}
+      <View style={hd.tabsRow}>
+        {TABS.map(tab => (
+          <TouchableOpacity key={tab.key} style={hd.tab} onPress={() => setFeedTab(tab.key)} activeOpacity={0.8}>
+            <Text style={[hd.tabText, feedTab === tab.key && hd.tabTextActive]}>{tab.label}</Text>
+            {feedTab === tab.key && <View style={hd.tabIndicator} />}
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      {/* â”€â”€ Offline banner â”€â”€ */}
+      {isOffline && (
+        <View style={forumSt.offlineBanner}>
+          <Ionicons name="cloud-offline-outline" size={14} color={T.amber} />
+          <Text style={forumSt.offlineText}>You're offline â€“ showing cached posts</Text>
+        </View>
+      )}
+
+      {/* â”€â”€ Feed â”€â”€ */}
+      <FlatList
+        data={posts}
+        keyExtractor={p => p.id}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}
+        ListHeaderComponent={
+          <InlineComposer
+            onFocus={() => { setReplyTo(null); setShowCompose(true) }}
+            onPost={(text, img) => handleNewPost(text, img)}
+            profile={profile}
+          />
+        }
+        renderItem={({ item }: { item: Post }) => (
+          <PostCard
+            post={item}
+            onLike={handleLike}
+            onRepost={handleRepost}
+            onBookmark={handleBookmark}
+            onReply={p => { setReplyTo(p); setShowCompose(true) }}
+            onShare={handleShare}
+            onOpen={handleOpenThread}
+            onVote={handleVote}
+            onHashtag={handleOpenSearch}
+            onAvatarPress={handleOpenProfile}
+          />
+        )}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={T.accent} />
+        }
+        ListEmptyComponent={
+          postsLoading ? (
+            <View style={{ alignItems: 'center', paddingTop: 60 }}>
+              <ActivityIndicator color={T.accent} size="large" />
+            </View>
+          ) : (
+            <View style={{ alignItems: 'center', paddingTop: 80, gap: 12, paddingHorizontal: 40 }}>
+              <Text style={{ fontSize: 20, fontWeight: '800', color: T.text, textAlign: 'center' }}>
+                {feedTab === 'following' ? 'Your following feed is empty'
+                  : feedTab === 'campus' ? 'No campus posts yet'
+                  : feedTab === 'classes' ? 'No class posts yet'
+                  : 'Nothing here yet'}
+              </Text>
+              <Text style={{ color: T.muted, fontSize: 14, textAlign: 'center', lineHeight: 22 }}>
+                {feedTab === 'following' ? 'Follow people to see their posts here.'
+                  : feedTab === 'campus' ? (profile.collegeId ? 'Be the first from your campus to post!' : 'Your college is not set in your profile.')
+                  : feedTab === 'classes' ? (profile.classId ? 'Be the first from your class to post!' : 'Your class is not set in your profile.')
+                  : 'Be the first to post!'}
+              </Text>
+            </View>
+          )
+        }
+      />
+
+      {/* â”€â”€ FAB â”€â”€ */}
+      <TouchableOpacity
+        style={[fab.btn, { bottom: insets.bottom + 24 }]}
+        onPress={() => { setReplyTo(null); setShowCompose(true) }}
+        activeOpacity={0.85}
+      >
+        <LinearGradient colors={[T.accent, '#0d8bd9']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={fab.gradient}>
+          <Ionicons name="create-outline" size={24} color="#fff" />
+        </LinearGradient>
+      </TouchableOpacity>
+
+      {/* â”€â”€ Modals â”€â”€ */}
+      <SearchModal
+        visible={showSearch}
+        onClose={() => setShowSearch(false)}
+        initialQuery={searchQuery}
+        currentUserId={profile.userId}
+      />
+      <BookmarksModal
+        visible={showBookmarks}
+        onClose={() => setShowBookmarks(false)}
+        userId={profile.userId}
+        mapRowToPost={rowToPost}
+        renderPost={item => (
+          <PostCard
+            post={item}
+            onLike={handleLike} onRepost={handleRepost} onBookmark={handleBookmark}
+            onReply={() => {}} onShare={handleShare} onOpen={handleOpenThread}
+            onVote={handleVote} onHashtag={handleOpenSearch} onAvatarPress={handleOpenProfile}
+          />
+        )}
+      />
+      <NotificationsModal
+        visible={showNotifs}
+        onClose={() => setShowNotifs(false)}
+        userId={profile.userId}
+        mapNotifRow={rowToNotif}
+      />
+      <ComposeModal
+        visible={showCompose}
+        onClose={() => { setShowCompose(false); setReplyTo(null) }}
+        onPost={(text, img, pollOpts, isAnon) => {
+          handleNewPost(text, img, pollOpts, replyTo?.id, isAnon)
+          setReplyTo(null)
+        }}
+        replyTo={replyTo}
+        profile={profile}
+      />
+      <ThreadModal
+        post={threadPost}
+        visible={!!threadPost}
+        onClose={() => setThreadPost(null)}
+        onLike={handleLike}
+        onRepost={handleRepost}
+        onBookmark={handleBookmark}
+        onShare={handleShare}
+        profile={profile}
+        onNewReply={handleNewReply}
+      />
+      <Toast message={toastMsg} visible={toastVis} />
+    </View>
+  )
+}
+
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Styles
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const forumSt = StyleSheet.create({
+  offlineBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: 'rgba(255,212,0,0.1)', paddingVertical: 8, paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: '#2f3336' },
+  offlineText:   { fontSize: 12, fontWeight: '600', color: '#ffd400' },
+})
+
+const s = StyleSheet.create({
+  divider:         { height: 1, backgroundColor: '#2f3336' },
+  repostLabel:     { paddingLeft: 62, paddingTop: 10, paddingBottom: 2, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  repostLabelText: { fontSize: 13, color: '#00ba7c', fontWeight: '600' },
+  post:            { flexDirection: 'row', paddingVertical: 14, paddingRight: 16, backgroundColor: '#000' },
+  postLeft:        { alignItems: 'center', marginRight: 12, marginLeft: 14 },
+  threadLine:      { width: 1.5, flex: 1, backgroundColor: '#3e4144', marginTop: 5, borderRadius: 1, minHeight: 20 },
+  postBody:        { flex: 1, minWidth: 0 },
+  postHeader:      { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 6, gap: 4 },
+  postName:        { fontSize: 14, fontWeight: '800', color: '#e7e9ea' },
+  postHandle:      { fontSize: 13, color: '#71767b' },
+  postDot:         { fontSize: 12, color: '#71767b' },
+  postTime:        { fontSize: 13, color: '#71767b' },
+  postText:        { fontSize: 15, lineHeight: 24, color: '#e7e9ea', marginBottom: 10 },
+  postImageWrap:   { borderRadius: 14, overflow: 'hidden', marginBottom: 10, borderWidth: 1, borderColor: '#2f3336' },
+  postImage:       { width: '100%', aspectRatio: 16 / 9 },
+  postActions:     { flexDirection: 'row', alignItems: 'center', marginLeft: -10, marginTop: 4 },
+  action:          { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 7, paddingHorizontal: 10, borderRadius: 50 },
+  actionIcon:      { fontSize: 17 },
+  actionCount:     { fontSize: 13, fontWeight: '600' },
+  // Poll
+  poll:            { marginBottom: 10, gap: 7 },
+  pollOption:      { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#3e4144', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14, overflow: 'hidden', position: 'relative' },
+  pollOptionWinning:{ borderColor: '#1DA1F2' },
+  pollBar:         { position: 'absolute', left: 0, top: 0, bottom: 0, borderRadius: 10 },
+  pollLabel:       { fontSize: 14, fontWeight: '500', color: '#e7e9ea', flex: 1, zIndex: 1 },
+  pollPct:         { fontSize: 14, fontWeight: '700', color: '#71767b', zIndex: 1 },
+  pollMeta:        { fontSize: 13, color: '#71767b', marginTop: 4 },
+})
+
+const hd = StyleSheet.create({
+  header:        { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: '#2f3336', backgroundColor: 'rgba(0,0,0,0.95)', gap: 10 },
+  brand:         { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
+  brandLogo:     { width: 36, height: 36, borderRadius: 11, justifyContent: 'center', alignItems: 'center' },
+  brandLogoText: { fontSize: 12, fontWeight: '900', color: '#fff', letterSpacing: -0.5 },
+  brandName:     { fontSize: 15, fontWeight: '800', color: '#e7e9ea', letterSpacing: -0.3 },
+  brandSub:      { fontSize: 8.5, fontWeight: '700', color: '#71767b', letterSpacing: 1.5 },
+  iconBtn:       { width: 36, height: 36, borderRadius: 12, backgroundColor: '#16181c', borderWidth: 1, borderColor: '#2f3336', justifyContent: 'center', alignItems: 'center' },
+  badge:         { position: 'absolute', top: -4, right: -4, minWidth: 18, height: 18, borderRadius: 9, backgroundColor: '#1DA1F2', borderWidth: 2, borderColor: '#000', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 3 },
+  badgeText:     { fontSize: 9, fontWeight: '900', color: '#fff' },
+  tabsRow:       { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: '#2f3336', backgroundColor: 'rgba(0,0,0,0.92)' },
+  tab:           { flex: 1, alignItems: 'center', paddingVertical: 14, position: 'relative' },
+  tabText:       { fontSize: 13, fontWeight: '600', color: '#71767b', letterSpacing: 0.3 },
+  tabTextActive: { color: '#e7e9ea', fontWeight: '800' },
+  tabIndicator:  { position: 'absolute', bottom: 0, height: 2.5, width: 32, borderRadius: 2, backgroundColor: '#1DA1F2' },
+})
+
+const ic = StyleSheet.create({
+  composer: { flexDirection: 'row', gap: 12, padding: 16, borderBottomWidth: 1, borderBottomColor: '#2f3336', backgroundColor: '#000' },
+  body:     { flex: 1, minWidth: 0 },
+  input:    { fontSize: 17, color: '#e7e9ea', lineHeight: 26, minHeight: 56, paddingTop: 0 },
+  imgRemove:{ position: 'absolute', top: 6, right: 6, width: 24, height: 24, borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center' },
+  actions:  { flexDirection: 'row', alignItems: 'center', gap: 4, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#2f3336', marginTop: 8 },
+  toolBtn:  { padding: 6, borderRadius: 50 },
+  charCount:{ marginLeft: 'auto' as any, fontSize: 13, fontWeight: '600', color: '#71767b' },
+  sendBtn:  { backgroundColor: '#1DA1F2', borderRadius: 100, paddingHorizontal: 18, paddingVertical: 8, marginLeft: 6 },
+  sendBtnText:{ fontSize: 14, fontWeight: '800', color: '#fff' },
+})
+
+const fab = StyleSheet.create({
+  btn:      { position: 'absolute', right: 22, zIndex: 200, shadowColor: '#1DA1F2', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.45, shadowRadius: 14, elevation: 12 },
+  gradient: { width: 58, height: 58, borderRadius: 29, justifyContent: 'center', alignItems: 'center' },
+})

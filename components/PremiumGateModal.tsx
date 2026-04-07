@@ -25,7 +25,7 @@ import {
   View,
 } from 'react-native'
 import { useEffect, useRef } from 'react'
-import { FREE_LIMIT } from '../hooks/usePremiumGuard'
+import { FREE_LIMIT } from '../src/hooks/usePremiumGuard'
 
 // ── Design tokens (match study-planner palette) ──────────────────────────
 const C = {

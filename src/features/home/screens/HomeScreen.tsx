@@ -1,5 +1,5 @@
 /**
- * app/(tabs)/index.tsx
+ * app/(tabs)
  * Home Screen — Production-ready
  *
  * Fix 3: Scroll jank — orbs moved to hero, removeClippedSubviews removed,

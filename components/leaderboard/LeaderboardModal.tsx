@@ -1,7 +1,7 @@
 /**
- * LeaderboardModal — updated for index.tsx
+ * LeaderboardModal — updated for app/(tabs)
  *
- * DROP-IN REPLACEMENT for the LeaderboardModal in app/(tabs)/index.tsx.
+ * DROP-IN REPLACEMENT for the LeaderboardModal in app/(tabs).
  * Uses the same shared components as app/leaderboard.tsx so both surfaces
  * always look identical.
  *
@@ -27,19 +27,20 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
-import { C } from '../../lib/colors'
+import { C } from '../../src/lib/colors'
 import {
   fetchCollegeLeaderboard,
   fetchCollegesLeaderboard,
   fetchGlobalLeaderboard,
   type LeaderboardEntry,
   type LeaderPeriod,
-} from '../../lib/leaderboard'
+} from '../../src/lib/leaderboard'
 
 import { CollegeRankRow } from './CollegeRankRow'
 import { MyPositionCard } from './MyPositionCard'
@@ -60,20 +61,30 @@ export function LeaderboardModal({ visible, onClose, userId, collegeId, collegeN
   const [tab,    setTab]    = useState<LeaderTab>('all_campus')
   const [period, setPeriod] = useState<LeaderPeriod>('weekly')
   const [myCollegeOnly, setMyCollegeOnly] = useState(false)
+  const [searchText, setSearchText] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+  const [isSearching, setIsSearching] = useState(false)
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(searchText)
+    }, 400)
+    return () => clearTimeout(handler)
+  }, [searchText])
 
   const resolvedPeriod: LeaderPeriod = tab === 'weekly_gainers' ? 'weekly' : period
 
   // ── Queries ──────────────────────────────────────────────────────────────
   const { data: globalBoard = [], isLoading: loadingGlobal } = useQuery({
-    queryKey: ['leaderboard_global', resolvedPeriod],
-    queryFn: () => fetchGlobalLeaderboard(resolvedPeriod),
+    queryKey: ['leaderboard_global', resolvedPeriod, debouncedSearch, tab === 'weekly_gainers'],
+    queryFn: () => fetchGlobalLeaderboard(resolvedPeriod, debouncedSearch, tab === 'weekly_gainers'),
     enabled: visible && (tab === 'all_campus' || tab === 'weekly_gainers'),
     staleTime: 5 * 60 * 1000,
   })
 
   const { data: collegeBoard = [], isLoading: loadingCollege } = useQuery({
-    queryKey: ['leaderboard_college', collegeId, resolvedPeriod],
-    queryFn: () => fetchCollegeLeaderboard(collegeId, resolvedPeriod),
+    queryKey: ['leaderboard_college', collegeId, resolvedPeriod, debouncedSearch],
+    queryFn: () => fetchCollegeLeaderboard(collegeId, resolvedPeriod, debouncedSearch),
     enabled: visible && tab === 'all_campus' && myCollegeOnly && !!collegeId,
     staleTime: 5 * 60 * 1000,
   })
@@ -104,206 +115,199 @@ export function LeaderboardModal({ visible, onClose, userId, collegeId, collegeN
   const restEntries   = activeBoard.slice(3)
   const myEntry       = activeBoard.find(e => e.id === userId)
   const topEntry      = activeBoard[0]
-  const nextEntry     = myEntry ? activeBoard[myEntry.rank - 2] : undefined
+  const nextEntry     = myEntry ? activeBoard.find(e => e.rank === myEntry.rank - 1) : undefined
   const topCollegeAvg = collegesBoard[0]?.avg_score ?? 1
   const showCollege   = tab === 'all_campus' && !myCollegeOnly
   const showPeriod    = tab !== 'weekly_gainers'
 
   const scopeLabel =
-    tab === 'weekly_gainers' ? 'Weekly Campus Rank'
+    tab === 'weekly_gainers' ? 'Weekly Ranking'
     : myCollegeOnly          ? 'College Rank'
     : 'Global Rank'
 
   return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      transparent
-      presentationStyle="overFullScreen"
-    >
+    <Modal visible={visible} animationType="slide" transparent presentationStyle="overFullScreen">
       <View style={m.overlay}>
-        <View style={{ flex: 1, justifyContent: 'flex-end' }}>
-          <View style={[m.sheet, { maxHeight: '94%' }]}>
+        <TouchableOpacity style={m.dismiss} activeOpacity={1} onPress={onClose} />
+        
+        <View style={m.sheet}>
+          <View style={m.handleRow}>
+            <View style={m.handle} />
+          </View>
 
-            {/* Handle */}
-            <View style={m.handleRow}><View style={m.handle} /></View>
+          <View style={m.header}>
+            <TouchableOpacity style={m.closeBtn} onPress={() => {
+              if (isSearching) {
+                setIsSearching(false)
+                setSearchText('')
+              } else {
+                onClose()
+              }
+            }}>
+              <Ionicons name={isSearching ? "close" : "chevron-down"} size={20} color={C.text} />
+            </TouchableOpacity>
 
-            {/* Modal header row */}
-            <View style={m.headerRow}>
-              <View style={{ flex: 1 }}>
-                <Text maxFontSizeMultiplier={1.2} style={m.title}>Leaderboard</Text>
-              </View>
-              <TouchableOpacity style={m.closeBtn} onPress={onClose}>
-                <Ionicons name="close" size={18} color={C.textSub} />
-              </TouchableOpacity>
+            <View style={{ flex: 1, marginHorizontal: 12 }}>
+              {isSearching ? (
+                <TextInput
+                  autoFocus
+                  placeholder="Search students..."
+                  placeholderTextColor={C.textMute}
+                  style={m.searchInput}
+                  value={searchText}
+                  onChangeText={setSearchText}
+                />
+              ) : (
+                <Text maxFontSizeMultiplier={1.2} style={m.title}>Community Leaderboard</Text>
+              )}
             </View>
 
-            {/* Tabs */}
-            <TabBar
-              active={tab}
-              onChange={t => {
-                setTab(t)
-                if (t !== 'all_campus') setMyCollegeOnly(false)
-              }}
-            />
-
-            {/* Scrollable content */}
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={{ paddingBottom: 32 }}
+            <TouchableOpacity 
+              style={[m.closeBtn, isSearching && { borderColor: C.orange }]} 
+              onPress={() => setIsSearching(!isSearching)}
             >
-              {/* Period picker */}
-              {showPeriod && (
+              <Ionicons name="search" size={18} color={isSearching ? C.orange : C.textSub} />
+            </TouchableOpacity>
+          </View>
+
+          <TabBar
+            active={tab}
+            onChange={t => {
+              setTab(t)
+              if (t !== 'all_campus') setMyCollegeOnly(false)
+            }}
+          />
+
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+            {showPeriod && (
+              <View style={m.pickerBox}>
                 <PeriodPicker active={period} onChange={setPeriod} />
-              )}
+              </View>
+            )}
 
-              {/* My College filter chip */}
-              {tab === 'all_campus' && (
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={m.filterRow}
+            {tab === 'all_campus' && (
+              <View style={m.filterRow}>
+                <TouchableOpacity
+                  style={[m.filterChip, myCollegeOnly && m.filterChipActive]}
+                  onPress={() => setMyCollegeOnly(!myCollegeOnly)}
+                  activeOpacity={0.8}
                 >
-                  <TouchableOpacity
-                    style={[m.filterChip, myCollegeOnly && m.filterChipActive]}
-                    onPress={() => setMyCollegeOnly(p => !p)}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={[m.filterChipText, myCollegeOnly && m.filterChipTextActive]}>
-                      🏛 My College
-                    </Text>
-                  </TouchableOpacity>
-                </ScrollView>
-              )}
+                  <Ionicons name="school" size={14} color={myCollegeOnly ? '#FFF' : C.textSub} />
+                  <Text style={[m.filterChipText, myCollegeOnly && m.filterChipTextActive]}>My College</Text>
+                </TouchableOpacity>
+              </View>
+            )}
 
-              {isLoading ? (
-                <View style={m.loadingBox}>
-                  <ActivityIndicator color={C.orange} />
-                </View>
+            {isLoading ? (
+              <View style={m.loadingBox}>
+                <ActivityIndicator color={C.orange} size="large" />
+                <Text style={m.loadingText}>Loading Rankings...</Text>
+              </View>
 
-              ) : tab === 'colleges' ? (
-                /* Colleges board */
-                <View style={m.listCard}>
-                  {collegesBoard.length === 0 ? (
-                    <ModalEmpty icon="school-outline" label="No college data yet" />
-                  ) : (
-                    collegesBoard.map((entry, i) => (
+            ) : tab === 'colleges' ? (
+              <View style={m.section}>
+                {collegesBoard.length > 0 ? (
+                  <View style={m.listCard}>
+                    {collegesBoard.map((entry, i) => (
                       <View key={entry.id}>
-                        <CollegeRankRow
-                          entry={entry}
-                          isMyCollege={entry.id === collegeId}
-                          topAvg={topCollegeAvg}
-                        />
+                        <CollegeRankRow entry={entry} isMyCollege={entry.id === collegeId} topAvg={topCollegeAvg} />
                         {i < collegesBoard.length - 1 && <View style={m.divider} />}
                       </View>
-                    ))
-                  )}
+                    ))}
+                  </View>
+                ) : (
+                  <ModalEmpty icon="school-outline" label="No college data yet" />
+                )}
+              </View>
+
+            ) : activeBoard.length > 0 ? (
+              <View style={m.section}>
+                {myEntry && (
+                  <MyPositionCard
+                    rank={myEntry.rank}
+                    totalRanked={activeBoard.length}
+                    score={myEntry.score}
+                    nextRankScore={nextEntry?.score}
+                    scopeLabel={scopeLabel}
+                  />
+                )}
+
+                {podiumEntries.length >= 2 && (
+                  <PodiumSection entries={podiumEntries} showCollege={showCollege} />
+                )}
+
+                <View style={m.sectionLabelRow}>
+                  <Text style={m.sectionLabel}>TOP CONTRIBUTORS</Text>
                 </View>
 
-              ) : activeBoard.length === 0 ? (
-                <ModalEmpty icon="trophy-outline" label="No data yet" />
-
-              ) : (
-                /* Users board */
-                <>
-                  {myEntry && (
-                    <View style={{ marginTop: 12 }}>
-                      <MyPositionCard
-                        rank={myEntry.rank}
-                        totalRanked={activeBoard.length}
-                        score={myEntry.score}
-                        nextRankScore={nextEntry?.score}
-                        scopeLabel={scopeLabel}
-                        userName={myEntry.full_name}
-                        showShare={false}
-                      />
+                <View style={m.listCard}>
+                  {restEntries.map((entry, i) => (
+                    <View key={entry.id}>
+                      <RankRow entry={entry} isMe={entry.id === userId} topScore={topEntry?.score ?? 1} showCollege={showCollege} />
+                      {i < restEntries.length - 1 && <View style={m.divider} />}
                     </View>
+                  ))}
+                  {myEntry && myEntry.rank > restEntries.length + 3 && (
+                    <>
+                      <View style={m.ellipsisRow}><Text style={m.ellipsisText}>•••</Text></View>
+                      <View style={m.divider} />
+                      <RankRow entry={myEntry} isMe topScore={topEntry?.score ?? 1} showCollege={showCollege} />
+                    </>
                   )}
-
-                  {podiumEntries.length >= 2 && (
-                    <View style={{ marginTop: 12 }}>
-                      <PodiumSection entries={podiumEntries} showCollege={showCollege} />
-                    </View>
-                  )}
-
-                  <View style={m.sectionLabelRow}>
-                    <Text maxFontSizeMultiplier={1.2} style={m.sectionLabel}>
-                      {tab === 'weekly_gainers' ? 'Weekly Rankings' : 'Global Standings'}
-                    </Text>
-                  </View>
-
-                  <View style={m.listCard}>
-                    {restEntries.map((entry, i) => (
-                      <View key={entry.id}>
-                        <RankRow
-                          entry={entry}
-                          isMe={entry.id === userId}
-                          topScore={topEntry?.score ?? 1}
-                          showCollege={showCollege}
-                        />
-                        {i < restEntries.length - 1 && <View style={m.divider} />}
-                      </View>
-                    ))}
-
-                    {myEntry && myEntry.rank > restEntries.length + 3 && (
-                      <>
-                        <View style={m.ellipsisRow}>
-                          <Text allowFontScaling={false} style={m.ellipsisText}>• • •</Text>
-                        </View>
-                        <View style={m.divider} />
-                        <RankRow
-                          entry={myEntry}
-                          isMe
-                          topScore={topEntry?.score ?? 1}
-                          showCollege={showCollege}
-                        />
-                      </>
-                    )}
-                  </View>
-                </>
-              )}
-            </ScrollView>
-          </View>
+                </View>
+              </View>
+            ) : (
+              <ModalEmpty icon="trophy-outline" label="No data yet" />
+            )}
+          </ScrollView>
         </View>
       </View>
     </Modal>
   )
 }
 
-function ModalEmpty({ icon, label }: { icon: React.ComponentProps<typeof Ionicons>['name']; label: string }) {
+function ModalEmpty({ icon, label }: { icon: any; label: string }) {
   return (
     <View style={m.emptyBox}>
-      <Ionicons name={icon} size={28} color={C.textMute} />
-      <Text maxFontSizeMultiplier={1.2} style={m.emptyText}>{label}</Text>
+      <View style={m.emptyIconBox}>
+        <Ionicons name={icon} size={32} color={C.textMute} />
+      </View>
+      <Text style={m.emptyText}>{label}</Text>
     </View>
   )
 }
 
 const m = StyleSheet.create({
-  overlay:      { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)' },
-  sheet:        { backgroundColor: C.surface, borderTopLeftRadius: 32, borderTopRightRadius: 32, overflow: 'hidden' },
-  handleRow:    { alignItems: 'center', paddingTop: 12, paddingBottom: 4 },
-  handle:       { width: 40, height: 4, borderRadius: 2, backgroundColor: C.border },
-  headerRow:    { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingBottom: 12 },
-  title:        { fontSize: 20, fontWeight: '800', color: C.text, letterSpacing: -0.4 },
-  closeBtn:     { width: 32, height: 32, borderRadius: 10, backgroundColor: C.raised, justifyContent: 'center', alignItems: 'center' },
+  overlay:      { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+  dismiss:      { ...StyleSheet.absoluteFillObject },
+  sheet:        { backgroundColor: C.void, borderTopLeftRadius: 36, borderTopRightRadius: 36, maxHeight: '92%', overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: -10 }, shadowOpacity: 0.2, shadowRadius: 20, elevation: 20 },
+  handleRow:    { alignItems: 'center', paddingVertical: 12 },
+  handle:       { width: 44, height: 5, borderRadius: 2.5, backgroundColor: C.border },
+  
+  header:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 16 },
+  title:        { fontSize: 20, fontWeight: '900', color: C.text, letterSpacing: -0.5 },
+  searchInput:  { flex: 1, fontSize: 16, fontWeight: '600', color: C.text, padding: 0 },
+  closeBtn:     { width: 36, height: 36, borderRadius: 12, backgroundColor: C.surface, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: C.border },
 
-  filterRow:    { paddingHorizontal: 16, paddingBottom: 4, paddingTop: 2, gap: 8, flexDirection: 'row' },
-  filterChip:   { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 100, borderWidth: 1, borderColor: C.border },
-  filterChipActive:    { backgroundColor: C.orangeDim, borderColor: C.orange + '50' },
-  filterChipText:      { fontSize: 12, fontWeight: '600', color: C.textSub },
-  filterChipTextActive:{ color: C.orange },
+  pickerBox:    { paddingHorizontal: 16, marginTop: 8 },
+  filterRow:    { flexDirection: 'row', paddingHorizontal: 16, paddingVertical: 12 },
+  filterChip:   { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 14, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border },
+  filterChipActive: { backgroundColor: C.orange, borderColor: C.orange },
+  filterChipText: { fontSize: 13, fontWeight: '700', color: C.textSub },
+  filterChipTextActive: { color: '#FFF' },
 
-  sectionLabelRow:{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 10 },
-  sectionLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 2.5, color: C.textMute, textTransform: 'uppercase' },
+  section:      { paddingHorizontal: 0 },
+  sectionLabelRow: { paddingHorizontal: 20, marginVertical: 12 },
+  sectionLabel: { fontSize: 11, fontWeight: '900', color: C.textMute, letterSpacing: 1 },
 
-  listCard:     { marginHorizontal: 16, backgroundColor: C.raised, borderWidth: 1, borderColor: C.border, borderRadius: 20, overflow: 'hidden', marginBottom: 12 },
-  divider:      { height: 1, backgroundColor: C.border, marginHorizontal: 16, opacity: 0.6 },
+  listCard:     { marginHorizontal: 16, backgroundColor: C.surface, borderRadius: 24, borderWidth: 1, borderColor: C.border, overflow: 'hidden', marginBottom: 20 },
+  divider:      { height: 1, backgroundColor: C.border, opacity: 0.5 },
+  ellipsisRow:  { paddingVertical: 12, alignItems: 'center' },
+  ellipsisText: { color: C.textMute, letterSpacing: 3 },
 
-  ellipsisRow:  { paddingVertical: 10, alignItems: 'center' },
-  ellipsisText: { fontSize: 12, color: C.textMute, letterSpacing: 4 },
-
-  loadingBox:   { paddingVertical: 60, alignItems: 'center' },
-  emptyBox:     { paddingVertical: 40, alignItems: 'center', gap: 10 },
-  emptyText:    { fontSize: 13, color: C.textMute },
+  loadingBox:   { paddingVertical: 100, alignItems: 'center', gap: 12 },
+  loadingText:  { color: C.textMute, fontWeight: '600' },
+  emptyBox:     { paddingVertical: 80, alignItems: 'center', gap: 16 },
+  emptyIconBox: { width: 72, height: 72, borderRadius: 24, backgroundColor: C.surface, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: C.border },
+  emptyText:    { fontSize: 15, color: C.textMute, fontWeight: '600' },
 })

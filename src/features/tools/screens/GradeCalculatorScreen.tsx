@@ -141,6 +141,44 @@ const NJALA_CLASSES: DegreeClass[] = [
   { label: 'Fail',                     short: 'Fail', minGpa: 0.00, color: C.coral    },
 ]
 
+// ── Nigeria — NUC 5.0 Scale ──────────────────────────────────────────────────
+const NIGERIA_SCALE: GradeRow[] = [
+  { minPct: 70, maxPct: 100, letter: 'A',  points: 5.00, remark: 'Excellent',    passes: true  },
+  { minPct: 60, maxPct: 69,  letter: 'B',  points: 4.00, remark: 'Very Good',    passes: true  },
+  { minPct: 50, maxPct: 59,  letter: 'C',  points: 3.00, remark: 'Good',         passes: true  },
+  { minPct: 45, maxPct: 49,  letter: 'D',  points: 2.00, remark: 'Average',      passes: true  },
+  { minPct: 40, maxPct: 44,  letter: 'E',  points: 1.00, remark: 'Pass',         passes: true  },
+  { minPct: 0,  maxPct: 39,  letter: 'F',  points: 0.00, remark: 'Fail',         passes: false },
+]
+const NIGERIA_CLASSES: DegreeClass[] = [
+  { label: 'First Class Honours',        short: '1st',  minGpa: 4.50, color: C.emerald  },
+  { label: 'Second Class Upper (2:1)',    short: '2:1',  minGpa: 3.50, color: C.sapphire },
+  { label: 'Second Class Lower (2:2)',    short: '2:2',  minGpa: 2.40, color: C.gold     },
+  { label: 'Third Class honours',         short: '3rd',  minGpa: 1.50, color: C.orange   },
+  { label: 'Pass',                        short: 'Pass', minGpa: 1.00, color: C.textSub  },
+  { label: 'Fail',                        short: 'Fail', minGpa: 0.00, color: C.coral    },
+]
+
+// ── Ghana — University of Ghana (UG) 4.0 Scale ───────────────────────────────
+const GHANA_SCALE: GradeRow[] = [
+  { minPct: 80, maxPct: 100, letter: 'A',  points: 4.00, remark: 'Excellent',    passes: true  },
+  { minPct: 75, maxPct: 79,  letter: 'B+', points: 3.50, remark: 'Very Good',    passes: true  },
+  { minPct: 70, maxPct: 74,  letter: 'B',  points: 3.00, remark: 'Good',         passes: true  },
+  { minPct: 65, maxPct: 69,  letter: 'C+', points: 2.50, remark: 'Average',      passes: true  },
+  { minPct: 60, maxPct: 64,  letter: 'C',  points: 2.00, remark: 'Average',      passes: true  },
+  { minPct: 55, maxPct: 59,  letter: 'D+', points: 1.50, remark: 'Fair',         passes: true  },
+  { minPct: 50, maxPct: 54,  letter: 'D',  points: 1.00, remark: 'Barely Pass',  passes: true  },
+  { minPct: 45, maxPct: 49,  letter: 'E',  points: 0.50, remark: 'Fail',         passes: false },
+  { minPct: 0,  maxPct: 44,  letter: 'F',  points: 0.00, remark: 'Fail',         passes: false },
+]
+const GHANA_CLASSES: DegreeClass[] = [
+  { label: 'First Class Honours',        short: '1st',  minGpa: 3.60, color: C.emerald  },
+  { label: 'Second Class Upper (2:1)',    short: '2:1',  minGpa: 3.00, color: C.sapphire },
+  { label: 'Second Class Lower (2:2)',    short: '2:2',  minGpa: 2.00, color: C.gold     },
+  { label: 'Third Class Honours',         short: '3rd',  minGpa: 1.00, color: C.orange   },
+  { label: 'Fail',                        short: 'Fail', minGpa: 0.00, color: C.coral    },
+]
+
 // ── EBKUST — Ernest Bai Koroma University of Science and Technology ───────────
 // Uses a 5.0 scale confirmed from EBKUST's own postgraduate admissions page:
 // "minimum of 3.50 CGPA on a 5 point scale". Percentage bands follow the
@@ -216,29 +254,39 @@ const MMTU_CLASSES: DegreeClass[] = [
 
 const GRADING_SYSTEMS: GradingSystem[] = [
   {
-    id: 'usl', name: 'University of Sierra Leone', shortName: 'USL / COMAHS',
+    id: 'usl', name: '🇸🇱 Sierra Leone (USL / COMAHS)', shortName: 'USL / COMAHS',
     maxPoints: 4.0, scale: USL_SCALE, classes: USL_CLASSES, passGrade: 'C+',
     description: 'FBC, COMAHS, IPAM. A ≥ 70%, pass at C+ (50%). 4.0 scale.',
   },
   {
-    id: 'njala', name: 'Njala University', shortName: 'Njala',
+    id: 'njala', name: '🇸🇱 Sierra Leone (Njala)', shortName: 'Njala',
     maxPoints: 4.0, scale: NJALA_SCALE, classes: NJALA_CLASSES, passGrade: 'C',
     description: 'Njala & Bo campuses. A ≥ 75%, pass at C (50%). 4.0 scale.',
   },
   {
-    id: 'ebkust', name: 'Ernest Bai Koroma University (EBKUST)', shortName: 'EBKUST',
+    id: 'ebkust', name: '🇸🇱 Sierra Leone (EBKUST)', shortName: 'EBKUST',
     maxPoints: 5.0, scale: EBKUST_SCALE, classes: EBKUST_CLASSES, passGrade: 'C',
     description: 'Magburaka / Makeni / Portloko campuses. A ≥ 70%, 5.0 scale. PhD requires ≥ 3.50 CGPA.',
   },
   {
-    id: 'unimak', name: 'University of Makeni (UNIMAK)', shortName: 'UNIMAK',
+    id: 'unimak', name: '🇸🇱 Sierra Leone (UNIMAK)', shortName: 'UNIMAK',
     maxPoints: 4.0, scale: UNIMAK_SCALE, classes: UNIMAK_CLASSES, passGrade: 'C',
     description: 'First private Catholic university in SL. A ≥ 70%, pass at C (50%). 4.0 scale.',
   },
   {
-    id: 'mmtu', name: 'Milton Margai Technical University', shortName: 'MMTU',
+    id: 'mmtu', name: '🇸🇱 Sierra Leone (MMTU)', shortName: 'MMTU',
     maxPoints: 4.0, scale: MMTU_SCALE, classes: MMTU_CLASSES, passGrade: 'C+',
     description: 'Freetown. Teacher education & technical programmes. A ≥ 70%, pass at C+ (50%). 4.0 scale.',
+  },
+  {
+    id: 'nigeria', name: '🇳🇬 Nigeria (NUC Standard)', shortName: 'Nigeria',
+    maxPoints: 5.0, scale: NIGERIA_SCALE, classes: NIGERIA_CLASSES, passGrade: 'E',
+    description: 'National Universities Commission standard scale. A ≥ 70%, 5.0 scale. Pass mark 40%.',
+  },
+  {
+    id: 'ghana', name: '🇬🇭 Ghana (UG Standard)', shortName: 'Ghana',
+    maxPoints: 4.0, scale: GHANA_SCALE, classes: GHANA_CLASSES, passGrade: 'D',
+    description: 'University of Ghana (UG) & traditional scale. A ≥ 80%, pass at D (50%). 4.0 scale.',
   },
 ]
 
@@ -670,7 +718,7 @@ const sc = StyleSheet.create({
 // Premium Paywall Gate
 // ─────────────────────────────────────────────────────────────────────────────
 const FEATURES = [
-  { emoji: '🏛', label: 'All 5 Sierra Leone university scales', sub: 'USL, Njala, EBKUST, UNIMAK, MMTU' },
+  { emoji: '🏛', label: 'West African University Scales', sub: 'Sierra Leone, Nigeria (NUC), Ghana (UG)' },
   { emoji: '📊', label: 'Weighted CGPA across all semesters',   sub: 'Multi-semester cumulative tracking'  },
   { emoji: '🎓', label: 'Degree class classification',          sub: '1st, 2:1, 2:2, 3rd, Pass — live'    },
   { emoji: '🎯', label: 'Target CGPA goal tracker',             sub: 'Progress bar + pts-to-goal display'  },
@@ -730,7 +778,7 @@ function PremiumPaywall({ onBack }: { onBack: () => void }) {
 
           <Text maxFontSizeMultiplier={1.3} style={pw.heroTitle}>Grade Calculator</Text>
           <Text maxFontSizeMultiplier={1.3} style={pw.heroSub}>
-            Track your CGPA across all Sierra Leonean universities. Know your degree class in real time.
+            Track your CGPA across West African universities. Know your degree class in real time.
           </Text>
 
           {/* Premium pill */}
@@ -875,12 +923,6 @@ export default function GradeCalculatorScreen() {
 
   const { isPremium, isPremiumReady } = usePremiumGuard()
 
-  // ── DEV ONLY: set this to true to preview the paywall while logged in as
-  //    a premium account. Flip back to false before committing.
-  const DEV_FORCE_PAYWALL = __DEV__ && false
-
-  const effectiveIsPremium = DEV_FORCE_PAYWALL ? false : isPremium
-
   const [loading,       setLoading]       = useState(true)
   const [semesters,     setSemesters]     = useState<Semester[]>([])
   const [activeSemId,   setActiveSemId]   = useState('')
@@ -888,6 +930,8 @@ export default function GradeCalculatorScreen() {
   const [systemId,      setSystemId]      = useState('usl')
   const [showPicker,    setShowPicker]    = useState(false)
   const [editingTarget, setEditingTarget] = useState(false)
+  const [renamingId,    setRenamingId]    = useState<string | null>(null)
+  const [renameText,    setRenameText]    = useState('')
   const targetRef = useRef<TextInput>(null)
 
   const sys = useMemo(() => GRADING_SYSTEMS.find(s => s.id === systemId) ?? GRADING_SYSTEMS[0], [systemId])
@@ -974,15 +1018,9 @@ export default function GradeCalculatorScreen() {
   const renameSemester = useCallback((id: string) => {
     const sem = semesters.find(s => s.id === id)
     if (!sem) return
-    if (Platform.OS === 'ios') {
-      Alert.prompt('Rename', '', text => { if (text?.trim()) setSemesters(prev => prev.map(s => s.id !== id ? s : { ...s, label: text.trim() })) }, 'plain-text', sem.label)
-    } else {
-      Alert.alert(sem.label, 'What would you like to do?', [
-        { text: 'Delete', style: 'destructive', onPress: () => deleteSemester(id) },
-        { text: 'Cancel', style: 'cancel' },
-      ])
-    }
-  }, [semesters, deleteSemester])
+    setRenameText(sem.label)
+    setRenamingId(id)
+  }, [semesters])
 
   const clearAll = () => {
     Alert.alert('Clear all data?', 'All semesters and grades will be reset.', [
@@ -1005,7 +1043,7 @@ export default function GradeCalculatorScreen() {
   }
 
   // 2. Premium status resolved — not premium → paywall
-  if (!effectiveIsPremium) {
+  if (!isPremium) {
     return <PremiumPaywall onBack={() => router.back()} />
   }
 
@@ -1207,9 +1245,57 @@ export default function GradeCalculatorScreen() {
       </KeyboardAvoidingView>
 
       <SystemPickerModal visible={showPicker} current={systemId} onSelect={setSystemId} onClose={() => setShowPicker(false)} />
+
+      {/* Rename Modal (Cross-platform) */}
+      <Modal visible={renamingId !== null} transparent animationType="fade">
+        <View style={rn.overlay}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+            <View style={rn.card}>
+              <Text style={rn.title}>Rename Semester</Text>
+              <TextInput
+                style={rn.input}
+                value={renameText}
+                onChangeText={setRenameText}
+                autoFocus
+                placeholder="e.g. Year 1 Semester 2"
+                placeholderTextColor={C.textMute}
+              />
+              <View style={rn.btns}>
+                <TouchableOpacity onPress={() => setRenamingId(null)} style={rn.btn}>
+                  <Text style={rn.btnTextCancel}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => {
+                    if (renameText.trim()) {
+                      setSemesters(prev => prev.map(s => s.id !== renamingId ? s : { ...s, label: renameText.trim() }))
+                    }
+                    setRenamingId(null)
+                  }}
+                  style={[rn.btn, rn.btnMain]}
+                >
+                  <Text style={rn.btnTextSave}>Save</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
     </View>
   )
 }
+
+// ── Rename styles ────────────────────────────────────────────────────────────
+const rn = StyleSheet.create({
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center', padding: 30 },
+  card:    { width: '100%', backgroundColor: C.surface, borderRadius: 24, borderWidth: 1, borderColor: C.border, padding: 24 },
+  title:   { fontSize: 18, fontWeight: '800', color: C.text, marginBottom: 18, textAlign: 'center' },
+  input:   { backgroundColor: C.raised, borderRadius: 14, borderWidth: 1, borderColor: C.border, padding: 16, color: C.text, fontSize: 15, marginBottom: 20 },
+  btns:    { flexDirection: 'row', gap: 12 },
+  btn:     { flex: 1, height: 48, borderRadius: 14, justifyContent: 'center', alignItems: 'center', backgroundColor: C.raised },
+  btnMain: { backgroundColor: C.orange },
+  btnTextCancel: { fontSize: 14, fontWeight: '700', color: C.textSub },
+  btnTextSave:   { fontSize: 14, fontWeight: '700', color: C.void },
+})
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Main styles

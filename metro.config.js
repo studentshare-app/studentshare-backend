@@ -12,6 +12,8 @@ const config = getDefaultConfig(__dirname, {
 });
 
 // 1. Path alias – already handled by tsconfig.json + Expo Router v2+
+config.resolver.assetExts.push('bundle');
+
 config.resolver.alias = {
   '@': './src',
 };

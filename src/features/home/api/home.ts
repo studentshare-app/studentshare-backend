@@ -113,18 +113,36 @@ export async function fetchDashboard(userId: string) {
   let totalMaterialCount = 0
   let courseCount = 0
 
-  if (profileData.class_id) {
-    const { data: courses } = await supabase.from('courses').select('id').eq('class_id', profileData.class_id)
-    courseCount = courses?.length || 0
-    if (courseCount > 0) {
-      const courseIds = courses!.map((course: any) => course.id)
-      const [materialsRes, countRes] = await Promise.all([
-        supabase.from('materials').select('id, title, type, file_url, created_at, courses(name)').in('course_id', courseIds).eq('status', 'published').order('created_at', { ascending: false }).limit(5),
-        supabase.from('materials').select('id', { count: 'exact', head: true }).in('course_id', courseIds).eq('status', 'published'),
-      ])
-      materials = materialsRes.data || []
-      totalMaterialCount = countRes.count ?? materials.length
+  if (profileData.class_id || profileData.college_id) {
+    const filters: string[] = []
+
+    if (profileData.class_id) {
+      const { data: courses } = await supabase.from('courses').select('id').eq('class_id', profileData.class_id)
+      courseCount = courses?.length || 0
+      if (courseCount > 0) {
+        const courseIds = courses!.map((c: any) => c.id)
+        filters.push(`course_id.in.(${courseIds.join(',')})`)
+      }
     }
+
+    if (profileData.college_id) {
+      const { data: lecturers } = await supabase.from('lecturers').select('id').eq('college_id', profileData.college_id)
+      if (lecturers && lecturers.length > 0) {
+        const lecturerIds = lecturers.map((l: any) => l.id)
+        filters.push(`lecturer_id.in.(${lecturerIds.join(',')})`)
+      }
+    }
+
+    filters.push('and(course_id.is.null,lecturer_id.is.null)')
+    const orString = filters.join(',')
+
+    const [materialsRes, countRes] = await Promise.all([
+      supabase.from('materials').select('id, title, type, file_url, created_at, courses(name)').or(orString).eq('status', 'published').order('created_at', { ascending: false }).limit(5),
+      supabase.from('materials').select('id', { count: 'exact', head: true }).or(orString).eq('status', 'published'),
+    ])
+
+    materials = materialsRes.data || []
+    totalMaterialCount = countRes.count ?? materials.length
   }
 
   return { profile, materials, stats: { total: totalMaterialCount, courses: courseCount } }

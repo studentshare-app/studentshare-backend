@@ -4,14 +4,12 @@ import { C } from '@/lib/colors'
 import { CollegeNotice } from '../hooks/useCollegeInfo'
 
 export function NoticeTicker({ notices }: { notices: CollegeNotice[] }) {
-  if (!notices || notices.length === 0) return null
-
   const [idx, setIdx] = useState(0)
   const [fadeAnim] = useState(new Animated.Value(1))
   const [slideAnim] = useState(new Animated.Value(0))
 
   useEffect(() => {
-    if (notices.length <= 1) return
+    if (!notices || notices.length <= 1) return
     const t = setInterval(() => {
       Animated.parallel([
         Animated.timing(fadeAnim, { toValue: 0, duration: 300, useNativeDriver: true }),
@@ -28,6 +26,7 @@ export function NoticeTicker({ notices }: { notices: CollegeNotice[] }) {
     return () => clearInterval(t)
   }, [notices.length])
 
+  if (!notices || notices.length === 0) return null
   return (
     <View style={ss.tickerWrap}>
       <View style={ss.tickerBadge}>

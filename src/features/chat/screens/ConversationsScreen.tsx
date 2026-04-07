@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons'
 import { useRouter } from 'expo-router'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import {
   Alert,
   Animated,
@@ -11,10 +11,10 @@ import {
   View,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import AsyncStorage from '@react-native-async-storage/async-storage'
-import { useFocusEffect } from '@react-navigation/native'
-import { supabase } from '@/core/api/supabase'
-import { fetchConversations, type Conversation } from '@/lib/queries/conversations'
+import { useConversations } from '@/hooks/useLocalQueries'
+import { OfflineBanner } from '@/components/OfflineBanner'
+import { useNetworkStatus } from '@/hooks/useNetworkStatus'
+import database from '@/database'
 
 // ── Design tokens ────────────────────────────────────────────────────────────
 const C = {
@@ -30,10 +30,10 @@ const C = {
   orangeDim: 'rgba(232,105,42,0.10)',
 } as const
 
-const USER_ID_CACHE_KEY = 'studentshare_user_id_cache'
-
-function timeAgo(dateStr: string) {
-  const diff = Date.now() - new Date(dateStr).getTime()
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function timeAgo(ts: number | null | undefined) {
+  if (!ts) return ''
+  const diff = Date.now() - ts
   const mins = Math.floor(diff / 60000)
   if (mins < 1) return 'Just now'
   if (mins < 60) return `${mins}m ago`
@@ -41,7 +41,7 @@ function timeAgo(dateStr: string) {
   if (hours < 24) return `${hours}h ago`
   const days = Math.floor(hours / 24)
   if (days < 7) return `${days}d ago`
-  return new Date(dateStr).toLocaleDateString()
+  return new Date(ts).toLocaleDateString()
 }
 
 // ── Conversation card ────────────────────────────────────────────────────────
@@ -51,21 +51,24 @@ function ConvCard({
   onPress,
   onLongPress,
 }: {
-  conv: Conversation
+  conv: any
   index: number
   onPress: () => void
   onLongPress: () => void
 }) {
   const opacity    = useRef(new Animated.Value(0)).current
   const translateY = useRef(new Animated.Value(12)).current
-  const isGeneral  = !conv.material_title || conv.material_title === 'General Assistant'
 
-  useState(() => {
+  useEffect(() => {
     Animated.parallel([
       Animated.timing(opacity,    { toValue: 1, duration: 280, delay: index * 40, useNativeDriver: true }),
       Animated.timing(translateY, { toValue: 0, duration: 280, delay: index * 40, useNativeDriver: true }),
     ]).start()
-  })
+  }, [])
+
+  const preview   = conv.lastMessage || 'No messages yet'
+  const timestamp = conv.lastMessageAt
+  const unread    = conv.unreadCount ?? 0
 
   return (
     <Animated.View style={{ opacity, transform: [{ translateY }] }}>
@@ -76,32 +79,27 @@ function ConvCard({
         activeOpacity={0.75}
       >
         <View style={styles.cardAccent} />
+
         <View style={styles.cardIcon}>
-          <Ionicons
-            name={isGeneral ? 'sparkles' : 'document-text'}
-            size={18}
-            color={C.orange}
-          />
+          <Ionicons name="chatbubble-ellipses" size={18} color={C.orange} />
         </View>
+
         <View style={styles.cardContent}>
-          <Text style={styles.cardTitle} numberOfLines={1}>{conv.title}</Text>
-          {conv.last_message ? (
-            <Text style={styles.cardPreview} numberOfLines={1}>{conv.last_message}</Text>
-          ) : null}
-          <View style={styles.cardMeta}>
-            {!isGeneral && conv.material_title && (
-              <>
-                <View style={styles.sourcePill}>
-                  <Text style={styles.sourceText} numberOfLines={1}>
-                    {conv.material_title}
-                  </Text>
-                </View>
-                <Text style={styles.metaDot}>·</Text>
-              </>
-            )}
-            <Text style={styles.timeText}>{timeAgo(conv.updated_at)}</Text>
+          <View style={styles.cardRow}>
+            <Text style={styles.cardTitle} numberOfLines={1}>
+              Conversation
+            </Text>
+            <Text style={styles.timeText}>{timeAgo(timestamp)}</Text>
           </View>
+          <Text style={styles.cardPreview} numberOfLines={1}>{preview}</Text>
         </View>
+
+        {unread > 0 && (
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>{unread > 99 ? '99+' : unread}</Text>
+          </View>
+        )}
+
         <View style={styles.arrowBox}>
           <Ionicons name="chevron-forward" size={14} color={C.textMute} />
         </View>
@@ -114,115 +112,47 @@ function ConvCard({
 export default function ConversationsScreen() {
   const router = useRouter()
   const insets = useSafeAreaInsets()
+  const { isOffline } = useNetworkStatus()
 
-  // conversations is the single source of truth — seeded from cache immediately
-  const [conversations, setConversations] = useState<Conversation[]>([])
-  const [ready,         setReady]         = useState(false) // true once cache read done
-  const userIdRef = useRef<string | null>(null)
+  const { records: conversations, loading } = useConversations()
 
   const headerOpacity = useRef(new Animated.Value(0)).current
   const headerY       = useRef(new Animated.Value(-8)).current
 
-  // ── Step 1: Read cache synchronously before first render ──────────────────
-  // Runs once on mount — reads both userId and conversations from AsyncStorage
-  // so the list is populated before the screen even animates in
   useEffect(() => {
-    const bootstrap = async () => {
-      const [cachedId, rawConvs] = await Promise.all([
-        AsyncStorage.getItem(USER_ID_CACHE_KEY).catch(() => null),
-        AsyncStorage.getItem('conversations').catch(() => null),
-      ])
-
-      // Seed conversations from cache instantly — no network needed
-      if (rawConvs) {
-        try {
-          const cached: Conversation[] = JSON.parse(rawConvs)
-          if (cached.length > 0) setConversations(cached)
-        } catch {}
-      }
-
-      if (cachedId) userIdRef.current = cachedId
-      setReady(true)
-
-      // Then fetch fresh data from network in background
-      refreshConversations(cachedId)
-    }
-    bootstrap()
+    Animated.parallel([
+      Animated.timing(headerOpacity, { toValue: 1, duration: 350, useNativeDriver: true }),
+      Animated.timing(headerY,       { toValue: 0, duration: 350, useNativeDriver: true }),
+    ]).start()
   }, [])
 
-  // ── Step 2: Refresh from network (silent, background) ─────────────────────
-  const refreshConversations = useCallback(async (cachedId?: string | null) => {
-    try {
-      // Resolve live userId
-      const { data: { user } } = await supabase.auth.getUser()
-      const uid = user?.id ?? cachedId ?? userIdRef.current
-      if (!uid) return
-      userIdRef.current = uid
-
-      const fresh = await fetchConversations(uid)
-      setConversations(fresh)
-      // Keep AsyncStorage in sync
-      await AsyncStorage.setItem('conversations', JSON.stringify(fresh)).catch(() => {})
-    } catch {
-      // Network failed — cached data already showing, nothing to do
-    }
-  }, [])
-
-  // ── Step 3: Re-fetch on every focus so new chats appear immediately ────────
-  useFocusEffect(
-    useCallback(() => {
-      Animated.parallel([
-        Animated.timing(headerOpacity, { toValue: 1, duration: 350, useNativeDriver: true }),
-        Animated.timing(headerY,       { toValue: 0, duration: 350, useNativeDriver: true }),
-      ]).start()
-
-      // Only refresh from network after cache is ready (avoid double-fetch on mount)
-      if (ready) refreshConversations()
-    }, [ready])
-  )
-
-  function startNewChat() {
+  function openConversation(conv: any) {
     router.push({
       pathname: '/chat',
-      params: { material_title: 'General Assistant', file_url: '', conversation_id: 'new' },
+      params: { conversation_id: conv.id },
     })
   }
 
-  function openConversation(conv: Conversation) {
-    router.push({
-      pathname: '/chat',
-      params: {
-        material_title: conv.material_title || 'General Assistant',
-        file_url:        conv.file_url || '',
-        conversation_id: conv.id,
-      },
-    })
-  }
-
-  async function deleteConversation(convId: string) {
+  async function deleteConversation(conv: any) {
     Alert.alert('Delete Conversation', 'Are you sure you want to delete this conversation?', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
-          // Optimistic update
-          const updated = conversations.filter(c => c.id !== convId)
-          setConversations(updated)
-          await AsyncStorage.setItem('conversations', JSON.stringify(updated))
-          await AsyncStorage.removeItem(`messages_${convId}`)
-          await supabase.from('conversations').delete().eq('id', convId)
+          await database.write(async () => {
+            await conv.update((c: any) => { c.deleted = true })
+          })
         },
       },
     ])
   }
 
-  // Don't render content at all until the AsyncStorage read is done
-  // (this is near-instant — typically <10ms)
-  if (!ready) return <View style={styles.container} />
-
   return (
     <View style={[styles.container, { paddingBottom: insets.bottom }]}>
+
+      {/* ── Offline banner ───────────────────────────────────────────────── */}
+      {isOffline && <OfflineBanner />}
 
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <Animated.View
@@ -244,27 +174,22 @@ export default function ConversationsScreen() {
           <Text style={styles.headerSub}>
             {conversations.length > 0
               ? `${conversations.length} chat${conversations.length !== 1 ? 's' : ''}`
-              : 'Your AI chat history'}
+              : 'Your chat history'}
           </Text>
         </View>
 
-        <TouchableOpacity style={styles.newBtn} onPress={startNewChat} activeOpacity={0.8}>
-          <Ionicons name="add" size={18} color={C.orange} />
-        </TouchableOpacity>
+        {/* Placeholder to balance header layout */}
+        <View style={styles.headerBtn} />
       </Animated.View>
 
       {/* ── Content ─────────────────────────────────────────────────────── */}
-      {conversations.length === 0 ? (
+      {!loading && conversations.length === 0 ? (
         <View style={styles.emptyState}>
           <View style={styles.emptyIconBox}>
             <Ionicons name="chatbubbles-outline" size={30} color={C.orange} />
           </View>
           <Text style={styles.emptyTitle}>No conversations yet</Text>
-          <Text style={styles.emptySub}>Start a new chat to get help with your studies.</Text>
-          <TouchableOpacity style={styles.emptyBtn} onPress={startNewChat} activeOpacity={0.8}>
-            <Ionicons name="sparkles" size={15} color="#fff" />
-            <Text style={styles.emptyBtnText}>Start New Chat</Text>
-          </TouchableOpacity>
+          <Text style={styles.emptySub}>Your chats will appear here.</Text>
         </View>
       ) : (
         <ScrollView
@@ -281,7 +206,7 @@ export default function ConversationsScreen() {
               conv={conv}
               index={index}
               onPress={() => openConversation(conv)}
-              onLongPress={() => deleteConversation(conv.id)}
+              onLongPress={() => deleteConversation(conv)}
             />
           ))}
           <Text style={styles.hint}>Long press to delete a conversation</Text>
@@ -335,17 +260,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: C.textMute,
     letterSpacing: 0.2,
-  },
-  newBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 13,
-    backgroundColor: C.orangeDim,
-    borderWidth: 1,
-    borderColor: C.orange + '40',
-    justifyContent: 'center',
-    alignItems: 'center',
-    flexShrink: 0,
   },
 
   list: {
@@ -401,22 +315,22 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   cardContent: { flex: 1, gap: 4, minWidth: 0 },
-  cardTitle:   { fontSize: 13.5, fontWeight: '700', color: C.text, lineHeight: 18 },
-  cardPreview: { fontSize: 12, color: C.textSub, lineHeight: 17 },
-  cardMeta:    { flexDirection: 'row', alignItems: 'center', gap: 5, flexWrap: 'wrap' },
+  cardRow:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  cardTitle:  { fontSize: 13.5, fontWeight: '700', color: C.text, flex: 1, marginRight: 8 },
+  cardPreview:{ fontSize: 12, color: C.textSub, lineHeight: 17 },
+  timeText:   { fontSize: 11, color: C.textMute, flexShrink: 0 },
 
-  sourcePill: {
-    borderRadius: 6,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    backgroundColor: C.orangeDim,
-    borderWidth: 1,
-    borderColor: C.orange + '20',
-    maxWidth: 140,
+  badge: {
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: C.orange,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 5,
+    flexShrink: 0,
   },
-  sourceText: { fontSize: 10, fontWeight: '700', color: C.orange },
-  metaDot:    { fontSize: 10, color: C.textMute },
-  timeText:   { fontSize: 11, color: C.textMute },
+  badgeText: { fontSize: 10, fontWeight: '800', color: '#fff' },
 
   arrowBox: {
     width: 26,
@@ -463,20 +377,4 @@ const styles = StyleSheet.create({
   },
   emptyTitle: { fontSize: 18, fontWeight: '800', color: C.text, letterSpacing: -0.3 },
   emptySub:   { fontSize: 13, color: C.textMute, textAlign: 'center', lineHeight: 20 },
-  emptyBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: C.orange,
-    borderRadius: 16,
-    paddingHorizontal: 24,
-    paddingVertical: 13,
-    marginTop: 8,
-    shadowColor: C.orange,
-    shadowOpacity: 0.35,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 6,
-  },
-  emptyBtnText: { color: '#fff', fontWeight: '800', fontSize: 14 },
 })

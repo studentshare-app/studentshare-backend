@@ -16,17 +16,14 @@ import {
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import Markdown from 'react-native-markdown-display'
-import AsyncStorage from '@react-native-async-storage/async-storage'
-import { supabase } from '@/core/api/supabase'
+import { useMessages } from '@/hooks/useLocalQueries'
+import { sendMessage as sendLocalMessage } from '@/database/actions'
+import { OfflineBanner } from '@/components/OfflineBanner'
 import { useNetworkStatus } from '@/hooks/useNetworkStatus'
+import { supabase } from '@/core/api/supabase'
+import database from '@/database'
 
-type Message = {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-}
-
-// ── Design tokens — mirrors index.tsx exactly ────────────────────────────────
+// ── Design tokens ─────────────────────────────────────────────────────────────
 const C = {
   void:       '#07080C',
   deep:       '#0B0D13',
@@ -41,7 +38,14 @@ const C = {
   orangeGlow: 'rgba(232,105,42,0.18)',
 } as const
 
-// ── Typing dots ──────────────────────────────────────────────────────────────
+const quickChips = [
+  'Summarise this document',
+  'What are the key points?',
+  'Give me practice questions',
+  'Explain it simply',
+]
+
+// ── Typing dots ───────────────────────────────────────────────────────────────
 function TypingDots() {
   const dots = [
     useRef(new Animated.Value(0)).current,
@@ -100,9 +104,11 @@ const typingStyles = StyleSheet.create({
   },
 })
 
-// ── Message row ──────────────────────────────────────────────────────────────
-function MessageRow({ item }: { item: Message }) {
-  if (item.role === 'assistant') {
+// ── Message row ───────────────────────────────────────────────────────────────
+function MessageRow({ item }: { item: any }) {
+  const isAI = item.senderId === 'ai' || item.role === 'assistant'
+
+  if (isAI) {
     return (
       <View style={msgStyles.aiRow}>
         <View style={msgStyles.aiAvatar}>
@@ -135,12 +141,12 @@ function MessageRow({ item }: { item: Message }) {
 
 const msgStyles = StyleSheet.create({
   aiRow: {
-  flexDirection: 'row',
-  alignItems: 'flex-end',
-  gap: 10,
-  marginBottom: 20,
-  paddingRight: 16,
-},
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 10,
+    marginBottom: 20,
+    paddingRight: 16,
+  },
   userRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
@@ -217,7 +223,7 @@ const msgStyles = StyleSheet.create({
   },
 })
 
-// ── Markdown — matches index.tsx palette ─────────────────────────────────────
+// ── Markdown styles ───────────────────────────────────────────────────────────
 const markdownStyles = {
   body:         { color: C.text, fontSize: 14, lineHeight: 22 },
   strong:       { fontWeight: '700' as const, color: '#FDEBD8' },
@@ -255,8 +261,8 @@ const markdownStyles = {
   },
 }
 
-// ── Main screen ──────────────────────────────────────────────────────────────
-export default function ChatScreen() {
+// ── Main screen ───────────────────────────────────────────────────────────────
+export default function AiChatScreen() {
   const router = useRouter()
   const {
     material_title,
@@ -270,213 +276,147 @@ export default function ChatScreen() {
     material_id: string
   }>()
 
-  const isGeneral = !file_url || file_url === ''
-  const isNew     = !conversation_id || conversation_id === 'new'
+  const isGeneral  = !file_url || file_url === ''
   const { isOffline } = useNetworkStatus()
-  const insets    = useSafeAreaInsets()
+  const insets     = useSafeAreaInsets()
+  const flatListRef = useRef<FlatList>(null)
 
-  const [messages,        setMessages]        = useState<Message[]>([])
+  // Active conversation in WatermelonDB
+  const [convId, setConvId] = useState(
+    conversation_id && conversation_id !== 'new' ? conversation_id : ''
+  )
+
+  // Reactive messages from WatermelonDB
+  const { records: dbMessages, loading: messagesLoading } = useMessages(convId)
+
   const [input,           setInput]           = useState('')
   const [loading,         setLoading]         = useState(false)
-  const [initializing,    setInitializing]    = useState(true)
   const [documentContent, setDocumentContent] = useState<string | null>(null)
 
-  const flatListRef = useRef<FlatList>(null)
-  const convIdRef   = useRef<string>(isNew ? Date.now().toString() : conversation_id)
-
+  // ── Welcome message (shown only when no messages exist yet) ─────────────────
   const welcomeMessage = isGeneral
-    ? `Hi there! I'm your **StudentShare AI Tutor** — here to help you study smarter 🎓\n\nI can help you with:\n- Explaining difficult concepts\n- Answering course questions\n- Exam preparation strategies\n- Summarizing topics\n\nWhat would you like to explore today?`
-    : `Hi! I've loaded **${material_title}** and I'm ready to help.\n\nAsk me anything about this document — explanations, summaries, exam prep, you name it!`
+    ? `Hello! I'm your **AI Study Tutor** ✦\n\nAsk me anything — concepts, exam prep, essay help, or general study questions. I'm here to help you succeed.`
+    : `Hello! I'm your **AI Study Tutor** ✦\n\nI'm ready to help you study **${material_title}**. Ask me anything about this document — I'll guide you through it.`
 
-  const quickChips = isGeneral
-    ? ['Explain a concept', 'Exam tips', 'Study plan', 'Summarize topic']
-    : ['Summarize this', 'Key concepts', 'Practice questions', 'Explain a section']
+  // Merge welcome + db messages for display
+  const displayMessages: any[] = dbMessages.length === 0 && !messagesLoading
+    ? [{ id: 'welcome', senderId: 'ai', content: welcomeMessage }]
+    : dbMessages
 
-  useEffect(() => { initChat() }, [])
+  const showChips = dbMessages.length === 0
 
-  // ── Fetch document content ─────────────────────────────────────────────────
-  async function fetchDocumentContent() {
+  // ── Fetch document text from Supabase (background) ─────────────────────────
+  useEffect(() => {
     if (isGeneral) return
-    if (material_id) {
-      const { data } = await supabase
-        .from('materials').select('content_text').eq('id', material_id).single()
-      if (data?.content_text) { setDocumentContent(data.content_text); return }
-    }
-    if (file_url) {
-      const { data } = await supabase
-        .from('materials').select('content_text').eq('file_url', file_url).single()
-      if (data?.content_text) setDocumentContent(data.content_text)
-    }
-  }
-
-  // ── Init chat ──────────────────────────────────────────────────────────────
-  async function initChat() {
-  if (!isNew) {
-    // Try local cache first (offline-safe)
-    const raw = await AsyncStorage.getItem(`messages_${convIdRef.current}`)
-    if (raw) {
-      setMessages(JSON.parse(raw))
-      setInitializing(false)
-      fetchDocumentContent()  // background
-      return
-    }
-    // Fall back to Supabase
-    const { data } = await supabase
-      .from('conversation_messages')
-      .select('*')
-      .eq('conversation_id', convIdRef.current)
-      .order('created_at', { ascending: true })
-    if (data && data.length > 0) {
-      const loaded: Message[] = data.map(m => ({ id: m.id, role: m.role, content: m.content }))
-      setMessages(loaded)
-      await AsyncStorage.setItem(`messages_${convIdRef.current}`, JSON.stringify(loaded))
-      setInitializing(false)
-      fetchDocumentContent()  // background
-      return
-    }
-  }
-
-  // New chat — show welcome immediately
-  setMessages([{ id: 'welcome', role: 'assistant', content: welcomeMessage }])
-  setInitializing(false)
-  fetchDocumentContent()      // background
-}
-
-  
-
-  // ── Save conversation (AsyncStorage + Supabase) ────────────────────────────
-  async function saveConversation(allMessages: Message[], lastUserMessage: string) {
-    const convId = convIdRef.current
-    const now    = new Date().toISOString()
-    const title  = lastUserMessage.slice(0, 50) || (isGeneral ? 'General Chat' : material_title)
-
-    // Always persist locally first
-    await AsyncStorage.setItem(`messages_${convId}`, JSON.stringify(allMessages))
-
-    // Update conversations list in AsyncStorage
-    const raw      = await AsyncStorage.getItem('conversations')
-    const convList = raw ? JSON.parse(raw) : []
-    const existingIndex = convList.findIndex((c: any) => c.id === convId)
-    const convData = {
-      id:             convId,
-      title:          existingIndex === -1 ? title : convList[existingIndex].title,
-      material_title: material_title || 'General Assistant',
-      file_url:       file_url || '',
-      updated_at:     now,
-      last_message:   lastUserMessage.slice(0, 80),
-    }
-    if (existingIndex === -1) convList.unshift(convData)
-    else convList[existingIndex] = { ...convList[existingIndex], ...convData }
-    await AsyncStorage.setItem('conversations', JSON.stringify(convList))
-
-    // Best-effort Supabase sync (non-blocking)
-    try {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (user) {
-        await supabase.from('conversations').upsert({
-          id:             convId,
-          user_id:        user.id,
-          title:          convData.title,
-          material_title: material_title || 'General Assistant',
-          file_url:       file_url || '',
-          updated_at:     now,
-          last_message:   convData.last_message,
-        })
-        const last2 = allMessages.filter(m => m.id !== 'welcome').slice(-2)
-        for (const msg of last2) {
-          await supabase.from('conversation_messages').upsert({
-            id:              msg.id,
-            conversation_id: convId,
-            role:            msg.role,
-            content:         msg.content,
-          })
-        }
+    async function fetchDocContent() {
+      if (material_id) {
+        const { data } = await supabase
+          .from('materials').select('content_text').eq('id', material_id).single()
+        if (data?.content_text) { setDocumentContent(data.content_text); return }
       }
-    } catch { /* saved locally — fine offline */ }
-  }
+      if (file_url) {
+        const { data } = await supabase
+          .from('materials').select('content_text').eq('file_url', file_url).single()
+        if (data?.content_text) setDocumentContent(data.content_text)
+      }
+    }
+    fetchDocContent()
+  }, [material_id, file_url])
 
-  // ── Send message ───────────────────────────────────────────────────────────
+  // ── Send message ────────────────────────────────────────────────────────────
   async function sendMessage() {
     if (!input.trim() || loading) return
     if (isOffline) {
-      Alert.alert(
-        'You are offline 📡',
-        'The AI Tutor needs an internet connection to respond.',
-        [{ text: 'OK' }]
-      )
+      Alert.alert('You are offline', 'The AI Tutor needs an internet connection to respond.')
       return
     }
 
-    const userMessage: Message = {
-      id:      Date.now().toString(),
-      role:    'user',
-      content: input.trim(),
-    }
-    const currentInput    = input.trim()
-    const updatedMessages = [...messages, userMessage]
-    setMessages(updatedMessages)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
+    const currentInput = input.trim()
     setInput('')
     setLoading(true)
 
-    let systemPrompt: string
-    if (isGeneral) {
-      systemPrompt = `You are a helpful and friendly AI study tutor for university and college students in Sierra Leone. Help students understand academic concepts, answer questions about their courses, assist with exam preparation, and explain difficult topics clearly. Be concise, encouraging, and student-friendly.`
-    } else if (documentContent) {
-      systemPrompt = `You are a helpful study tutor for students. The student is studying a document called "${material_title}".\n\nDocument content:\n---\n${documentContent.slice(0, 12000)}\n---\n\nAnswer the student's questions using this document. Be concise, accurate, and student-friendly.`
-    } else {
-      systemPrompt = `You are a helpful study tutor for students. The student is studying a document called "${material_title}". Help them understand the material and prepare for exams. Be concise and student-friendly.`
-    }
-
     try {
-      // Get the current session to explicitly pass the auth token
-      const { data: { session } } = await supabase.auth.getSession()
+      // 1. Create conversation locally if new
+      let activeConvId = convId
+      if (!activeConvId) {
+        const now = Date.now()
+        await database.write(async () => {
+          const collection = database.collections.get('conversations')
+          const newConvo = await (collection as any).create((c: any) => {
+            c.participantIdsRaw = JSON.stringify([user.id, 'ai'])
+            c.lastMessage       = currentInput.slice(0, 80)
+            c.lastMessageAt     = now
+            c.unreadCount       = 0
+            c.deleted           = false
+            c.createdAt         = now
+            c.updatedAt         = now
+          })
+          activeConvId = newConvo.id
+          setConvId(activeConvId)
+        })
+      }
 
+      // 2. Save user message locally (shows immediately via WatermelonDB observer)
+      await sendLocalMessage(user.id, activeConvId!, currentInput)
+
+      // 3. Build system prompt
+      let systemPrompt: string
+      if (isGeneral) {
+        systemPrompt = `You are a helpful and friendly AI study tutor for university and college students in Sierra Leone. Help students understand academic concepts, answer questions about their courses, assist with exam preparation, and explain difficult topics clearly. Be concise, encouraging, and student-friendly.`
+      } else if (documentContent) {
+        systemPrompt = `You are a helpful study tutor for students. The student is studying a document called "${material_title}".\n\nDocument content:\n---\n${documentContent.slice(0, 12000)}\n---\n\nAnswer the student's questions using this document. Be concise, accurate, and student-friendly.`
+      } else {
+        systemPrompt = `You are a helpful study tutor for students. The student is studying a document called "${material_title}". Help them understand the material and prepare for exams. Be concise and student-friendly.`
+      }
+
+      // 4. Call AI proxy
+      const { data: { session } } = await supabase.auth.getSession()
       if (!session?.access_token) {
         Alert.alert('Session expired', 'Please sign in again.')
         setLoading(false)
         return
       }
 
+      const chatHistory = dbMessages.map((m: any) => ({
+        role:    m.senderId === 'ai' ? 'assistant' : 'user',
+        content: m.content,
+      }))
+
       const { data, error } = await supabase.functions.invoke('ai-proxy', {
         body: {
           messages: [
             { role: 'system', content: systemPrompt },
-            ...updatedMessages
-              .filter(m => m.id !== 'welcome')
-              .map(m => ({ role: m.role, content: m.content })),
+            ...chatHistory,
+            { role: 'user', content: currentInput },
           ],
         },
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
+        headers: { Authorization: `Bearer ${session.access_token}` },
       })
 
       if (error) {
-  const errorBody = await (error as any).context?.json?.().catch(() => ({})) ?? {}
-  console.error('[chat] Edge Function error body:', JSON.stringify(errorBody))
-  console.error('[chat] Edge Function error:', error.message, error)
-  Alert.alert('Error', JSON.stringify(errorBody) || error.message)
-  setLoading(false)
-  return
-}
+        const errorBody = await (error as any).context?.json?.().catch(() => ({})) ?? {}
+        console.error('[AiChat] Edge Function error:', JSON.stringify(errorBody))
+        Alert.alert('Error', JSON.stringify(errorBody) || error.message)
+        setLoading(false)
+        return
+      }
 
       if (!data?.choices?.[0]?.message?.content) {
-        console.error('[chat] Unexpected response shape:', JSON.stringify(data))
+        console.error('[AiChat] Unexpected response shape:', JSON.stringify(data))
         Alert.alert('Error', 'Unexpected response from AI. Please try again.')
         setLoading(false)
         return
       }
 
-      const assistantMessage: Message = {
-        id:      (Date.now() + 1).toString(),
-        role:    'assistant',
-        content: data.choices[0].message.content,
-      }
-      const finalMessages = [...updatedMessages, assistantMessage]
-      setMessages(finalMessages)
-      await saveConversation(finalMessages, currentInput)
+      // 5. Save AI response locally
+      const aiText = data.choices[0].message.content
+      await sendLocalMessage('ai', activeConvId!, aiText)
+
     } catch (e: any) {
-      console.error('[chat] sendMessage error:', e)
+      console.error('[AiChat] sendMessage error:', e)
       Alert.alert('Error', e?.message || 'Could not connect to AI. Please try again.')
     }
 
@@ -484,20 +424,18 @@ export default function ChatScreen() {
     setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100)
   }
 
-  // ── Loading screen ─────────────────────────────────────────────────────────
-  if (initializing) {
+  // ── Loading screen ──────────────────────────────────────────────────────────
+  if (messagesLoading && convId) {
     return (
       <View style={styles.loadingScreen}>
         <View style={styles.loadingIconBox}>
           <Ionicons name="sparkles" size={28} color={C.orange} />
         </View>
-        <Text style={styles.loadingTitle}>Starting AI Tutor…</Text>
+        <Text style={styles.loadingTitle}>Loading conversation…</Text>
         <ActivityIndicator size="small" color={C.orange} style={{ marginTop: 8 }} />
       </View>
     )
   }
-
-  const showChips = messages.length <= 1
 
   return (
     <View style={[styles.safeArea, { paddingBottom: insets.bottom }]}>
@@ -507,7 +445,10 @@ export default function ChatScreen() {
         keyboardVerticalOffset={0}
       >
 
-        {/* ── Header ──────────────────────────────────────────────────────── */}
+        {/* ── Offline banner ────────────────────────────────────────────── */}
+        {isOffline && <OfflineBanner />}
+
+        {/* ── Header ───────────────────────────────────────────────────── */}
         <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
           <TouchableOpacity style={styles.headerBtn} onPress={() => router.back()}>
             <Ionicons name="arrow-back" size={18} color={C.textSub} />
@@ -525,16 +466,16 @@ export default function ChatScreen() {
 
           <TouchableOpacity
             style={styles.headerBtn}
-            onPress={() => router.push('/conversations' as any)}
+            onPress={() => router.push('/student-chat' as any)}
           >
             <Ionicons name="time-outline" size={18} color={C.textSub} />
           </TouchableOpacity>
         </View>
 
-        {/* ── Messages ────────────────────────────────────────────────────── */}
+        {/* ── Messages ─────────────────────────────────────────────────── */}
         <FlatList
           ref={flatListRef}
-          data={messages}
+          data={displayMessages}
           keyExtractor={item => item.id}
           contentContainerStyle={styles.messagesList}
           onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
@@ -561,10 +502,10 @@ export default function ChatScreen() {
           }
         />
 
-        {/* ── Input area ──────────────────────────────────────────────────── */}
+        {/* ── Input area ───────────────────────────────────────────────── */}
         <View style={styles.inputWrapper}>
 
-          {/* Quick chips — only shown before first user message */}
+          {/* Quick chips — shown before first user message */}
           {showChips && (
             <View style={styles.chipsRow}>
               {quickChips.map((chip, i) => (
@@ -608,7 +549,7 @@ export default function ChatScreen() {
           </View>
 
           <Text style={styles.disclaimer}>
-           StudentShare  AI Tutor can make mistakes. Verify important information.
+            StudentShare AI Tutor can make mistakes. Verify important information.
           </Text>
         </View>
 
@@ -617,7 +558,7 @@ export default function ChatScreen() {
   )
 }
 
-// ── Styles ───────────────────────────────────────────────────────────────────
+// ── Styles ────────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   safeArea:  { flex: 1, backgroundColor: C.void },
   container: { flex: 1, backgroundColor: C.void },
@@ -734,20 +675,11 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderWidth: 1,
   },
-  chipPrimary: {
-    backgroundColor: C.orangeDim,
-    borderColor: C.orange + '40',
-  },
-  chipDefault: {
-    backgroundColor: C.surface,
-    borderColor: C.border,
-  },
-  chipText: {
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  chipTextPrimary: { color: C.orange },
-  chipTextDefault: { color: C.textSub },
+  chipPrimary:      { backgroundColor: C.orangeDim, borderColor: C.orange + '40' },
+  chipDefault:      { backgroundColor: C.surface,   borderColor: C.border },
+  chipText:         { fontSize: 11, fontWeight: '600' },
+  chipTextPrimary:  { color: C.orange },
+  chipTextDefault:  { color: C.textSub },
 
   inputRow: {
     flexDirection: 'row',
@@ -785,9 +717,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     elevation: 4,
   },
-  sendDisabled: {
-    backgroundColor: C.raised,
-  },
+  sendDisabled: { backgroundColor: C.raised },
 
   disclaimer: {
     fontSize: 10,

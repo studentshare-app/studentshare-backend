@@ -5,8 +5,8 @@
  */
 
 import { ScrollView, StyleSheet, Text, TouchableOpacity } from 'react-native'
-import { C } from '../../lib/colors'
-import type { LeaderPeriod } from '../../lib/leaderboard'
+import { C } from '../../src/lib/colors'
+import type { LeaderPeriod } from '../../src/lib/leaderboard'
 
 const PERIODS: { key: LeaderPeriod; label: string }[] = [
   { key: 'weekly',  label: 'Weekly'   },

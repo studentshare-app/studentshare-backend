@@ -30,11 +30,14 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
-.env*.local
+# ─── Environment Variables ─────────────────────────────────
 .env
-.env.local
-.env.production
+.env.*
+!.env.example
+app/.env
+app/.env.*
+studentshare-backend/.env
+studentshare-backend/.env.*
 
 # typescript
 *.tsbuildinfo

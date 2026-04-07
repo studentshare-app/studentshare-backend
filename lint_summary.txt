@@ -1,0 +1,363 @@
+\assets\pdfjs\pdf.min.js:
+  [22] 'define' is not defined.
+  [22] 'define' is not defined.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] 'Buffer' is not defined.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] 'Buffer' is not defined.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+
+\assets\pdfjs\pdf.worker.min.js:
+  [22] 'define' is not defined.
+  [22] 'define' is not defined.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+  [22] Unexpected var, use let or const instead.
+
+\components\OfflineBanner.tsx:
+  [22] `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.
+  [22] `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.
+
+\controllers\aiController.js:
+  [1] Unable to resolve path to module '../utils/supabaseClient.js'.
+
+\controllers\materialController.js:
+  [1] Unable to resolve path to module '../utils/supabaseClient.js'.
+
+\database\actions.js:
+  [390] Parsing error: Identifier 'createNote' has already been declared
+
+\database\index.js:
+  [6] Parse errors in imported module './models/User': Unexpected character '@' (14:3)
+  [7] Parse errors in imported module './models/Post': Unexpected character '@' (12:3)
+  [8] Parse errors in imported module './models/Comment': Unexpected character '@' (8:3)
+  [9] Parse errors in imported module './models/Material': Unexpected character '@' (8:3)
+  [10] Parse errors in imported module './models/Conversation': Unexpected character '@' (11:3)
+  [11] Parse errors in imported module './models/Message': Unexpected character '@' (12:3)
+  [12] Parse errors in imported module './models/Note': Unexpected character '@' (11:3)
+  [13] Parse errors in imported module './models/SyncQueue': Unexpected character '@' (7:3)
+  [14] Parse errors in imported module './models/Course': Unexpected character '@' (7:3)
+  [15] Parse errors in imported module './models/Lecturer': Unexpected character '@' (7:3)
+  [16] Parse errors in imported module './models/PostInteraction': Unexpected character '@' (7:3)
+  [17] Parse errors in imported module './models/Bookmark': Unexpected character '@' (7:3)
+
+\database\index.new.js:
+  [2] Unable to resolve path to module '@nozbe/watermelondb/adapter-expo-sqlite-next'.
+  [8] Parse errors in imported module './models/Comment': Unexpected character '@' (8:3)
+  [9] Parse errors in imported module './models/Material': Unexpected character '@' (8:3)
+  [10] Parse errors in imported module './models/Post': Unexpected character '@' (12:3)
+  [11] Parse errors in imported module './models/SyncQueue': Unexpected character '@' (7:3)
+  [12] Parse errors in imported module './models/User': Unexpected character '@' (14:3)
+
+\database\models\Bookmark.js:
+  [7] Parsing error: Unexpected character '@'
+
+\database\models\Comment.js:
+  [8] Parsing error: Unexpected character '@'
+
+\database\models\Conversation.js:
+  [11] Parsing error: Unexpected character '@'
+
+\database\models\Course.js:
+  [7] Parsing error: Unexpected character '@'
+
+\database\models\Lecturer.js:
+  [7] Parsing error: Unexpected character '@'
+
+\database\models\Material.js:
+  [8] Parsing error: Unexpected character '@'
+
+\database\models\Message.js:
+  [12] Parsing error: Unexpected character '@'
+
+\database\models\Note.js:
+  [11] Parsing error: Unexpected character '@'
+
+\database\models\Post.js:
+  [12] Parsing error: Unexpected character '@'
+
+\database\models\PostInteraction.js:
+  [7] Parsing error: Unexpected character '@'
+
+\database\models\SyncQueue.js:
+  [7] Parsing error: Unexpected character '@'
+
+\database\models\User.js:
+  [14] Parsing error: Unexpected character '@'
+
+\database\web-index.js:
+  [5] Parse errors in imported module './models/Comment': Unexpected character '@' (8:3)
+  [6] Parse errors in imported module './models/Material': Unexpected character '@' (8:3)
+  [7] Parse errors in imported module './models/Post': Unexpected character '@' (12:3)
+  [8] Parse errors in imported module './models/SyncQueue': Unexpected character '@' (7:3)
+  [9] Parse errors in imported module './models/User': Unexpected character '@' (14:3)
+
+\features\auth\screens\ClassSelectionScreen.tsx:
+  [375] `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.
+  [375] `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.
+
+\features\auth\screens\CollegeSelectionScreen.tsx:
+  [413] `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.
+  [413] `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.
+
+\features\auth\screens\ForgotPasswordScreen.tsx:
+  [334] `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.
+  [434] `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.
+
+\features\auth\screens\OnboardingScreen.tsx:
+  [319] `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.
+
+\features\auth\screens\ResetPasswordScreen.tsx:
+  [123] `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.
+  [256] `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.
+
+\features\chat\screens\AiChatScreen.tsx:
+  [316] Parsing error: ';' expected.
+
+\features\chat\screens\ConversationsScreen.tsx:
+  [55] Parsing error: '{' or ';' expected.
+
+\features\chat\screens\StudentChatScreen.tsx:
+  [219] Parsing error: '{' or ';' expected.
+
+\features\college\components\NoticeTicker.tsx:
+  [9] React Hook "useState" is called conditionally. React Hooks must be called in the exact same order in every component render. Did you accidentally call a React Hook after an early return?
+  [10] React Hook "useState" is called conditionally. React Hooks must be called in the exact same order in every component render. Did you accidentally call a React Hook after an early return?
+  [11] React Hook "useState" is called conditionally. React Hooks must be called in the exact same order in every component render. Did you accidentally call a React Hook after an early return?
+  [13] React Hook "useEffect" is called conditionally. React Hooks must be called in the exact same order in every component render. Did you accidentally call a React Hook after an early return?
+
+\features\college\components\SpotlightSection.tsx:
+  [19] `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.
+  [19] `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.
+
+\features\college\screens\CollegeInfoScreen.tsx:
+  [109] `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.
+  [196] `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.
+
+\features\contribute\screens\ContributeScreen.tsx:
+  [714] `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.
+
+\features\forum\components\NotificationsModal.tsx:
+  [126] `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.
+  [154] `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.
+  [154] `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.
+
+\features\forum\components\SearchModal.tsx:
+  [144] `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.
+  [144] `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.
+
+\features\forum\screens\ForumScreen.tsx:
+  [652] `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.
+
+\features\home\screens\HomeScreen.tsx:
+  [544] `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.
+  [544] `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.
+
+\features\leaderboard\screens\LeaderboardScreen.tsx:
+  [323] `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.
+
+\features\library\components\FoldersTab.tsx:
+  [425] `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.
+  [425] `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.
+  [442] `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.
+  [565] `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.
+
+\features\materials\screens\NewMaterialsScreen.tsx:
+  [109] `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.
+
+\features\materials\screens\ViewerScreen.tsx:
+  [760] `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.
+  [760] `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.
+
+\features\notes\screens\NoteDetailScreen.tsx:
+  [116] Parsing error: Declaration or statement expected.
+
+\features\premium\screens\PaymentScreen.tsx:
+  [151] `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.
+  [158] `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.
+
+\features\premium\screens\PaymentSuccessScreen.tsx:
+  [173] `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.
+
+\features\premium\screens\SubscriptionScreen.tsx:
+  [183] `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.
+
+\features\profile\screens\ProfileScreen.tsx:
+  [413] `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.
+  [413] `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.
+  [413] `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.
+  [413] `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.
+  [413] `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.
+  [413] `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.
+
+\features\search\screens\SearchScreen.tsx:
+  [1248] `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.
+  [1248] `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.
+
+\features\tools\screens\GradeCalculatorScreen.tsx:
+  [365] `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.
+  [746] `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.
+
+\features\tools\screens\QuizFlashcardsScreen.tsx:
+  [396] `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.
+  [1583] `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.
+
+\routes\aiRoutes.js:
+  [3] Unable to resolve path to module '../middleware/auth.js'.
+  [4] Unable to resolve path to module '../middleware/premium.js'.
+
+\routes\materialRoutes.js:
+  [3] Unable to resolve path to module '../middleware/auth.js'.
+
+\routes\postRoutes.js:
+  [3] Unable to resolve path to module '../middleware/auth.js'.
+  [4] Unable to resolve path to module '../controllers/postController.js'.
+
+\routes\posts.js:
+  [2] Unable to resolve path to module '../controllers/postsController.js'.
+  [3] Unable to resolve path to module '../middleware/auth.js'.
+
+\middleware\auth.js:
+  [1] Unable to resolve path to module 'jsonwebtoken'.
+
+\utils\logger.js:
+  [1] Unable to resolve path to module 'winston'.

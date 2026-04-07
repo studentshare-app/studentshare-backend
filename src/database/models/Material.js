@@ -14,7 +14,13 @@ export default class Material extends Model {
   @field('file_type')         fileType;
   @field('file_size')         fileSize;
   @field('course_id')         courseId;
+  @field('lecturer_id')       lecturerId;
   @field('uploader_id')       uploaderId;
+  @field('status')            status;
+  @field('academic_year')     academicYear;
+  @field('is_premium')        isPremium;
+  @field('content_text')      contentText;
+  @field('is_public')         isPublic;
 
   // Download state (WhatsApp-style)
   // download_status: 'none' | 'downloading' | 'done' | 'failed'

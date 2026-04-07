@@ -6,8 +6,8 @@
 
 import { LinearGradient } from 'expo-linear-gradient'
 import { Image, StyleSheet, Text, View } from 'react-native'
-import { C } from '../../lib/colors'
-import type { LeaderboardEntry } from '../../lib/leaderboard'
+import { C } from '../../src/lib/colors'
+import type { LeaderboardEntry } from '../../src/lib/leaderboard'
 
 type Props = {
   entries: LeaderboardEntry[]   // expects entries[0]=1st, [1]=2nd, [2]=3rd
@@ -22,16 +22,16 @@ type SlotProps = {
 
 // Ring gradient colours per rank
 const RING_COLORS: Record<1 | 2 | 3, [string, string, string]> = {
-  1: [C.gold,   '#FFEAA0', C.goldGlow],
-  2: [C.silver, '#E8EDF5', '#9AA4B8'],
-  3: [C.bronze, '#E8A86A', '#9A5A20'],
+  1: ['#FFD700', '#FFFACD', '#FF8C00'], // More vibrant Gold
+  2: ['#C0C0C0', '#F5F5F5', '#808080'], // Silver
+  3: ['#CD7F32', '#FFE4C4', '#8B4513'], // Bronze
 }
 const ACCENT: Record<1 | 2 | 3, string> = {
-  1: C.gold, 2: C.silver, 3: C.bronze,
+  1: '#F59E0B', 2: '#94A3B8', 3: '#B45309',
 }
-const BASE_H: Record<1 | 2 | 3, number>  = { 1: 50, 2: 34, 3: 26 }
-const RING_SIZE: Record<1 | 2 | 3, number> = { 1: 76, 2: 62, 3: 62 }
-const FONT_SIZE: Record<1 | 2 | 3, number> = { 1: 24, 2: 18, 3: 18 }
+const BASE_H: Record<1 | 2 | 3, number>  = { 1: 54, 2: 38, 3: 30 }
+const RING_SIZE: Record<1 | 2 | 3, number> = { 1: 82, 2: 66, 3: 66 }
+const FONT_SIZE: Record<1 | 2 | 3, number> = { 1: 26, 2: 20, 3: 20 }
 
 function PodiumSlot({ entry, rank, showCollege }: SlotProps) {
   const rs   = RING_SIZE[rank]
@@ -41,11 +41,11 @@ function PodiumSlot({ entry, rank, showCollege }: SlotProps) {
   const innerSize = rs - 6
 
   return (
-    <View style={[st.slot, rank === 1 && { zIndex: 2 }]}>
+    <View style={[st.slot, rank === 1 && { zIndex: 5, transform: [{ scale: 1.05 }] }]}>
       {rank === 1 && <Text style={st.crown}>👑</Text>}
 
       {/* Ring */}
-      <View style={{ position: 'relative', marginBottom: 6 }}>
+      <View style={[st.avatarWrapper, { width: rs, height: rs }]}>
         <LinearGradient
           colors={rc}
           start={{ x: 0, y: 0 }}
@@ -70,39 +70,37 @@ function PodiumSlot({ entry, rank, showCollege }: SlotProps) {
         </View>
       </View>
 
-      {/* Name */}
-      <Text
-        maxFontSizeMultiplier={1.3}
-        style={[st.name, rank === 1 && { color: C.text, fontSize: 13 }]}
-        numberOfLines={1}
-      >
-        {entry.full_name?.split(' ')[0] ?? '?'}
-      </Text>
+      {/* Info */}
+      <View style={st.infoRow}>
+        <Text
+          maxFontSizeMultiplier={1.3}
+          style={[st.name, rank === 1 && { fontSize: 14, fontWeight: '800' }]}
+          numberOfLines={1}
+        >
+          {entry.full_name?.split(' ')[0] ?? '?'}
+        </Text>
 
-      {/* College tag (global scope) */}
-      {showCollege && entry.college_name ? (
-        <View style={st.collegeTag}>
-          <Text allowFontScaling={false} style={st.collegeTagText} numberOfLines={1}>
+        {showCollege && entry.college_name ? (
+          <Text allowFontScaling={false} style={st.collegeMiniText} numberOfLines={1}>
             {entry.college_name}
           </Text>
-        </View>
-      ) : null}
+        ) : null}
 
-      {/* Score */}
-      <Text
-        allowFontScaling={false}
-        style={[st.score, rank === 1 && { color: C.gold, fontWeight: '700', fontSize: 13 }]}
-      >
-        {entry.score.toLocaleString()} pts
-      </Text>
+        <Text
+          allowFontScaling={false}
+          style={[st.score, rank === 1 && { color: '#F59E0B', fontWeight: '800' }]}
+        >
+          {entry.score.toLocaleString()}<Text style={{ fontSize: 9, opacity: 0.7 }}> PTS</Text>
+        </Text>
+      </View>
 
       {/* Podium base */}
-      <View style={[
-        st.base,
-        { height: BASE_H[rank], backgroundColor: ac + '0D', borderColor: ac + '28' },
-      ]}>
+      <LinearGradient
+        colors={[ac + '20', ac + '10']}
+        style={[st.base, { height: BASE_H[rank], borderColor: ac + '30' }]}
+      >
         <Text style={[st.baseNum, { color: ac }]}>{rank}</Text>
-      </View>
+      </LinearGradient>
     </View>
   )
 }
@@ -136,46 +134,53 @@ export function PodiumSection({ entries, showCollege = false }: Props) {
 const st = StyleSheet.create({
   wrap:       { paddingHorizontal: 16, marginBottom: 6 },
   shell:      {
-    backgroundColor: C.raised,
+    backgroundColor: C.void,
     borderWidth: 1,
     borderColor: C.border,
-    borderRadius: 24,
-    paddingTop: 16,
-    paddingHorizontal: 8,
+    borderRadius: 32,
+    paddingTop: 24,
+    paddingHorizontal: 12,
     paddingBottom: 0,
     flexDirection: 'row',
     alignItems: 'flex-end',
     justifyContent: 'center',
-    gap: 4,
+    gap: 8,
     position: 'relative',
     overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.2,
+    shadowRadius: 15,
+    elevation: 8,
   },
   glow:       {
-    position: 'absolute', bottom: 0, left: '50%',
-    width: 260, height: 80, borderRadius: 130,
-    backgroundColor: C.gold + '12',
-    transform: [{ translateX: -130 }],
+    position: 'absolute', bottom: -50, left: '50%',
+    width: 300, height: 150, borderRadius: 150,
+    backgroundColor: '#F59E0B' + '15',
+    transform: [{ translateX: -150 }],
   },
-  slot:       { alignItems: 'center', flex: 1, gap: 4 },
-  crown:      { fontSize: 20, marginBottom: 4 },
+  slot:       { alignItems: 'center', flex: 1, gap: 2 },
+  crown:      { fontSize: 24, marginBottom: 2, transform: [{ translateY: 4 }] },
+  avatarWrapper: { position: 'relative', marginBottom: 8 },
   ring:       { justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
-  avatarFb:   { backgroundColor: C.raised, justifyContent: 'center', alignItems: 'center' },
-  avatarInit: { fontWeight: '800', color: C.text },
+  avatarFb:   { backgroundColor: C.surface, justifyContent: 'center', alignItems: 'center' },
+  avatarInit: { fontWeight: '900', color: C.text },
   badge:      {
-    position: 'absolute', bottom: -4, right: -4,
-    width: 22, height: 22, borderRadius: 11,
+    position: 'absolute', bottom: 0, right: 0,
+    width: 24, height: 24, borderRadius: 12,
     justifyContent: 'center', alignItems: 'center',
     borderWidth: 2,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3, shadowRadius: 2, elevation: 3,
   },
-  badgeText:  { fontSize: 10, fontWeight: '800', color: C.void },
-  name:       { fontSize: 11.5, fontWeight: '700', color: C.text, textAlign: 'center', maxWidth: 80 },
-  collegeTag: { backgroundColor: C.raised, borderWidth: 1, borderColor: C.border, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2, maxWidth: 80 },
-  collegeTagText:{ fontSize: 10, color: C.textMute, textAlign: 'center' },
-  score:      { fontSize: 11, color: C.textSub, textAlign: 'center' },
+  badgeText:  { fontSize: 11, fontWeight: '900', color: C.void },
+  infoRow:    { alignItems: 'center', marginBottom: 8 },
+  name:       { fontSize: 12, fontWeight: '700', color: C.text, textAlign: 'center', maxWidth: 80 },
+  collegeMiniText: { fontSize: 9, color: C.textMute, fontWeight: '600', marginBottom: 1 },
+  score:      { fontSize: 12, color: C.textSub, textAlign: 'center', fontWeight: '600' },
   base:       {
-    width: '100%', borderRadius: 10, borderWidth: 1, borderBottomWidth: 0,
+    width: '100%', borderTopLeftRadius: 12, borderTopRightRadius: 12, borderWidth: 1, borderBottomWidth: 0,
     justifyContent: 'center', alignItems: 'center', overflow: 'hidden',
-    marginTop: 6,
   },
-  baseNum:    { fontSize: 22, fontWeight: '800', opacity: 0.2 },
+  baseNum:    { fontSize: 28, fontWeight: '900', opacity: 0.15 },
 })

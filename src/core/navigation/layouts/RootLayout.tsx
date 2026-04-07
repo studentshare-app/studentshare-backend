@@ -11,7 +11,7 @@
  *   3. Navigate:
  *        unauthenticated + onboarding NOT done → /(auth)/onboarding
  *        unauthenticated + onboarding done     → /(auth)/login
- *        authenticated                         → /(tabs)/index
+ *        authenticated                         → /(tabs)
  */
 
 import { DatabaseProvider } from '@/contexts/DatabaseContext'
@@ -24,11 +24,16 @@ import * as WebBrowser from 'expo-web-browser'
 import { useEffect, useRef, useState } from 'react'
 import { AppState, LogBox, Text, View } from 'react-native'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
+import { SyncIndicator } from '@/components/SyncIndicator'
 
 import { triggerSync } from '@/core/sync'
 import { processMaterialDownloads } from '@/core/sync/fileSyncService'
 import { startRealtime, stopRealtime } from '@/core/sync/realtimeService'
 import NetInfo from '@react-native-community/netinfo'
+import * as SplashScreen from 'expo-splash-screen'
+
+// Keep the splash screen visible while we fetch resources
+SplashScreen.preventAutoHideAsync().catch(() => {})
 
 WebBrowser.maybeCompleteAuthSession()
 LogBox.ignoreLogs(['setLayoutAnimationEnabledExperimental'])
@@ -73,6 +78,7 @@ export default function RootLayout() {
   const [status, setStatus] = useState<AuthStatus>('loading')
   // null = not yet checked, true/false = resolved
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
+  const [hasHandledInitialNav, setHasHandledInitialNav] = useState(false)
 
   const navigatedRef = useRef(false)
   const signOutTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -142,8 +148,9 @@ export default function RootLayout() {
               if (!hasRefresh) {
                 // ✅ Reset navigatedRef so the nav effect fires again
                 // and redirects the user back to auth/onboarding.
-                navigatedRef.current = false
-                setStatus('unauthenticated')
+                 navigatedRef.current = false
+                 setHasHandledInitialNav(false)
+                 setStatus('unauthenticated')
               }
             }
           }, 300)
@@ -161,7 +168,7 @@ export default function RootLayout() {
       appStateSub.remove()
       if (signOutTimer.current) clearTimeout(signOutTimer.current)
     }
-  }, [status])
+  }, [])
 
   // SYNC ENGINE
   const runSync = async () => {
@@ -225,8 +232,8 @@ export default function RootLayout() {
     navigatedRef.current = true
 
     if (status === 'authenticated') {
-      console.log('[NAV] → /(tabs)/index  (authenticated)')
-      router.replace('/(tabs)/index' as any)
+      console.log('[NAV] → /(tabs)  (authenticated)')
+      router.replace('/(tabs)' as any)
     } else if (!onboardingDone) {
       console.log('[NAV] → /(auth)/onboarding  (first launch)')
       router.replace('/(auth)/onboarding' as any)
@@ -234,23 +241,22 @@ export default function RootLayout() {
       console.log('[NAV] → /(auth)/login  (unauthenticated)')
       router.replace('/(auth)/login' as any)
     }
-  }, [status, onboardingDone, navReady, router])
 
-  // LOADING SCREEN — wait for auth + onboarding resolution
-  if (!navReady || status === 'loading' || onboardingDone === null) {
-    return (
-      <View style={{ flex: 1, backgroundColor: '#0A0A0F', justifyContent: 'center', alignItems: 'center' }}>
-        <Text style={{ color: '#F0F0F8', fontSize: 18, fontWeight: '600' }}>
-          Loading...
-        </Text>
-      </View>
-    )
-  }
+    // Hide the native splash screen after a short delay to let the
+    // destination screen mount and paint.
+    setTimeout(() => {
+      SplashScreen.hideAsync().catch(() => {})
+    }, 150)
+  }, [status, onboardingDone, navReady])
 
+  // Always render Slot — expo-router requires it to be mounted for
+  // router.replace() to have a navigator to work with. The native
+  // splash screen covers the content until navigation completes.
   return (
     <DatabaseProvider>
       <QueryClientProvider client={queryClient}>
         <SafeAreaProvider>
+          <SyncIndicator />
           <PremiumProvider>
             <View style={{ flex: 1 }}>
               <Slot />

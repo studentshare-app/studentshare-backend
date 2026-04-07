@@ -14,7 +14,7 @@ import { WebView } from 'react-native-webview'
 import { C } from '@/lib/colors'
 
 // Custom Hooks & Components
-import { useCollegeInfo } from '../hooks/useCollegeInfo'
+import { useCollegeInfo, type CollegeTab } from '../hooks/useCollegeInfo'
 import { CollegeHeroSlideshow, HERO_H } from '../components/CollegeHeroSlideshow'
 import { NoticeTicker } from '../components/NoticeTicker'
 import { EventsSection } from '../components/EventsSection'
@@ -81,7 +81,7 @@ export default function CollegeInfoScreen() {
     } catch { }
   }, [])
 
-  const initialLoading = loadingId || (profile.isLoading && !profile.data) || (tabs.isLoading && !tabs.data?.length)
+  const initialLoading = loadingId || (profile.isLoading && !profile.data) || (tabs.isLoading && !(tabs.data as CollegeTab[] | undefined)?.length)
 
   if (initialLoading) {
     return (
