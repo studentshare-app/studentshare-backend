@@ -17,5 +17,28 @@ export default schemaMigrations({
         }),
       ],
     },
+    {
+      toVersion: 10,
+      steps: [
+        addColumns({
+          table: 'materials',
+          columns: [
+            { name: 'class_id',   type: 'string', isOptional: true },
+            { name: 'college_id', type: 'string', isOptional: true },
+          ],
+        }),
+      ],
+    },
+    {
+      toVersion: 11,
+      steps: [
+        addColumns({
+          table: 'materials',
+          columns: [
+            { name: 'lecturer_name', type: 'string', isOptional: true },
+          ],
+        }),
+      ],
+    },
   ],
 });

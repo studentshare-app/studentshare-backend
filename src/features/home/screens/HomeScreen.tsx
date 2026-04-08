@@ -408,7 +408,8 @@ function HomeScreenInner() {
   const isPremium  = !!profile?.is_premium
   const isVerified = !!profile?.is_verified
 
-  const materialsPillLabel = stats.total > 0 ? `${stats.total} files` : 'Materials'
+  const materialsPillLabel = (stats?.total ?? 0) > 0 ? `${stats.total} files` : 'Materials'
+  const rankPillLabel      = stats?.collegeRank ? `#${stats.collegeRank}` : 'Unranked'
 
   return (
     <View style={{ flex: 1, backgroundColor: C.void }}>
@@ -528,6 +529,19 @@ function HomeScreenInner() {
                   <Text style={s.infoPillIcon}>📂</Text>
                   <Text allowFontScaling={false} style={[s.infoPillText, s.infoPillMatsText]} numberOfLines={1}>
                     {materialsPillLabel}
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[s.infoPill, s.infoPillRank]}
+                  onPress={() => routerRef.current.push('/leaderboard' as any)}
+                  activeOpacity={0.75}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Rank ${rankPillLabel} — view leaderboard`}
+                >
+                  <Text style={s.infoPillIcon}>🏆</Text>
+                  <Text allowFontScaling={false} style={[s.infoPillText, s.infoPillRankText]} numberOfLines={1}>
+                    {rankPillLabel}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -741,6 +755,8 @@ const s = StyleSheet.create({
   infoPillText:      { fontSize: 11, fontWeight: '600', color: C.textSub, flexShrink: 1 },
   infoPillClassText: { color: C.sapphire },
   infoPillMatsText:  { color: C.gold },
+  infoPillRank:      { backgroundColor: 'rgba(238,104,104,0.08)', borderColor: 'rgba(238,104,104,0.22)' },
+  infoPillRankText:  { color: C.coral },
 
   body:    { backgroundColor: C.void, paddingHorizontal: BODY_H_PAD },
   section: { marginTop: 34 },

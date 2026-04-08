@@ -1,7 +1,7 @@
 import { appSchema, tableSchema } from '@nozbe/watermelondb';
 
 export default appSchema({
-  version: 9, // bumped from 8 — added materials fields migration
+  version: 11, // bumped from 10 — added lecturer_name to materials
   tables: [
 
     // USERS
@@ -113,7 +113,10 @@ export default appSchema({
         { name: 'file_type',         type: 'string',  isOptional: true },
         { name: 'file_size',         type: 'number',  isOptional: true },
         { name: 'course_id',         type: 'string',  isOptional: true },
+        { name: 'class_id',          type: 'string',  isOptional: true },
+        { name: 'college_id',        type: 'string',  isOptional: true },
         { name: 'lecturer_id',       type: 'string',  isOptional: true },
+        { name: 'lecturer_name',     type: 'string',  isOptional: true },
         { name: 'uploader_id',       type: 'string',  isOptional: true },
         { name: 'status',            type: 'string' }, // published | draft
         { name: 'academic_year',     type: 'string',  isOptional: true },

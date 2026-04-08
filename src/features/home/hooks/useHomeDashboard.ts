@@ -33,9 +33,12 @@ export function useHomeDashboard({
   const { records: localMaterials } = useMaterials()
   const { records: localCourses }   = useCourses()
 
+  // We only show reactive stats if they are likely more up-to-date than the cache.
+  // But we fallback to the server-calculated counts if they are available.
   const reactiveStats = {
     total:   localMaterials.length,
     courses: localCourses.length,
+    college_rank: null as number | null,
   }
 
   // ── Handle userId change ─────────────────────────────────────────────
@@ -109,7 +112,13 @@ export function useHomeDashboard({
     effectiveData,
     profile:         effectiveData?.profile            ?? null,
     recentMaterials: effectiveData?.materials          ?? [],
-    stats:           reactiveStats, // Override with reactive version
+    stats: {
+      ...reactiveStats,
+      // If we have effectiveData, use the server-side counts which are strictly class-accurate
+      total:        effectiveData?.stats?.total        ?? reactiveStats.total,
+      courses:      effectiveData?.stats?.courses      ?? reactiveStats.courses,
+      collegeRank:  effectiveData?.stats?.college_rank ?? null,
+    },
     classId:         effectiveData?.profile?.class_id  ?? null,
     collegeId:       effectiveData?.profile?.college_id ?? null,
     collegeName:     effectiveData?.profile?.college?.name ?? undefined,

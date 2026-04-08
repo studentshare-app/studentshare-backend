@@ -71,7 +71,7 @@ export function useUser(id?: string) {
 
 // ─── Courses ─────────────────────────────────────────────────────────────────
 
-export function useCourses(classId?: string) {
+export function useCourses(classId?: string | null) {
   const conditions: any[] = [Q.where('deleted', false)];
   if (classId) conditions.push(Q.where('class_id', classId));
   conditions.push(Q.sortBy('name', Q.asc));
@@ -80,7 +80,7 @@ export function useCourses(classId?: string) {
 
 // ─── Lecturers ───────────────────────────────────────────────────────────────
 
-export function useLecturers(collegeId?: string) {
+export function useLecturers(collegeId?: string | null) {
   const conditions: any[] = [Q.where('deleted', false)];
   if (collegeId) conditions.push(Q.where('college_id', collegeId));
   conditions.push(Q.sortBy('name', Q.asc));
@@ -136,9 +136,14 @@ export function useNoteById(id?: string) {
 
 // ─── Materials ───────────────────────────────────────────────────────────────
 
-export function useMaterials(courseId?: string) {
+export function useMaterials(courseId?: string | null, lecturerId?: string | null) {
   const conditions: any[] = [Q.where('deleted', false)];
-  if (courseId) conditions.push(Q.where('course_id', courseId));
+  if (courseId) {
+    conditions.push(Q.where('course_id', courseId));
+  }
+  if (lecturerId) {
+    conditions.push(Q.where('lecturer_id', lecturerId));
+  }
   conditions.push(Q.sortBy('created_at', Q.desc));
   return useQuery<any>('materials', conditions);
 }

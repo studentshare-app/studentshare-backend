@@ -14,7 +14,10 @@ export default class Material extends Model {
   @field('file_type')         fileType;
   @field('file_size')         fileSize;
   @field('course_id')         courseId;
+  @field('class_id')          classId;
+  @field('college_id')        collegeId;
   @field('lecturer_id')       lecturerId;
+  @field('lecturer_name')     lecturerName;
   @field('uploader_id')       uploaderId;
   @field('status')            status;
   @field('academic_year')     academicYear;

@@ -27,20 +27,13 @@ const TABLE_CONFIG: Record<string, TableConfig> = {
   bookmarks:             { cursorCol: 'created_at', cursorType: 'iso',    localName: 'bookmarks'         },
 }
 
-
 // ─── Sync Interface (Aliases for external use) ───────────────────────────────
 
 /** Performs a full push and pull sync. Returns Promise<void>. */
 export async function triggerSync(userId?: string): Promise<void> {
   try {
-    // 1. Get the last sync timestamp
-    const lastSyncedAt = Number(await database.adapter.getLocal('last_synced_at')) || 0
-    
-    // 2. Run the sync cycle
-    await runSync(lastSyncedAt)
-
-    // 3. Update the last sync timestamp
-    await database.adapter.setLocal('last_synced_at', Date.now().toString())
+    // Run the sync cycle (internally handles per-table cursors now)
+    await runSync()
   } catch (err) {
     console.warn('[Sync] triggerSync failed:', err)
   }
@@ -96,7 +89,7 @@ export async function pushOutbox(): Promise<void> {
           comments:          'sq_comments',
           messages:          'sq_messages',
           post_interactions: 'sq_post_interactions',
-          bookmarks:         'bookmarks', // or 'sq_bookmarks' if prefix is used
+          bookmarks:         'bookmarks',
           notes:             'notes',
           materials:         'materials',
         }
@@ -148,90 +141,138 @@ export async function pushOutbox(): Promise<void> {
   }
 }
 
-// ─── Pull changes from Supabase since last sync ──────────────────────────────
+// ─── Pull changes from Supabase table ────────────────────────────────────────
+
+const SYNC_PAGE_SIZE = 1000
 
 export async function pullIncoming(
   table: string,
-  since: number   // always Unix ms — we convert per table config
+  cursor: string | number,
+  queryBuilder?: (query: any) => any
 ): Promise<any[]> {
   const isOnline = await NetInfo.fetch().then(s => s.isConnected)
   if (!isOnline) return []
 
   const cfg = TABLE_CONFIG[table]
-  if (!cfg) {
-    console.warn(`[Sync] No config for table: ${table}`)
-    return []
-  }
-
-  // Convert cursor to the format the column expects
-  const cursorValue = cfg.cursorType === 'bigint' ? since : new Date(since).toISOString()
+  if (!cfg) return []
 
   try {
-    const { data, error } = await supabase
+    let query = supabase
       .from(table)
-      .select('*')
-      .gt(cfg.cursorCol, cursorValue)
+      .select(table === 'materials' ? '*, lecturers(name)' : '*')
+      .gt(cfg.cursorCol, cursor)
       .order(cfg.cursorCol, { ascending: true })
+      .limit(SYNC_PAGE_SIZE)
+
+    if (queryBuilder) {
+      query = queryBuilder(query)
+    }
+
+    const { data, error } = await query
 
     if (error) throw error
     return data ?? []
   } catch (err) {
     console.warn(`[Sync] pullIncoming error for ${table}:`, err)
-    return []
+    throw err // Propagate to caller to prevent cursor updates
   }
 }
 
 // ─── Full sync cycle ─────────────────────────────────────────────────────────
 
-export async function runSync(lastSyncedAt: number = 0): Promise<void> {
-  // Always try to push changes first
+export async function runSync(): Promise<void> {
+  // 1. Push local changes
   await pushOutbox()
+
+  // 2. Refresh profile for filtering
+  let collegeId: string | null = null
+  let classId: string | null = null
+  try {
+    const users = await database.collections.get('users').query(Q.where('deleted', false), Q.take(1)).fetch() as any[]
+    if (users.length > 0) {
+      collegeId = users[0].collegeId
+      classId = users[0].classId
+    }
+  } catch (e) {}
 
   const tables = Object.keys(TABLE_CONFIG)
 
   for (const table of tables) {
-    const cfg  = TABLE_CONFIG[table]
-    const rows = await pullIncoming(table, lastSyncedAt)
-
-    if (rows.length === 0) continue
-
-    for (const record of rows) {
-      try {
-        const collection = database.collections.get(cfg.localName)
-
-        await database.write(async () => {
-          const existing = await collection
-            .query(Q.where('remote_id', record.id))
-            .fetch() as any[]
-
-          const local = (existing[0] || null) as any
-
-          // Handle Soft Deletes from Supabase
-          if (record.deleted) {
-            if (local) await local.update((r: any) => { r.deleted = true })
-            return
-          }
-
-          if (!local) {
-            // CREATE
-            await collection.create((r: any) => {
-              mapRemoteToLocal(cfg.localName as any, record, r)
-            })
-          } else {
-            // UPDATE — last-write-wins based on version or cursor column
-            const serverTs = record[cfg.cursorCol] ? new Date(record[cfg.cursorCol]).getTime() : 0
-            const localTs  = local.serverUpdatedAt || 0
-
-            if (serverTs <= localTs) return
-
-            await local.update((r: any) => {
-              mapRemoteToLocal(cfg.localName as any, record, r)
-            })
-          }
-        })
-      } catch (err) {
-        console.warn(`[Sync] Failed to apply record from ${table}:`, err)
+    try {
+      const cfg = TABLE_CONFIG[table]
+      
+      // Get current cursor for this table
+      const cursorKey = `sync_cursor_${table}`
+      let currentCursorRaw = await database.adapter.getLocal(cursorKey)
+      
+      // Default cursors (approx. "beginning of time")
+      let currentCursor: string | number = cfg.cursorType === 'bigint' ? 0 : '1970-01-01T00:00:00Z'
+      if (currentCursorRaw) {
+        currentCursor = cfg.cursorType === 'bigint' ? (cfg.cursorType === 'bigint' && !isNaN(Number(currentCursorRaw)) ? Number(currentCursorRaw) : currentCursorRaw) : currentCursor
       }
+
+      let queryBuilder: ((q: any) => any) | undefined
+      if (table === 'courses' && classId) queryBuilder = (q) => q.eq('class_id', classId)
+      if (table === 'lecturers' && collegeId) queryBuilder = (q) => q.eq('college_id', collegeId)
+      if (table === 'materials' && classId) queryBuilder = (q) => q.eq('class_id', classId)
+
+      let hasMore = true
+      let recordsFetched = 0
+
+      while (hasMore) {
+        const rows = await pullIncoming(table, currentCursor, queryBuilder)
+        if (rows.length === 0) {
+          hasMore = false
+          break
+        }
+
+        recordsFetched += rows.length
+
+        // Apply records to local DB
+        for (const record of rows) {
+          try {
+            const collection = database.collections.get(cfg.localName)
+            await database.write(async () => {
+              const existing = await collection.query(Q.where('remote_id', record.id)).fetch() as any[]
+              const local = (existing[0] || null) as any
+
+              if (record.deleted) {
+                if (local) await local.update((r: any) => { r.deleted = true })
+                return
+              }
+
+              if (!local) {
+                await collection.create((r: any) => { mapRemoteToLocal(cfg.localName as any, record, r) })
+              } else {
+                const serverTs = record[cfg.cursorCol] ? new Date(record[cfg.cursorCol]).getTime() : 0
+                const localTs  = local.serverUpdatedAt || 0
+                if (serverTs > localTs) {
+                  await local.update((r: any) => { mapRemoteToLocal(cfg.localName as any, record, r) })
+                }
+              }
+            })
+          } catch (itemErr) {
+            console.warn(`[Sync] Failed record in ${table}:`, itemErr)
+          }
+        }
+
+        // Update local cursor to the timestamp of the LAST record in this page
+        const lastRecord = rows[rows.length - 1]
+        currentCursor = lastRecord[cfg.cursorCol]
+        await database.adapter.setLocal(cursorKey, String(currentCursor))
+
+        // If we got fewer than the page size, we're done with this table
+        if (rows.length < SYNC_PAGE_SIZE) {
+          hasMore = false
+        }
+      }
+      
+      if (recordsFetched > 0) {
+        console.log(`[Sync] Pulled ${recordsFetched} records for table: ${table}`)
+      }
+    } catch (tableErr) {
+      console.warn(`[Sync] Failed to sync table ${table}:`, tableErr)
+      // We don't advance the cursor, so it will retry from the same spot next time
     }
   }
-}
+}

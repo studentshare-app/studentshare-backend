@@ -96,6 +96,7 @@ const MAPPING_RULES: Record<TableName, MappingRule> = {
       file_size:         'fileSize',
       course_id:         'courseId',
       lecturer_id:       'lecturerId',
+      lecturer_name:     'lecturerName',
       uploader_id:       'uploaderId',
       uploaded_by:       'uploaderId', // Support dashboard's field name
       status:            'status',
@@ -103,6 +104,8 @@ const MAPPING_RULES: Record<TableName, MappingRule> = {
       is_premium:        'isPremium',
       content_text:      'contentText',
       is_public:         'isPublic',
+      class_id:          'classId',
+      college_id:        'collegeId',
       deleted:           'deleted',
       version:           'version',
     },
@@ -182,6 +185,13 @@ export function mapRemoteToLocal(table: TableName, remote: any, local: any) {
 
   Object.entries(rule.fields).forEach(([remoteKey, localProp]) => {
     let value = remote[remoteKey];
+    if (value === undefined || value === null) {
+      // Fallback for denormalized fields (e.g. materials.lecturer_name from lecturers.name join)
+      if (table === 'materials' && remoteKey === 'lecturer_name' && remote.lecturers) {
+        value = remote.lecturers.name;
+      }
+    }
+
     if (value !== undefined && value !== null) {
       // Cast IDs to strings to match WatermelonDB schema (prevents BigInt vs String issues)
       if (localProp === 'remoteId' || localProp.endsWith('Id')) {
@@ -193,7 +203,16 @@ export function mapRemoteToLocal(table: TableName, remote: any, local: any) {
 
   // Handle timestamps (convert ISO/BigInt to Unix ms)
   rule.dates?.forEach(remoteKey => {
-    const localProp = rule.fields[remoteKey];
+    let localProp = rule.fields[remoteKey];
+    
+    // Auto-map standard timestamps if not explicitly defined
+    if (!localProp) {
+      if (remoteKey === 'created_at') localProp = 'createdAt';
+      else if (remoteKey === 'updated_at') localProp = 'updatedAt';
+    }
+
+    if (!localProp) return;
+
     const value = remote[remoteKey];
     if (value) {
       const ms = new Date(value).getTime();

@@ -17,6 +17,8 @@ import {
   Alert,
   Animated,
   FlatList,
+  SectionList,
+  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -48,49 +50,42 @@ import { downloadMaterial as syncDownload } from '@/core/sync/fileSyncService'
 const BODY_H_PAD = 16
 
 const C = {
-  void:      '#0A0A0F',
-  deep:      '#0F0F18',
-  surface:   '#16161F',
-  raised:    '#1C1C28',
-  border:    'rgba(255,255,255,0.07)',
-  text:      '#F0F0F8',
-  textSub:   '#9090A8',
-  textMute:  '#55556A',
-  orange:    '#E8692A',
-  orangeDim: 'rgba(232,105,42,0.12)',
-  gold:      '#F5C842',
-  goldDim:   'rgba(245,200,66,0.12)',
-  green:     '#34C759',
-  greenDim:  'rgba(52,199,89,0.12)',
-  blue:      '#4B8CF5',
-  blueDim:   'rgba(75,140,245,0.12)',
-  purple:    '#9B7CF4',
-  purpleDim: 'rgba(155,124,244,0.12)',
-  red:       '#FF453A',
-  redDim:    'rgba(255,69,58,0.12)',
+  void:       '#08090C',
+  deep:       '#0D0F14',
+  surface:    '#141720',
+  raised:     '#1A1E2A',
+  border:     'rgba(255,255,255,0.06)',
+  borderHi:   'rgba(255,255,255,0.12)',
+  text:       '#EEF0F6',
+  textSub:    '#94A3B8',
+  textMute:   '#475569',
+  orange:     '#E8692A',
+  orangeDim:  'rgba(232,105,42,0.10)',
+  orangeGlow: 'rgba(232,105,42,0.18)',
+  gold:       '#DFA83C',
+  goldDim:    'rgba(223,168,60,0.10)',
+  sapphire:   '#4B8CF5',
+  sapphDim:   'rgba(75,140,245,0.10)',
+  emerald:    '#3DC99A',
+  emerDim:    'rgba(61,201,154,0.10)',
+  lavender:   '#9B7CF4',
+  lavDim:     'rgba(155,124,244,0.10)',
+  coral:      '#EE6868',
+  coralDim:   'rgba(238,104,104,0.10)',
+  sky:        '#38BDF8',
+  skyDim:     'rgba(56,189,248,0.10)',
 }
 
 const TYPE_CONFIG: Record<string, { label: string; icon: React.ComponentProps<typeof Ionicons>['name']; color: string; bg: string }> = {
-  slide:         { label: 'Slides',         icon: 'easel-outline',          color: C.blue,   bg: C.blueDim   },
-  past_question: { label: 'Past Questions', icon: 'document-text-outline',  color: C.red,    bg: C.redDim    },
-  tutorial:      { label: 'Tutorials',      icon: 'school-outline',         color: C.green,  bg: C.greenDim  },
-  book:          { label: 'Books',          icon: 'book-outline',           color: C.purple, bg: C.purpleDim },
-  notes:         { label: 'Notes',          icon: 'document-outline',       color: C.gold,   bg: C.goldDim   },
-  other:         { label: 'Other',          icon: 'folder-outline',         color: C.gold,   bg: C.goldDim   },
+  slide:         { label: 'Slides',         icon: 'easel-outline',          color: C.orange,   bg: C.orangeDim   },
+  past_question: { label: 'Past Questions', icon: 'document-text-outline',  color: C.lavender, bg: C.lavDim    },
+  tutorial:      { label: 'Tutorials',      icon: 'school-outline',         color: C.coral,    bg: C.coralDim  },
+  book:          { label: 'Books',          icon: 'book-outline',           color: C.sapphire, bg: C.sapphDim },
+  notes:         { label: 'Notes',          icon: 'document-outline',       color: C.gold,     bg: C.goldDim   },
+  other:         { label: 'Other',          icon: 'folder-outline',         color: C.sky,      bg: C.skyDim   },
 }
 
 type MaterialType = 'slide' | 'book' | 'past_question' | 'notes' | 'tutorial' | 'other'
-type FilterKey = MaterialType | 'all'
-
-const FILTER_TABS: { key: FilterKey; label: string; emoji: string }[] = [
-  { key: 'all',           label: 'All',            emoji: '📚' },
-  { key: 'slide',         label: 'Slides',         emoji: '📊' },
-  { key: 'past_question', label: 'Past Qs',        emoji: '📝' },
-  { key: 'book',          label: 'Books',          emoji: '📖' },
-  { key: 'notes',         label: 'Notes',          emoji: '🗒️' },
-  { key: 'tutorial',      label: 'Tutorials',      emoji: '👨‍🏫' },
-  { key: 'other',         label: 'Other',          emoji: '📁' },
-]
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -104,6 +99,7 @@ interface MaterialRecord {
   file_size: number | null
   is_premium: boolean
   created_at: string
+  download_count?: number
   downloadStatus?: string
   courses: {
     name: string
@@ -113,6 +109,7 @@ interface MaterialRecord {
   } | null
   lecturers?: { name: string } | null
   lecturer_id: string | null
+  lecturer_name?: string | null
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -128,8 +125,12 @@ function fmtDate(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
+function fmtCount(n: number): string {
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Sub-components
+// UI Sub-components
 // ─────────────────────────────────────────────────────────────────────────────
 function OfflineBanner() {
   return (
@@ -147,47 +148,37 @@ function OfflineBanner() {
   )
 }
 
-function SkeletonCard({ index }: { index: number }) {
-  const opacity = useRef(new Animated.Value(0.4)).current
-  useEffect(() => {
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(opacity, { toValue: 0.9, duration: 800, useNativeDriver: true }),
-        Animated.timing(opacity, { toValue: 0.4, duration: 800, useNativeDriver: true }),
-      ])
-    ).start()
-  }, [opacity])
-
+function ScalePress({ children, onPress, style }: {
+  children: React.ReactNode; onPress?: () => void; style?: any
+}) {
+  const scale = useRef(new Animated.Value(1)).current
+  const onIn  = () => Animated.spring(scale, { toValue: 0.97, useNativeDriver: true, speed: 40, bounciness: 0 }).start()
+  const onOut = () => Animated.spring(scale, { toValue: 1,    useNativeDriver: true, speed: 40, bounciness: 4 }).start()
   return (
-    <Animated.View style={[{
-      backgroundColor: C.surface, borderRadius: 16, borderWidth: 1,
-      borderColor: C.border, padding: 16, marginBottom: 12,
-    }, { opacity }]}>
-      <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center' }}>
-        <View style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: C.raised }} />
-        <View style={{ flex: 1, gap: 8 }}>
-          <View style={{ height: 14, borderRadius: 7, backgroundColor: C.raised, width: '70%' }} />
-          <View style={{ height: 11, borderRadius: 6, backgroundColor: C.raised, width: '45%' }} />
-        </View>
-      </View>
-    </Animated.View>
+    <Pressable onPress={onPress} onPressIn={onIn} onPressOut={onOut}>
+      <Animated.View style={[style, { transform: [{ scale }] }]}>{children}</Animated.View>
+    </Pressable>
   )
 }
 
-function SectionHead({ title, link, onLink }: { title: string; link?: string; onLink?: () => void }) {
+function SectionHead({ title, right }: { title: string; right?: React.ReactNode }) {
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
-        <Text style={{ fontSize: 11, fontWeight: '800', color: C.textMute, letterSpacing: 1.2, textTransform: 'uppercase' }}>
-          {title}
-        </Text>
-        <View style={{ flex: 1, height: 1, backgroundColor: C.border }} />
+    <View style={S.sectionHead}>
+      <View style={S.sectionLabelRow}>
+        <View style={S.sectionLine} />
+        <Text allowFontScaling={false} style={S.sectionTitle}>{title.toUpperCase()}</Text>
       </View>
-      {link && (
-        <TouchableOpacity onPress={onLink} style={{ marginLeft: 12 }}>
-          <Text style={{ fontSize: 11, fontWeight: '700', color: C.orange }}>{link}</Text>
-        </TouchableOpacity>
-      )}
+      {right}
+    </View>
+  )
+}
+
+function TypeChip({ label, color, bg, border }: {
+  label: string; color: string; bg: string; border: string
+}) {
+  return (
+    <View style={[S.typeChip, { backgroundColor: bg, borderColor: border }]}>
+      <Text allowFontScaling={false} style={[S.typeChipText, { color }]}>{label}</Text>
     </View>
   )
 }
@@ -243,7 +234,7 @@ function FeaturedCard({
 
           {item.downloadStatus === 'done' && (
             <View style={S.offlineBadge}>
-              <Ionicons name="cloud-download" size={10} color={C.green} />
+              <Ionicons name="cloud-download" size={10} color={C.emerald} />
               <Text style={S.offlineBadgeText}>Offline</Text>
             </View>
           )}
@@ -258,10 +249,11 @@ function FeaturedCard({
 }
 
 function MaterialCard({
-  item, index, isNew, isBookmarked, bookmarkLoading, onOpen, onChat, onToggleBookmark, onDownload, onQuiz,
+  item, index, isOfficial, isNew, isBookmarked, bookmarkLoading, onOpen, onChat, onToggleBookmark, onDownload, onQuiz,
 }: {
   item: MaterialRecord
   index: number
+  isOfficial: boolean
   isNew: boolean
   isBookmarked: boolean
   bookmarkLoading: boolean
@@ -271,131 +263,166 @@ function MaterialCard({
   onDownload: () => void
   onQuiz: () => void
 }) {
-  const cfg = TYPE_CONFIG[item.type] ?? TYPE_CONFIG.other
+  const TYPE_META: Record<string, any> = {
+    slide:         { label: 'Slides',   emoji: '📊', accentColor: C.orange,   accentDim: C.orangeDim, accentBorder: 'rgba(232,105,42,0.2)'  },
+    book:          { label: 'Book',     emoji: '📘', accentColor: C.sapphire, accentDim: C.sapphDim,  accentBorder: 'rgba(75,140,245,0.2)'   },
+    past_question: { label: 'Past Q&A', emoji: '📝', accentColor: C.lavender, accentDim: C.lavDim,    accentBorder: 'rgba(155,124,244,0.2)'  },
+    notes:         { label: 'Notes',    emoji: '🗒️', accentColor: C.gold,     accentDim: C.goldDim,   accentBorder: 'rgba(223,168,60,0.2)'   },
+    tutorial:      { label: 'Tutorial', emoji: '🎬', accentColor: C.coral,    accentDim: C.coralDim,  accentBorder: 'rgba(238,104,104,0.2)'  },
+    other:         { label: 'Other',    emoji: '📄', accentColor: C.sky,      accentDim: C.skyDim,    accentBorder: 'rgba(56,189,248,0.2)'   },
+  }
+
+  const cfg = TYPE_META[item.type] ?? TYPE_META.other
+  const isDownloaded = item.downloadStatus === 'done'
 
   return (
-    <TouchableOpacity
-      style={[{
-        backgroundColor: C.surface, borderRadius: 16, borderWidth: 1,
-        borderColor: isNew ? C.orange + '30' : C.border,
-        padding: 14, marginBottom: 12,
-      }]}
-      onPress={onOpen}
-      activeOpacity={0.82}
-    >
-      <View style={{ flexDirection: 'row', gap: 12, alignItems: 'flex-start' }}>
-        <View style={{
-          width: 44, height: 44, borderRadius: 12,
-          backgroundColor: cfg.bg, justifyContent: 'center', alignItems: 'center',
-        }}>
-          <Ionicons name={cfg.icon} size={20} color={cfg.color} />
+    <ScalePress style={S.matCard} onPress={onOpen}>
+      <View style={[S.matAccent, { backgroundColor: cfg.accentColor }]} />
+      {isOfficial && (
+        <View style={S.officialBadge}>
+          <Ionicons name="checkmark-circle" size={11} color="#fff" />
+          <Text allowFontScaling={false} style={S.officialBadgeText}>Official</Text>
+        </View>
+      )}
+      <View style={S.matInner}>
+        {/* TOP */}
+        <View style={S.matTop}>
+          <View style={[S.matIconBox, { backgroundColor: cfg.accentDim, borderColor: cfg.accentBorder }]}>
+            <Text style={S.matEmoji}>{cfg.emoji}</Text>
+          </View>
+          <View style={S.matHeader}>
+            <Text allowFontScaling={false} style={S.matCourse} numberOfLines={1}>
+              {item.courses?.name ?? '—'}{item.courses?.code ? ` • ${item.courses.code}` : ''}
+            </Text>
+            <Text maxFontSizeMultiplier={1.15} style={S.matTitle} numberOfLines={2}>{item.title}</Text>
+            <View style={S.matMetaRow}>
+              <View style={S.matMetaItem}>
+                <Ionicons name="calendar-outline" size={11} color={C.textSub} />
+                <Text allowFontScaling={false} style={S.matMetaText}>{fmtDate(item.created_at)}</Text>
+              </View>
+              {item.type === 'slide' && (item.lecturers?.name || item.lecturer_name) && (
+                <View style={S.matMetaItem}>
+                  <Ionicons name="person-outline" size={11} color={C.textSub} />
+                  <Text allowFontScaling={false} style={S.matMetaText}>{item.lecturers?.name || item.lecturer_name}</Text>
+                </View>
+              )}
+              {item.file_size ? (
+                <View style={S.matMetaItem}>
+                  <Ionicons name="server-outline" size={11} color={C.textSub} />
+                  <Text allowFontScaling={false} style={S.matMetaText}>{fmtSize(item.file_size)}</Text>
+                </View>
+              ) : null}
+            </View>
+          </View>
         </View>
 
-        <View style={{ flex: 1, gap: 3 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            {isNew && (
-              <View style={{
-                backgroundColor: C.orangeDim, borderRadius: 5, borderWidth: 1,
-                borderColor: C.orange + '40', paddingHorizontal: 5, paddingVertical: 1,
-              }}>
-                <Text style={{ fontSize: 9, fontWeight: '800', color: C.orange }}>NEW</Text>
-              </View>
-            )}
-            {item.downloadStatus === 'done' && (
-              <View style={{
-                backgroundColor: C.greenDim, borderRadius: 5, borderWidth: 1,
-                borderColor: C.green + '40', paddingHorizontal: 5, paddingVertical: 1,
-                flexDirection: 'row', alignItems: 'center', gap: 3
-              }}>
-                <Ionicons name="cloud-done" size={8} color={C.green} />
-                <Text style={{ fontSize: 9, fontWeight: '800', color: C.green }}>OFFLINE</Text>
-              </View>
-            )}
-            <Text style={{ fontSize: 14, fontWeight: '700', color: C.text, flex: 1 }} numberOfLines={2}>
-              {item.title}
-            </Text>
-          </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-            <View style={{
-              backgroundColor: cfg.bg, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2,
-            }}>
-              <Text style={{ fontSize: 10, fontWeight: '700', color: cfg.color }}>{cfg.label}</Text>
-            </View>
-            {item.courses?.name && (
-              <Text style={{ fontSize: 11, color: C.textSub }} numberOfLines={1}>
-                {item.courses.name}{item.courses.code ? ` • ${item.courses.code}` : ''}
+        {/* STAT BAR */}
+        <View style={S.statBar}>
+          {(item.download_count ?? 0) > 0 && (
+            <View style={S.stat}>
+              <Ionicons name="download-outline" size={12} color={C.textSub} />
+              <Text allowFontScaling={false} style={S.statText}>
+                {fmtCount(item.download_count!)} downloads
               </Text>
-            )}
-          </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-              <Ionicons name="calendar-outline" size={10} color={C.textMute} />
-              <Text style={{ fontSize: 10, color: C.textMute }}>{fmtDate(item.created_at)}</Text>
             </View>
-            {item.file_size ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-                <Ionicons name="server-outline" size={10} color={C.textMute} />
-                <Text style={{ fontSize: 10, color: C.textMute }}>{fmtSize(item.file_size)}</Text>
-              </View>
-            ) : null}
-            {item.lecturers?.name && (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-                <Ionicons name="person-outline" size={10} color={C.textMute} />
-                <Text style={{ fontSize: 10, color: C.textMute }}>{item.lecturers.name}</Text>
-              </View>
-            )}
+          )}
+          {(item.lecturers?.name || item.lecturer_name) && item.type !== 'slide' && (
+            <View style={S.stat}>
+              <Ionicons name="person-outline" size={12} color={C.textSub} />
+              <Text allowFontScaling={false} style={S.statText}>{item.lecturers?.name || item.lecturer_name}</Text>
+            </View>
+          )}
+          {isNew && (
+            <View style={S.newBadge}>
+              <Text allowFontScaling={false} style={S.newBadgeText}>NEW</Text>
+            </View>
+          )}
+          <View style={{ marginLeft: 'auto' }}>
+            <TypeChip label={cfg.label} color={cfg.accentColor} bg={cfg.accentDim} border={cfg.accentBorder} />
+          </View>
+        </View>
+
+        {/* ACTIONS */}
+        <View style={S.matActions}>
+          <View style={S.primaryRow}>
+            <TouchableOpacity 
+              style={[S.matBtn, S.matBtnPrimary]} 
+              onPress={onOpen} 
+              activeOpacity={0.85}
+            >
+              <Ionicons name="eye-outline" size={16} color="#fff" />
+              <Text allowFontScaling={false} style={S.matBtnText} numberOfLines={1}>Open File</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={[S.matBtn, isDownloaded ? S.matBtnSaved : S.matBtnMinor]} 
+              onPress={onDownload} 
+              activeOpacity={0.85}
+            >
+              <Ionicons 
+                name={isDownloaded ? 'checkmark-circle' : 'download-outline'} 
+                size={16} 
+                color={isDownloaded ? C.emerald : C.text} 
+              />
+              <Text allowFontScaling={false} style={[S.matBtnText, isDownloaded && { color: C.emerald }]} numberOfLines={1}>
+                {isDownloaded ? 'Offline' : 'Save'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={S.utilityRow}>
+            <TouchableOpacity
+              style={[S.utilBtn, isBookmarked && S.utilBtnActive]}
+              onPress={onToggleBookmark}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              {bookmarkLoading
+                ? <ActivityIndicator size="small" color={C.gold} />
+                : <Ionicons name={isBookmarked ? 'bookmark' : 'bookmark-outline'} size={16} color={C.gold} />
+              }
+              <Text style={[S.utilBtnText, isBookmarked && { color: C.gold }]}>Bookmark</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={S.utilBtn} onPress={onChat} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="sparkles" size={15} color={C.sapphire} />
+              <Text style={S.utilBtnText}>Ask AI</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={S.utilBtn} onPress={onQuiz} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="school-outline" size={15} color={C.lavender} />
+              <Text style={[S.utilBtnText, { color: C.lavender }]}>Quiz</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </View>
+    </ScalePress>
+  )
+}
 
-      <View style={S.matActions}>
-        <View style={S.primaryRow}>
-          <TouchableOpacity 
-            style={[S.matBtn, S.matBtnPrimary]} 
-            onPress={onOpen}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="eye-outline" size={15} color="#fff" />
-            <Text style={S.matBtnText}>Open File</Text>
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={[S.matBtn, item.downloadStatus === 'done' ? S.matBtnDone : S.matBtnMinor]} 
-            onPress={onDownload}
-            activeOpacity={0.8}
-          >
-            <Ionicons 
-              name={item.downloadStatus === 'done' ? 'cloud-done' : 'cloud-download-outline'} 
-              size={15} 
-              color={item.downloadStatus === 'done' ? C.green : C.text} 
-            />
-            <Text style={[S.matBtnText, item.downloadStatus === 'done' && { color: C.green }]}>
-              {item.downloadStatus === 'done' ? 'Offline' : 'Save'}
-            </Text>
-          </TouchableOpacity>
-        </View>
+function SkeletonCard({ index }: { index: number }) {
+  const opacity = useRef(new Animated.Value(0.4)).current
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, { toValue: 0.9, duration: 800, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0.4, duration: 800, useNativeDriver: true }),
+      ])
+    ).start()
+  }, [opacity])
 
-        <View style={S.utilityRow}>
-          <TouchableOpacity
-            style={[S.utilBtn, isBookmarked && S.utilBtnActive]}
-            onPress={onToggleBookmark}
-          >
-            {bookmarkLoading
-              ? <ActivityIndicator size="small" color={C.orange} />
-              : <Ionicons name={isBookmarked ? 'bookmark' : 'bookmark-outline'} size={14} color={isBookmarked ? C.orange : C.textSub} />
-            }
-            <Text style={[S.utilBtnText, isBookmarked && { color: C.orange }]}>Bookmark</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={S.utilBtn} onPress={onChat}>
-            <Ionicons name="chatbubble-outline" size={13} color={C.textSub} />
-            <Text style={S.utilBtnText}>AI Chat</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={S.utilBtn} onPress={onQuiz}>
-            <Ionicons name="flash-outline" size={13} color={C.orange} />
-            <Text style={[S.utilBtnText, { color: C.orange }]}>Quiz</Text>
-          </TouchableOpacity>
+  return (
+    <Animated.View style={[{
+      backgroundColor: C.surface, borderRadius: 16, borderWidth: 1,
+      borderColor: C.border, padding: 16, marginBottom: 12,
+    }, { opacity }]}>
+      <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center' }}>
+        <View style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: C.raised }} />
+        <View style={{ flex: 1, gap: 8 }}>
+          <View style={{ height: 14, borderRadius: 7, backgroundColor: C.raised, width: '70%' }} />
+          <View style={{ height: 11, borderRadius: 6, backgroundColor: C.raised, width: '45%' }} />
         </View>
       </View>
-    </TouchableOpacity>
+    </Animated.View>
   )
 }
 
@@ -408,7 +435,6 @@ export default function NewMaterialsScreen() {
   const { isOffline } = useNetworkStatus()
   const { isPremium } = usePremium()
 
-  const [filter, setFilter]   = useState<FilterKey>('all')
   const [search, setSearch]   = useState('')
   const [userId, setUserId]   = useState<string | null>(null)
   const [bookmarkLoading, setBookmarkLoading] = useState<string | null>(null)
@@ -431,26 +457,61 @@ export default function NewMaterialsScreen() {
   }, [])
 
   // ── WatermelonDB reactive hooks ──
-  const { records: localMaterials, loading: materialsLoading } = useMaterials() as { records: any[], loading: boolean }
-  const { records: localCourses }   = useCourses(undefined) as { records: any[] }
-  const { records: localLecturers } = useLecturers() as { records: any[] }
-  const { records: localBookmarks } = useBookmarks(userId || '', 'material') as { records: any[] }
   const { user }                    = useUser(userId || undefined)
   const [profileInfo, setProfileInfo] = useState<{ classId: string | null; collegeId: string | null } | null>(null)
 
-  // Fallback: fetch college_id/class_id from Supabase profiles if WatermelonDB user record is missing them
+  // Effective user info for filtering: prefer WatermelonDB, fallback to profiles
+  const effectiveClassId = useMemo(() => user?.classId || profileInfo?.classId || null, [user, profileInfo])
+  const effectiveCollegeId = useMemo(() => user?.collegeId || profileInfo?.collegeId || null, [user, profileInfo])
+
+  const { records: localMaterials, loading: materialsLoading } = useMaterials() as { records: any[], loading: boolean }
+  const { records: localCourses }   = useCourses(effectiveClassId) as { records: any[] }
+  const { records: localLecturers } = useLecturers(effectiveCollegeId) as { records: any[] }
+  const { records: localBookmarks } = useBookmarks(userId || '', 'material') as { records: any[] }
+
+  const [refreshing, setRefreshing] = useState(false)
+
+  // 1. Initial Sync on mount
+  useEffect(() => {
+    if (userId) triggerSync().catch(() => {})
+  }, [userId])
+
+  // 2. Realtime Sync: Trigger sync when a new material is added to Supabase
+  useEffect(() => {
+    const channel = supabase
+      .channel('materials-changes')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'materials' },
+        (payload) => {
+          console.log('[Realtime] New material detected, syncing...', payload.new.id)
+          triggerSync().catch(() => {})
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [])
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true)
+    try {
+      await triggerSync()
+    } catch (err) {
+      console.warn('[Sync] Manual refresh failed:', err)
+    } finally {
+      setRefreshing(false)
+    }
+  }, [])
+
   useEffect(() => {
     if (!userId) return
-    
-    // Silently fetch materials from server in background on component mount to ensure fresh data
-    triggerSync().catch(() => {})
-
-    // If we already have both from WatermelonDB user, skip
     if (user && user.classId && user.collegeId) {
       setProfileInfo({ classId: user.classId, collegeId: user.collegeId })
       return
     }
-    // Fetch from Supabase profiles as fallback
     supabase.from('profiles').select('college_id, class_id').eq('id', userId).single()
       .then(({ data }) => {
         if (data) {
@@ -459,60 +520,30 @@ export default function NewMaterialsScreen() {
       })
   }, [userId, user])
 
-  // Effective user info for filtering: prefer WatermelonDB, fallback to profiles
-  const effectiveClassId = user?.classId || profileInfo?.classId || null
-  const effectiveCollegeId = user?.collegeId || profileInfo?.collegeId || null
-
   const bookmarkedIds = useMemo(() => new Set(localBookmarks.map((b: any) => b.itemId)), [localBookmarks])
 
-  // Build lookup maps: key = Supabase remote UUID
-  const coursesMap   = useMemo(() => new Map(localCourses.map((c: any) => [c.remoteId || c.id, c])), [localCourses])
-  const lecturersMap = useMemo(() => new Map(localLecturers.map((l: any) => [l.remoteId || l.id, l])), [localLecturers])
+  const coursesMap = useMemo(() => {
+    const map = new Map<string, any>()
+    localCourses.forEach((c: any) => {
+      map.set(c.id, c)
+      if (c.remoteId) map.set(c.remoteId, c)
+    })
+    return map
+  }, [localCourses])
 
-  // ── Filter materials by user's college & class ──
+  const lecturersMap = useMemo(() => {
+    const map = new Map<string, any>()
+    localLecturers.forEach((l: any) => {
+      map.set(l.id, l)
+      if (l.remoteId) map.set(l.remoteId, l)
+    })
+    return map
+  }, [localLecturers])
+
   const materials = useMemo((): MaterialRecord[] => {
-    // If we're loading and have no materials at all, return empty
     if (materialsLoading && localMaterials.length === 0) return []
-
-    const rawList = localMaterials
-      .filter((m: any) => {
-        // Broaden matching: if it's in our local database, it's likely relevant.
-        // We only exclude it if we specifically know it's for another class/college.
-        let isMatch = false
-
-        if (m.courseId) {
-          const course = coursesMap.get(m.courseId)
-          if (course) {
-            // If we have the course, check if it belongs to our class (if we know our class)
-            if (effectiveClassId && course.classId && course.classId !== effectiveClassId) {
-              return false // Explicitly for a different class
-            }
-            isMatch = true
-          } else {
-            // Course not loaded yet but material is here — include it!
-            isMatch = true
-          }
-        }
-
-        if (m.lecturerId) {
-          const lecturer = lecturersMap.get(m.lecturerId)
-          if (lecturer) {
-            if (effectiveCollegeId && lecturer.collegeId && lecturer.collegeId !== effectiveCollegeId) {
-              return false // Explicitly for a different college
-            }
-            isMatch = true
-          } else {
-            isMatch = true
-          }
-        }
-
-        // General materials (neither course nor lecturer)
-        if (!m.courseId && !m.lecturerId) {
-          isMatch = true
-        }
-
-        return isMatch
-      })
+    return localMaterials
+      .filter((m: any) => !!effectiveClassId && m.classId === effectiveClassId)
       .map((m: any) => {
         const course   = coursesMap.get(m.courseId)
         const lecturer = lecturersMap.get(m.lecturerId)
@@ -524,21 +555,19 @@ export default function NewMaterialsScreen() {
           file_url:       m.fileUrl,
           file_size:      m.fileSize,
           is_premium:     false,
+          download_count: m.downloadCount || 0,
           created_at:     new Date(m.createdAt).toISOString(),
           downloadStatus: m.downloadStatus,
           courses:        course ? { name: course.name, code: course.code, class_id: course.classId, is_official: course.isOfficial } : null,
           lecturers:      lecturer ? { name: lecturer.name } : null,
           lecturer_id:    m.lecturerId,
+          lecturer_name:  m.lecturerName || lecturer?.name || null,
         } as MaterialRecord
       })
-      // Sort newest first
       .sort((a: MaterialRecord, b: MaterialRecord) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .slice(0, 50)
+  }, [localMaterials, coursesMap, lecturersMap, materialsLoading])
 
-    // Show latest 30 materials to ensure the screen feels active and realtime.
-    return rawList.slice(0, 30)
-  }, [localMaterials, coursesMap, lecturersMap, effectiveClassId, effectiveCollegeId, materialsLoading])
-
-  // ── Counts per type ──
   const counts = useMemo(() => {
     const c: Record<string, number> = {}
     for (const m of materials) {
@@ -547,13 +576,10 @@ export default function NewMaterialsScreen() {
     return c
   }, [materials])
 
-  // ── Featured = newest 5 ──
   const featured = useMemo(() => materials.slice(0, 5), [materials])
 
-  // ── Filtered + searched list ──
   const displayed = useMemo(() => {
     let list = materials
-    if (filter !== 'all') list = list.filter(m => m.type === filter)
     if (search.trim()) {
       const q = search.trim().toLowerCase()
       list = list.filter(m =>
@@ -563,9 +589,31 @@ export default function NewMaterialsScreen() {
       )
     }
     return list
-  }, [materials, filter, search])
+  }, [materials, search])
 
-  // ── Actions ──
+  const sections = useMemo(() => {
+    const today: MaterialRecord[] = []
+    const yesterday: MaterialRecord[] = []
+    const older: MaterialRecord[] = []
+
+    const now = Date.now()
+    const oneDay = 24 * 60 * 60 * 1000
+    const twoDays = 48 * 60 * 60 * 1000
+
+    displayed.forEach(m => {
+      const ts = new Date(m.created_at).getTime()
+      if (ts > now - oneDay) today.push(m)
+      else if (ts > now - twoDays) yesterday.push(m)
+      else older.push(m)
+    })
+
+    const res = []
+    if (today.length > 0) res.push({ title: 'New Today', data: today, isNew: true })
+    if (yesterday.length > 0) res.push({ title: 'Yesterday', data: yesterday })
+    if (older.length > 0) res.push({ title: 'Previous Submissions', data: older })
+    return res
+  }, [displayed])
+
   const toggleBookmark = useCallback(async (item: MaterialRecord) => {
     if (!userId) return Alert.alert('Sign in required')
     setBookmarkLoading(item.id)
@@ -581,7 +629,7 @@ export default function NewMaterialsScreen() {
 
   const handleDownload = useCallback((item: MaterialRecord) => {
     if (!isPremium) {
-      Alert.alert('Premium Required', 'Downloading materials for offline viewing requires a Premium subscription.', [
+      Alert.alert('Premium Required', 'Downloading materials requires Premium.', [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Upgrade', onPress: () => router.push('/subscription' as any) }
       ])
@@ -594,17 +642,10 @@ export default function NewMaterialsScreen() {
   const openQuiz = useCallback((item: MaterialRecord) => {
     router.push({
       pathname: '/quiz-flashcards' as any,
-      params: {
-        material_id: item.id,
-        title: item.title,
-        file_url: item.file_url,
-        type: item.type,
-        auto_generate: '1',
-      },
+      params: { material_id: item.id, title: item.title, file_url: item.file_url, type: item.type, auto_generate: '1' },
     })
   }, [router])
 
-  const showSkeletons = materialsLoading && materials.length === 0
   const NAV_H = insets.top + 58
 
   return (
@@ -638,31 +679,9 @@ export default function NewMaterialsScreen() {
           <Text style={S.heroTitle}>New Class Materials</Text>
         </View>
         <Text style={S.heroSub}>
-          {showSkeletons
-            ? 'Loading…'
-            : `${materials.length} material${materials.length !== 1 ? 's' : ''} available`
-          }
+          {materialsLoading ? 'Loading…' : `${materials.length} materials available`}
         </Text>
-        {!showSkeletons && materials.length > 0 && (
-          <View style={S.summaryRow}>
-            {(Object.entries(TYPE_CONFIG) as [string, (typeof TYPE_CONFIG)[string]][]).map(([key, cfg]) => {
-              const n = counts[key] || 0
-              if (!n) return null
-              const active = filter === key
-              return (
-                <TouchableOpacity
-                  key={key}
-                  style={[S.summaryChip, { backgroundColor: active ? cfg.bg : C.surface }, active && { borderColor: cfg.color + '40' }]}
-                  onPress={() => setFilter(prev => prev === key ? 'all' : key as FilterKey)}
-                  activeOpacity={0.75}
-                >
-                  <Ionicons name={cfg.icon} size={11} color={active ? cfg.color : C.textMute} />
-                  <Text style={[S.summaryChipText, { color: active ? cfg.color : C.textSub }]}>{n} {cfg.label}</Text>
-                </TouchableOpacity>
-              )
-            })}
-          </View>
-        )}
+        
         <View style={S.searchWrap}>
           <Ionicons name="search" size={14} color={C.textMute} style={{ marginLeft: 13 }} />
           <TextInput
@@ -671,119 +690,73 @@ export default function NewMaterialsScreen() {
             placeholderTextColor={C.textMute}
             value={search}
             onChangeText={setSearch}
-            returnKeyType="search"
-            clearButtonMode="while-editing"
           />
-          {search.length > 0 && (
-            <TouchableOpacity onPress={() => setSearch('')} style={{ paddingRight: 13 }}>
-              <Ionicons name="close-circle" size={16} color={C.textMute} />
-            </TouchableOpacity>
-          )}
         </View>
-        <ScrollView
-          horizontal showsHorizontalScrollIndicator={false}
-          contentContainerStyle={S.filterScroll} style={S.filterBar}
-        >
-          {FILTER_TABS.map(tab => {
-            const active   = filter === tab.key
-            const tabCount = tab.key === 'all' ? materials.length : (counts[tab.key] || 0)
-            return (
-              <TouchableOpacity
-                key={tab.key}
-                style={[S.filterPill, active && S.filterPillActive]}
-                onPress={() => setFilter(tab.key)}
-                activeOpacity={0.75}
-              >
-                <Text style={S.filterEmoji}>{tab.emoji}</Text>
-                <Text style={[S.filterLabel, active && S.filterLabelActive]}>{tab.label}</Text>
-                {tabCount > 0 && (
-                  <View style={[S.filterCount, active && S.filterCountActive]}>
-                    <Text style={[S.filterCountText, active && S.filterCountTextActive]}>{tabCount}</Text>
-                  </View>
-                )}
-              </TouchableOpacity>
-            )
-          })}
-        </ScrollView>
       </Animated.View>
 
-      {showSkeletons ? (
-        <FlatList
-          data={Array(6).fill(null)}
-          keyExtractor={(_, i) => `skel_${i}`}
-          contentContainerStyle={S.list}
-          renderItem={({ index }) => <SkeletonCard index={index} />}
-        />
+      {materialsLoading && materials.length === 0 ? (
+        <View style={S.list}>
+          {Array(6).fill(0).map((_, i) => <SkeletonCard key={i} index={i} />)}
+        </View>
       ) : (
-        <FlatList
-          data={displayed}
+        <SectionList
+          sections={sections}
           keyExtractor={item => item.id}
+          stickySectionHeadersEnabled={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={C.orange}
+              colors={[C.orange]}
+            />
+          }
           contentContainerStyle={[S.list, displayed.length === 0 && S.listEmpty]}
-          showsVerticalScrollIndicator={false}
           ListHeaderComponent={
-            featured.length > 0 && filter === 'all' && !search ? (
+            featured.length > 0 && !search ? (
               <View style={{ marginBottom: 20 }}>
                 <SectionHead title="Featured Materials" />
-                <ScrollView 
-                  horizontal 
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={{ gap: 12, paddingRight: 20 }}
-                >
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 20 }}>
                   {featured.map((item, idx) => (
                     <FeaturedCard 
-                      key={item.id} 
-                      item={item} 
-                      index={idx} 
-                      isBookmarked={bookmarkedIds.has(item.id)}
-                      onOpen={() => openMaterial(item)}
-                      onSave={() => toggleBookmark(item)}
+                      key={item.id} item={item} index={idx} isBookmarked={bookmarkedIds.has(item.id)}
+                      onOpen={() => openMaterial(item)} onSave={() => toggleBookmark(item)}
                     />
                   ))}
                 </ScrollView>
-                <View style={{ marginTop: 24 }}>
-                  <SectionHead title="All Materials" />
-                </View>
               </View>
             ) : null
           }
+          renderSectionHeader={({ section: { title, isNew } }) => (
+            <View style={{ marginTop: 20, marginBottom: 12 }}>
+              <SectionHead 
+                title={title} 
+                right={isNew && (
+                  <View style={{ backgroundColor: C.orange + '20', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, borderWidth: 1, borderColor: C.orange + '40' }}>
+                    <Text style={{ fontSize: 10, fontWeight: '800', color: C.orange }}>LATEST</Text>
+                  </View>
+                )}
+              />
+            </View>
+          )}
           ListEmptyComponent={
             <View style={S.emptyState}>
               <View style={S.emptyIcon}>
-                <Ionicons
-                  name={isOffline && materials.length === 0 ? 'cloud-offline-outline' : 'library-outline'}
-                  size={32} color={C.textMute}
-                />
+                <Ionicons name="library-outline" size={32} color={C.textMute} />
               </View>
-              <Text style={S.emptyTitle}>
-                {isOffline && materials.length === 0 ? 'No cached materials'
-                  : search.trim() ? 'No results found'
-                  : filter !== 'all' ? `No ${TYPE_CONFIG[filter]?.label ?? filter} yet`
-                  : 'No materials yet'}
-              </Text>
-              <Text style={S.emptySub}>
-                {isOffline && materials.length === 0
-                  ? 'Connect to the internet to sync class materials.'
-                  : search.trim() ? `No materials match "${search}".`
-                  : 'Materials for your class will appear here once synced.'}
-              </Text>
-              {filter !== 'all' && (
-                <TouchableOpacity style={S.clearBtn} onPress={() => setFilter('all')}>
-                  <Text style={S.clearBtnText}>Show all materials</Text>
-                </TouchableOpacity>
-              )}
+              <Text style={S.emptyTitle}>No materials found</Text>
+              <Text style={S.emptySub}>Try a different search or filter.</Text>
             </View>
           }
           renderItem={({ item, index }) => (
             <MaterialCard
               item={item} index={index}
+              isOfficial={true}
               isNew={new Date(item.created_at).getTime() > Date.now() - 24 * 60 * 60 * 1000}
               isBookmarked={bookmarkedIds.has(item.id)}
               bookmarkLoading={bookmarkLoading === item.id}
               onOpen={() => openMaterial(item)}
-              onChat={() => router.push({
-                pathname: '/chat' as any,
-                params: { material_title: item.title, file_url: item.file_url, material_id: item.id },
-              })}
+              onChat={() => router.push({ pathname: '/chat' as any, params: { material_title: item.title, file_url: item.file_url, material_id: item.id } })}
               onToggleBookmark={() => toggleBookmark(item)}
               onDownload={() => handleDownload(item)}
               onQuiz={() => openQuiz(item)}
@@ -808,26 +781,56 @@ const S = StyleSheet.create({
   navWordmark:       { fontSize: 19, fontWeight: '700', color: C.text, letterSpacing: -0.4 },
   navWordmarkAccent: { color: C.orange },
   navBtn:            { width: 38, height: 38, borderRadius: 13, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, justifyContent: 'center', alignItems: 'center' },
-  matActions:        { marginTop: 14, gap: 10 },
-  primaryRow:        { flexDirection: 'row', gap: 8 },
-  utilityRow:        { flexDirection: 'row', gap: 8 },
-  matBtn:            { flex: 1, height: 40, borderRadius: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
-  matBtnPrimary:     { backgroundColor: C.orange },
-  matBtnMinor:       { backgroundColor: C.raised, borderWidth: 1, borderColor: C.border },
-  matBtnDone:        { backgroundColor: C.greenDim, borderWidth: 1, borderColor: C.green + '30' },
-  matBtnText:        { fontSize: 13, fontWeight: '700', color: '#fff' },
-  utilBtn:           { flex: 1, height: 36, borderRadius: 8, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
-  utilBtnActive:     { backgroundColor: C.orangeDim, borderColor: C.orange + '30' },
-  utilBtnText:       { fontSize: 11, fontWeight: '600', color: C.textSub },
+  
   orbOrange: { position: 'absolute', top: -120, right: -80,  width: 300, height: 300, borderRadius: 150, backgroundColor: 'rgba(232,105,42,0.12)' },
   orbBlue:   { position: 'absolute', top:   40, left: -60,   width: 220, height: 220, borderRadius: 110, backgroundColor: 'rgba(75,140,245,0.07)'  },
   orbPurple: { position: 'absolute', top:   80, left: '38%' as any, width: 160, height: 160, borderRadius: 80, backgroundColor: 'rgba(155,124,244,0.06)' },
+  
   hero: { backgroundColor: C.deep, paddingHorizontal: BODY_H_PAD, paddingBottom: 0, overflow: 'hidden', borderBottomWidth: 1, borderBottomColor: C.border },
   blob1: { position: 'absolute', width: 280, height: 280, borderRadius: 140, top: -130, right: -90, backgroundColor: '#1A56DB', opacity: 0.07 },
   blob2: { position: 'absolute', width: 180, height: 180, borderRadius: 90,  bottom: -70, left: -50, backgroundColor: '#7C3AED', opacity: 0.06 },
   heroTitleRow:     { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 },
   heroTitle:        { fontSize: 28, fontWeight: '900', color: C.text, letterSpacing: -0.8, lineHeight: 32 },
   heroSub:          { fontSize: 12, color: C.textSub, marginBottom: 16 },
+
+  sectionHead:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
+  sectionLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 9 },
+  sectionLine:     { width: 14, height: 1, backgroundColor: C.orange },
+  sectionTitle:    { fontSize: 10, fontWeight: '700', color: C.textMute, letterSpacing: 2 },
+  
+  matCard:           { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 20, marginBottom: 12, overflow: 'hidden', position: 'relative' },
+  matAccent:         { position: 'absolute', left: 0, top: 0, bottom: 0, width: 3 },
+  officialBadge:     { position: 'absolute', top: 0, right: 0, zIndex: 2, backgroundColor: C.orange, paddingVertical: 5, paddingHorizontal: 10, borderBottomLeftRadius: 12 },
+  officialBadgeText: { fontSize: 9, fontWeight: '800', color: '#fff' },
+  matInner:          { padding: 16, paddingLeft: 20 },
+  matTop:            { flexDirection: 'row', gap: 14, alignItems: 'flex-start' },
+  matIconBox:        { width: 54, height: 54, borderRadius: 16, justifyContent: 'center', alignItems: 'center', borderWidth: 1 },
+  matEmoji:          { fontSize: 28 },
+  matHeader:         { flex: 1 },
+  matCourse:         { fontSize: 10, fontWeight: '700', color: C.orange, textTransform: 'uppercase' },
+  matTitle:          { fontSize: 17, fontWeight: '700', color: C.text, lineHeight: 22 },
+  matMetaRow:        { flexDirection: 'row', gap: 12, marginTop: 4 },
+  matMetaItem:       { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  matMetaText:       { fontSize: 11, color: C.textSub },
+  statBar:           { flexDirection: 'row', alignItems: 'center', marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.border },
+  stat:              { flexDirection: 'row', alignItems: 'center', gap: 4, marginRight: 12 },
+  statText:          { fontSize: 11, color: C.textSub },
+  newBadge:          { backgroundColor: '#052e16', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
+  newBadgeText:      { fontSize: 9, fontWeight: '900', color: '#4ade80' },
+  typeChip:          { borderRadius: 7, paddingHorizontal: 9, paddingVertical: 3, borderWidth: 1 },
+  typeChipText:      { fontSize: 9.5, fontWeight: '700' },
+  matActions: { marginTop: 16, gap: 10 },
+  primaryRow: { flexDirection: 'row', gap: 8 },
+  utilityRow: { flexDirection: 'row', gap: 8, paddingTop: 4 },
+  matBtn:     { flex: 1, height: 42, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
+  matBtnPrimary:     { backgroundColor: C.orange },
+  matBtnMinor:       { backgroundColor: C.raised, borderWidth: 1, borderColor: C.border },
+  matBtnSaved:       { backgroundColor: C.emerDim, borderWidth: 1, borderColor: C.emerald },
+  matBtnText:        { fontSize: 13, fontWeight: '700', color: '#fff' },
+  utilBtn:           { flex: 1, height: 38, borderRadius: 10, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
+  utilBtnActive:     { backgroundColor: C.goldDim, borderColor: C.gold + '40' },
+  utilBtnText:       { fontSize: 11, fontWeight: '600', color: C.textSub },
+
   summaryRow:      { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 14 },
   summaryChip:     { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, borderWidth: 1, borderColor: C.border },
   summaryChipText: { fontSize: 11, fontWeight: '700' },
@@ -852,7 +855,6 @@ const S = StyleSheet.create({
   emptySub:   { fontSize: 13, color: C.textSub, textAlign: 'center', lineHeight: 20, marginBottom: 20 },
   clearBtn:   { backgroundColor: C.orangeDim, borderRadius: 12, paddingHorizontal: 20, paddingVertical: 10, borderWidth: 1, borderColor: C.orange + '30' },
   clearBtnText: { fontSize: 13, fontWeight: '700', color: C.orange },
-  iconBtn: { padding: 4, width: 32, height: 32, justifyContent: 'center', alignItems: 'center' },
   featCard: {
     width: 200, height: 140, borderRadius: 20, backgroundColor: C.surface,
     padding: 16, overflow: 'hidden', borderWidth: 1, borderColor: C.border,
@@ -870,7 +872,7 @@ const S = StyleSheet.create({
   featActionBtnActive: { backgroundColor: C.orangeDim, borderColor: C.orange + '40' },
   featActionText: { fontSize: 10, fontWeight: '700', color: C.textSub },
   featActionTextActive: { color: C.orange },
-  offlineBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: C.greenDim, paddingHorizontal: 6, paddingVertical: 3, borderRadius: 6 },
-  offlineBadgeText: { fontSize: 9, fontWeight: '800', color: C.green },
   featArrow: { width: 24, height: 24, borderRadius: 12, backgroundColor: C.raised, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: C.border },
+  offlineBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: C.emerDim, paddingHorizontal: 6, paddingVertical: 3, borderRadius: 6 },
+  offlineBadgeText: { fontSize: 9, fontWeight: '800', color: C.emerald },
 })

@@ -413,6 +413,10 @@
 <button class="nav-btn" id="navArticles">📰 Articles</button>
 <button class="nav-btn" id="navFlags">🚩 Feature Flags</button>
 
+    <div class="nav-section">Logs</div>
+    <button class="nav-btn" id="navActivities">📉 User Activities</button>
+    <button class="nav-btn" id="navCrashes">💥 Crashes</button>
+
     <button class="logout-btn" id="logoutBtn">⬅ Log Out</button>
   </div>
 
@@ -932,6 +936,15 @@
       <div id="spotlightsList"></div>
     </div>
 
+    <div id="articlesTab" class="hidden component-tab">
+      <h1 class="page-title">📰 Articles Manager</h1>
+      <div class="cit-toolbar">
+        <select class="componentCollegeSelect" onchange="loadComponentData('articles')"><option value="">Select a college...</option></select>
+        <button class="cit-add-btn" onclick="openArticleModal()">+ Add Article</button>
+      </div>
+      <div id="articlesList"></div>
+    </div>
+
     <!-- FEATURE FLAGS -->
     <div id="flagsTab" class="hidden">
       <h1 class="page-title">🚩 Feature Flags</h1>
@@ -945,6 +958,144 @@
       <div id="flagsList"><div class="empty-state">Loading...</div></div>
     </div>
 
+    <!-- USER ACTIVITIES -->
+    <div id="activitiesTab" class="hidden">
+      <h1 class="page-title">📉 User Activities</h1>
+      <div class="card" style="padding:0;overflow:hidden">
+        <div style="padding:18px 20px;border-bottom:1px solid #E5E7EB;display:flex;align-items:center;justify-content:space-between">
+          <h3 style="font-size:15px;font-weight:700;color:#111827">Recent Activity</h3>
+          <button onclick="loadActivitiesTab()" style="padding:7px 14px;background:#F3F4F6;color:#374151;border:none;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer">↻ Refresh</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Action</th>
+              <th>Details</th>
+              <th>Date</th>
+            </tr>
+          </thead>
+          <tbody id="activitiesListBody">
+            <tr><td colspan="4" class="empty-state">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- CRASHES -->
+    <div id="crashesTab" class="hidden">
+      <h1 class="page-title">💥 Crash Reports</h1>
+      <div class="card" style="padding:0;overflow:hidden">
+        <div style="padding:18px 20px;border-bottom:1px solid #E5E7EB;display:flex;align-items:center;justify-content:space-between">
+          <h3 style="font-size:15px;font-weight:700;color:#111827">Recent Crashes</h3>
+          <button onclick="loadCrashesTab()" style="padding:7px 14px;background:#F3F4F6;color:#374151;border:none;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer">↻ Refresh</button>
+        </div>
+        <table style="table-layout:fixed">
+          <thead>
+            <tr>
+              <th style="width:20%">User</th>
+              <th style="width:40%">Error Message</th>
+              <th style="width:20%">App Version</th>
+              <th style="width:20%">Date</th>
+            </tr>
+          </thead>
+          <tbody id="crashesListBody">
+            <tr><td colspan="4" class="empty-state">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════════ MODAL: Notices ═══════════════════ -->
+<div id="noticeModal" class="modal-overlay hidden" onclick="if(event.target===this)closeModal('noticeModal')">
+  <div class="modal" style="max-width:480px">
+    <h2 id="noticeModalTitle">Add Notice</h2>
+    <input type="hidden" id="noticeId" />
+    <div class="field"><label>Notice Message</label><textarea id="noticeMessage" rows="4" style="width:100%;padding:11px 13px;border-radius:8px;border:1.5px solid #E5E7EB;font-size:14px;outline:none" placeholder="Enter notice content..."></textarea></div>
+    <div class="checkbox-field"><input type="checkbox" id="noticeActive" checked /><label for="noticeActive">Active</label></div>
+    <div class="modal-actions">
+      <button class="modal-cancel" onclick="closeModal('noticeModal')">Cancel</button>
+      <button class="modal-save" onclick="saveNotice()">Save Notice</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ MODAL: Events ═══════════════════ -->
+<div id="eventModal" class="modal-overlay hidden" onclick="if(event.target===this)closeModal('eventModal')">
+  <div class="modal">
+    <h2 id="eventModalTitle">Add Event</h2>
+    <input type="hidden" id="eventId" />
+    <div class="field"><label>Event Title</label><input type="text" id="eventTitle" placeholder="e.g. Annual Sports Meet" /></div>
+    <div class="grid-2">
+      <div class="field"><label>Type</label><select id="eventType"><option value="academic">Academic</option><option value="social">Social</option><option value="sports">Sports</option><option value="holiday">Holiday</option></select></div>
+      <div class="field"><label>Date</label><input type="text" id="eventDate" placeholder="e.g. 15th April 2024" /></div>
+    </div>
+    <div class="field"><label>Location</label><input type="text" id="eventLocation" placeholder="e.g. Main Hall" /></div>
+    <div class="field"><label>Description</label><textarea id="eventDescription" rows="3" style="width:100%;padding:11px 13px;border-radius:8px;border:1.5px solid #E5E7EB;font-size:14px;outline:none"></textarea></div>
+    <div class="field">
+      <label>Image (Optional)</label>
+      <div style="display:flex;align-items:center;gap:12px">
+        <div id="eventImagePreview" class="slide-thumb-ph">🖼</div>
+        <input type="file" id="eventImageInput" accept="image/*" style="display:none" onchange="previewComponentImage(this, 'eventImagePreview')" />
+        <button onclick="document.getElementById('eventImageInput').click()" class="btn-sm btn-edit">Choose Image</button>
+      </div>
+    </div>
+    <div class="checkbox-field"><input type="checkbox" id="eventFeatured" /><label for="eventFeatured">Featured Event</label></div>
+    <div class="modal-actions">
+      <button class="modal-cancel" onclick="closeModal('eventModal')">Cancel</button>
+      <button class="modal-save" onclick="saveEvent()">Save Event</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ MODAL: Clubs ═══════════════════ -->
+<div id="clubModal" class="modal-overlay hidden" onclick="if(event.target===this)closeModal('clubModal')">
+  <div class="modal" style="max-width:420px">
+    <h2 id="clubModalTitle">Add Club</h2>
+    <input type="hidden" id="clubId" />
+    <div class="field"><label>Club Name</label><input type="text" id="clubName" placeholder="e.g. Debate Society" /></div>
+    <div class="field">
+      <label>Image (Optional)</label>
+      <div style="display:flex;align-items:center;gap:12px">
+        <div id="clubImagePreview" class="slide-thumb-ph">🖼</div>
+        <input type="file" id="clubImageInput" accept="image/*" style="display:none" onchange="previewComponentImage(this, 'clubImagePreview')" />
+        <button onclick="document.getElementById('clubImageInput').click()" class="btn-sm btn-edit">Choose Image</button>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="modal-cancel" onclick="closeModal('clubModal')">Cancel</button>
+      <button class="modal-save" onclick="saveClub()">Save Club</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ MODAL: Spotlights ═══════════════════ -->
+<div id="spotlightModal" class="modal-overlay hidden" onclick="if(event.target===this)closeModal('spotlightModal')">
+  <div class="modal">
+    <h2 id="spotlightModalTitle">Add Spotlight</h2>
+    <input type="hidden" id="spotlightId" />
+    <div class="field"><label>Spotlight Title</label><input type="text" id="spotlightTitle" placeholder="e.g. Alumni Success" /></div>
+    <div class="field"><label>Quote / Message</label><textarea id="spotlightQuote" rows="3" style="width:100%;padding:11px 13px;border-radius:8px;border:1.5px solid #E5E7EB;font-size:14px;outline:none"></textarea></div>
+    <div class="grid-2">
+      <div class="field"><label>Author</label><input type="text" id="spotlightAuthor" placeholder="e.g. Jane Doe" /></div>
+      <div class="field"><label>Role</label><input type="text" id="spotlightRole" placeholder="e.g. CEO at TechCorp" /></div>
+    </div>
+    <div class="field">
+      <label>Image (Optional)</label>
+      <div style="display:flex;align-items:center;gap:12px">
+        <div id="spotlightImagePreview" class="slide-thumb-ph">🖼</div>
+        <input type="file" id="spotlightImageInput" accept="image/*" style="display:none" onchange="previewComponentImage(this, 'spotlightImagePreview')" />
+        <button onclick="document.getElementById('spotlightImageInput').click()" class="btn-sm btn-edit">Choose Image</button>
+      </div>
+    </div>
+    <div class="checkbox-field"><input type="checkbox" id="spotlightActive" checked /><label for="spotlightActive">Active</label></div>
+    <div class="modal-actions">
+      <button class="modal-cancel" onclick="closeModal('spotlightModal')">Cancel</button>
+      <button class="modal-save" onclick="saveSpotlight()">Save Spotlight</button>
+    </div>
   </div>
 </div>
 
@@ -970,6 +1121,10 @@
     <div class="grid-2" style="margin-bottom:0">
       <div class="field"><label>Type</label><select id="editMatTypeSelect"><option value="past_question">Past Question</option><option value="slide">Slide</option><option value="book">Book</option><option value="tutorial">Tutorial</option></select></div>
       <div class="field"><label>Academic Year</label><input type="text" id="editMatYear" /></div>
+    </div>
+    <div id="editLecturerField" style="background:#F5F3FF;border-radius:10px;padding:14px;margin-bottom:16px;border:1px solid #DDD6FE;display:none">
+      <p style="font-size:13px;font-weight:700;color:#7C3AED;margin-bottom:8px">🧑‍🏫 Lecturer</p>
+      <div class="field" style="margin-bottom:0"><select id="editMatLecturerSelect"><option value="">Select lecturer...</option></select></div>
     </div>
     <div class="checkbox-field"><input type="checkbox" id="editMatPremium" /><label for="editMatPremium" style="font-size:14px;font-weight:600">Premium content</label></div>
     <div id="editAiStatus" style="margin-bottom:12px;font-size:13px"></div>
@@ -1271,7 +1426,8 @@ const navMap = [
     ['navColleges','colleges'],['navLogos','logos'],['navClasses','classes'],
     ['navCourses','courses'],['navLecturers','lecturers'],
     ['navCollegePage','collegePage'],['navCollegeInfoTabs','collegeInfoTabs'],
-    ['navSlides','slides'],['navNotices','notices'],['navEvents','events'],['navClubs','clubs'],['navSpotlights','spotlights'],['navArticles','articles'],['navFlags','flags']
+    ['navSlides','slides'],['navNotices','notices'],['navEvents','events'],['navClubs','clubs'],['navSpotlights','spotlights'],['navArticles','articles'],['navFlags','flags'],
+    ['navActivities','activities'],['navCrashes','crashes']
   ];
   navMap.forEach(([btnId,tab])=>{
     document.getElementById(btnId).addEventListener('click', function(){ switchTab(tab, this) })
@@ -1338,7 +1494,7 @@ async function updatePendingBadge(){
 const ALL_TABS = [
   'upload','materials','users','requests','payments','notifications',
   'colleges','logos','classes','courses','lecturers',
-  'collegePage','collegeInfoTabs','slides','articles','flags','notices','events','clubs','spotlights'
+  'collegePage','collegeInfoTabs','slides','articles','flags','notices','events','clubs','spotlights','activities','crashes'
 ]
 
 function switchTab(tab, btn){
@@ -1367,7 +1523,9 @@ function switchTab(tab, btn){
   if(tab==='collegePage')    { loadWbColleges(); refreshWbCmEditors() }
   if(tab==='collegeInfoTabs') loadCitColleges()
   if(tab==='slides')         loadSlidesColleges()
-  if(['notices','events','clubs','spotlights'].includes(tab)) loadInfoTab(tab)
+  if(tab==='activities')     loadActivitiesTab()
+  if(tab==='crashes')        loadCrashesTab()
+  if(['notices','events','clubs','spotlights','articles'].includes(tab)) loadInfoTab(tab)
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -1386,6 +1544,12 @@ async function loadCollegesIntoSelects(){
     let def = isFilter ? 'All Colleges' : isWb ? 'Choose a college...' : (isCit||isSlides) ? 'Select a college...' : 'Select college...'
     el.innerHTML = `<option value="">${def}</option>`
     colleges.forEach(c=>el.innerHTML+=`<option value="${c.id}">${esc(c.name)}</option>`)
+  })
+
+  // Populate component selects
+  document.querySelectorAll('.componentCollegeSelect').forEach(sel => {
+    sel.innerHTML = '<option value="">Select a college...</option>'
+    colleges.forEach(c => sel.innerHTML += `<option value="${c.id}">${esc(c.name)}</option>`)
   })
 }
 
@@ -1656,7 +1820,7 @@ async function deleteNotifTemplate(id) {
 //  WEB BUILDER
 // ════════════════════════════════════════════════════════════════════════
 let wbHtmlEditor=null, wbCssEditor=null, wbJsEditor=null
-let wbCurrentTab='html', wbCurrentCollegeId=null, wbCurrentPageId=null, wbDevice='desktop'
+let wbCurrentTab='html', wbCurrentCollegeId=null, wbCurrentPageId=null, wbDevice='desktop', wbCreatingArticle=false
 
 function initWebBuilder(){
   wbHtmlEditor=CodeMirror(document.getElementById('wbWrapHtml'),{mode:'htmlmixed',theme:'dracula',lineNumbers:true,autoCloseTags:true,matchBrackets:true,autoCloseBrackets:true,lineWrapping:false,tabSize:2,indentWithTabs:false})
@@ -1722,8 +1886,10 @@ function closeNewPageModal(){ document.getElementById('wbNewPageModal').classLis
 async function createNewPage(){
   const name = document.getElementById('wbNewPageName').value.trim()
   if(!name){ toast('Enter a page name','error'); return }
-  const {data,error} = await sb.from('college_pages').insert({ college_id: wbCurrentCollegeId, name, page_html: getDefaultHtml(name), page_css: getDefaultCss(), page_js: getDefaultJs() }).select().single()
+  const payload = { college_id: wbCurrentCollegeId, name, page_html: getDefaultHtml(name), page_css: getDefaultCss(), page_js: getDefaultJs(), page_type: wbCreatingArticle ? 'article' : 'custom' }
+  const {data,error} = await sb.from('college_pages').insert(payload).select().single()
   if(error){ toast('Error: '+error.message,'error'); return }
+  wbCreatingArticle = false
   closeNewPageModal(); toast('Page "'+name+'" created!')
   await onWbCollegeChange()
   const sel = document.getElementById('wbPageSelect')
@@ -1943,6 +2109,127 @@ async function deleteCitTab(){
 async function quickDeleteCitTab(id){ if(!confirm('Delete this tab?')) return; await sb.from('college_info_tabs').delete().eq('id', id); toast('Tab deleted.'); await loadCitTabs() }
 
 // ════════════════════════════════════════════════════════════════════════
+//  COLLEGE INFO COMPONENTS logic
+// ════════════════════════════════════════════════════════════════════════
+
+function loadInfoTab(tab){ /* handled by component select changes */ }
+
+async function loadComponentData(type){
+  const tabEl = document.getElementById(type+'Tab')
+  if(!tabEl) return
+  const select = tabEl.querySelector('.componentCollegeSelect')
+  const collegeId = select.value
+  const list = document.getElementById(type+'List')
+  if(!collegeId){ list.innerHTML = `<div class="cit-no-college"><div class="cit-no-college-icon">🏛</div><h3>Select a college above</h3></div>`; return }
+  list.innerHTML = '<p style="color:#94A3B8;padding:20px">Loading...</p>'
+  let data, error
+  try {
+    if(type === 'notices') ({data, error} = await sb.from('college_notices').select('*').eq('college_id', collegeId).order('created_at', {ascending: false}))
+    else if(type === 'events') ({data, error} = await sb.from('college_events').select('*').eq('college_id', collegeId).order('created_at', {ascending: false}))
+    else if(type === 'clubs') ({data, error} = await sb.from('college_clubs').select('*').eq('college_id', collegeId).order('created_at', {ascending: false}))
+    else if(type === 'spotlights') ({data, error} = await sb.from('college_spotlights').select('*').eq('college_id', collegeId).order('created_at', {ascending: false}))
+    else if(type === 'articles') ({data, error} = await sb.from('college_pages').select('*').eq('college_id', collegeId).eq('page_type', 'article').order('article_order', {ascending: true}))
+    if(error) throw error
+    if(!data || !data.length) { list.innerHTML = `<div class="cit-empty"><div class="cit-empty-icon">📂</div><p style="font-size:14px;color:#64748B">No ${type} found for this college.</p></div>`; return }
+    list.innerHTML = data.map(item => {
+      let title = '', meta = '', imgHtml = ''
+      if(type === 'notices') { title = item.message; meta = item.is_active ? '<span class="cit-tab-badge active">Active</span>' : '<span class="cit-tab-badge inactive">Hidden</span>' }
+      else if(type === 'events') { title = item.title; meta = `${esc(item.type)} · ${esc(item.date)} · ${esc(item.location)}`; if(item.image_url) imgHtml = `<img src="${esc(item.image_url)}" class="college-logo" style="border-radius:8px" />` }
+      else if(type === 'clubs') { title = item.name; if(item.image_url) imgHtml = `<img src="${esc(item.image_url)}" class="college-logo" style="border-radius:8px" />` }
+      else if(type === 'spotlights') { title = item.title; meta = `${esc(item.author)} · ${esc(item.role)}`; if(item.image_url) imgHtml = `<img src="${esc(item.image_url)}" class="college-logo" style="border-radius:8px" />` }
+      else if(type === 'articles') { title = item.name; meta = `Order: ${item.article_order||999} ${item.is_featured ? '· ⭐ Featured' : ''}` }
+      return `<div class="cit-tab-row">
+        ${imgHtml || '<div class="cit-tab-icon-box">📄</div>'}
+        <div class="cit-tab-info">
+          <div class="cit-tab-label">${esc(title)}</div>
+          <div class="cit-tab-meta">${meta}</div>
+        </div>
+        <div class="cit-tab-actions">
+          <button class="btn-sm btn-edit" onclick="openEditComponent('${type}', '${item.id}')">Edit</button>
+          <button class="btn-sm btn-reject" onclick="deleteComponent('${type}', '${item.id}')">🗑</button>
+        </div>
+      </div>`
+    }).join('')
+  } catch (e) { list.innerHTML = `<p style="color:#EF4444;padding:20px">Error: ${esc(e.message)}</p>` }
+}
+
+function previewComponentImage(input, previewId) {
+  const file = input.files[0]; if(!file) return
+  const reader = new FileReader(); reader.onload = e => { const p = document.getElementById(previewId); p.style.cssText = `width:52px;height:52px;border-radius:8px;border:1px solid #E5E7EB;background:url(${e.target.result}) center/cover;font-size:0`; p.textContent = '' }; reader.readAsDataURL(file)
+}
+async function uploadComponentImage(file, folder) { const path = `${folder}/${Date.now()}_${file.name.split('.').pop()}`; const { error } = await sb.storage.from('college-logos').upload(path, file); if(error) throw error; return sb.storage.from('college-logos').getPublicUrl(path).data.publicUrl }
+
+async function openEditComponent(type, id) { if(type === 'notices') openNoticeModal(id); else if(type === 'events') openEventModal(id); else if(type === 'clubs') openClubModal(id); else if(type === 'spotlights') openSpotlightModal(id); else if(type === 'articles') openArticleModal(id) }
+async function deleteComponent(type, id) {
+  if(!confirm(`Delete this ${type.slice(0,-1)}?`)) return
+  let table = (type === 'notices' ? 'college_notices' : type==='events' ? 'college_events' : type==='clubs' ? 'college_clubs' : type==='spotlights' ? 'college_spotlights' : 'college_pages')
+  const { error } = await sb.from(table).delete().eq('id', id); if(error) { toast('Delete failed: '+error.message, 'error'); return }; toast('Deleted successfully.'); loadComponentData(type)
+}
+
+async function openNoticeModal(id) {
+  const collegeId = document.querySelector('#noticesTab .componentCollegeSelect').value; if(!collegeId && !id){ toast('Select a college first','error'); return }
+  document.getElementById('noticeId').value = id || ''; document.getElementById('noticeModalTitle').textContent = id ? 'Edit Notice' : 'Add Notice'
+  if(id){ const { data } = await sb.from('college_notices').select('*').eq('id', id).single(); document.getElementById('noticeMessage').value = data.message; document.getElementById('noticeActive').checked = data.is_active }
+  else { document.getElementById('noticeMessage').value = ''; document.getElementById('noticeActive').checked = true }
+  document.getElementById('noticeModal').classList.remove('hidden')
+}
+async function saveNotice() {
+  const collegeId = document.querySelector('#noticesTab .componentCollegeSelect').value, id = document.getElementById('noticeId').value, message = document.getElementById('noticeMessage').value.trim(), is_active = document.getElementById('noticeActive').checked
+  if(!message){ toast('Message required', 'error'); return }; const payload = { college_id: collegeId, message, is_active }; let error
+  if(id) ({error} = await sb.from('college_notices').update(payload).eq('id', id)); else ({error} = await sb.from('college_notices').insert(payload))
+  if(error){ toast('Save failed: '+error.message, 'error'); return }; toast('Notice saved!'); closeModal('noticeModal'); loadComponentData('notices')
+}
+
+async function openEventModal(id) {
+  const collegeId = document.querySelector('#eventsTab .componentCollegeSelect').value; if(!collegeId && !id){ toast('Select a college first','error'); return }
+  document.getElementById('eventId').value = id || ''; document.getElementById('eventModalTitle').textContent = id ? 'Edit Event' : 'Add Event'
+  const prev = document.getElementById('eventImagePreview'); prev.style.cssText = ''; prev.textContent = '🖼'; document.getElementById('eventImageInput').value = ''
+  if(id){
+    const { data } = await sb.from('college_events').select('*').eq('id', id).single()
+    document.getElementById('eventTitle').value = data.title; document.getElementById('eventType').value = data.type; document.getElementById('eventDate').value = data.date; document.getElementById('eventLocation').value = data.location; document.getElementById('eventDescription').value = data.description || ''; document.getElementById('eventFeatured').checked = data.is_featured
+    if(data.image_url) { prev.style.cssText = `width:52px;height:52px;border-radius:8px;border:1px solid #E5E7EB;background:url(${esc(data.image_url)}) center/cover;font-size:0`; prev.textContent = '' }
+  } else { document.getElementById('eventTitle').value = ''; document.getElementById('eventType').value = 'academic'; document.getElementById('eventDate').value = ''; document.getElementById('eventLocation').value = ''; document.getElementById('eventDescription').value = ''; document.getElementById('eventFeatured').checked = false }
+  document.getElementById('eventModal').classList.remove('hidden')
+}
+async function saveEvent() {
+  const collegeId = document.querySelector('#eventsTab .componentCollegeSelect').value, id = document.getElementById('eventId').value, payload = { college_id: collegeId, title: document.getElementById('eventTitle').value.trim(), type: document.getElementById('eventType').value, date: document.getElementById('eventDate').value.trim(), location: document.getElementById('eventLocation').value.trim(), description: document.getElementById('eventDescription').value.trim(), is_featured: document.getElementById('eventFeatured').checked }
+  if(!payload.title || !payload.date || !payload.location){ toast('Fill required fields', 'error'); return }
+  try { const file = document.getElementById('eventImageInput').files[0]; if(file) payload.image_url = await uploadComponentImage(file, 'events'); let error; if(id) ({error} = await sb.from('college_events').update(payload).eq('id', id)); else ({error} = await sb.from('college_events').insert(payload)); if(error) throw error; toast('Event saved!'); closeModal('eventModal'); loadComponentData('events') } catch(e) { toast('Error: '+e.message, 'error') }
+}
+
+async function openClubModal(id) {
+  const collegeId = document.querySelector('#clubsTab .componentCollegeSelect').value; if(!collegeId && !id){ toast('Select a college first','error'); return }
+  document.getElementById('clubId').value = id || ''; document.getElementById('clubModalTitle').textContent = id ? 'Edit Club' : 'Add Club'
+  const prev = document.getElementById('clubImagePreview'); prev.style.cssText = ''; prev.textContent = '🖼'; document.getElementById('clubImageInput').value = ''
+  if(id){ const { data } = await sb.from('college_clubs').select('*').eq('id', id).single(); document.getElementById('clubName').value = data.name; if(data.image_url) { prev.style.cssText = `width:52px;height:52px;border-radius:8px;border:1px solid #E5E7EB;background:url(${esc(data.image_url)}) center/cover;font-size:0`; prev.textContent = '' } }
+  else { document.getElementById('clubName').value = '' }
+  document.getElementById('clubModal').classList.remove('hidden')
+}
+async function saveClub() {
+  const collegeId = document.querySelector('#clubsTab .componentCollegeSelect').value, id = document.getElementById('clubId').value, name = document.getElementById('clubName').value.trim()
+  if(!name){ toast('Name required', 'error'); return }; try { const payload = { college_id: collegeId, name }; const file = document.getElementById('clubImageInput').files[0]; if(file) payload.image_url = await uploadComponentImage(file, 'clubs'); let error; if(id) ({error} = await sb.from('college_clubs').update(payload).eq('id', id)); else ({error} = await sb.from('college_clubs').insert(payload)); if(error) throw error; toast('Club saved!'); closeModal('clubModal'); loadComponentData('clubs') } catch(e) { toast('Error: '+e.message, 'error') }
+}
+
+async function openSpotlightModal(id) {
+  const collegeId = document.querySelector('#spotlightsTab .componentCollegeSelect').value; if(!collegeId && !id){ toast('Select a college first','error'); return }
+  document.getElementById('spotlightId').value = id || ''; document.getElementById('spotlightModalTitle').textContent = id ? 'Edit Spotlight' : 'Add Spotlight'
+  const prev = document.getElementById('spotlightImagePreview'); prev.style.cssText = ''; prev.textContent = '🖼'; document.getElementById('spotlightImageInput').value = ''
+  if(id){ const { data } = await sb.from('college_spotlights').select('*').eq('id', id).single(); document.getElementById('spotlightTitle').value = data.title; document.getElementById('spotlightQuote').value = data.quote; document.getElementById('spotlightAuthor').value = data.author; document.getElementById('spotlightRole').value = data.role; document.getElementById('spotlightActive').checked = data.is_active; if(data.image_url) { prev.style.cssText = `width:52px;height:52px;border-radius:8px;border:1px solid #E5E7EB;background:url(${esc(data.image_url)}) center/cover;font-size:0`; prev.textContent = '' } }
+  else { document.getElementById('spotlightTitle').value = ''; document.getElementById('spotlightQuote').value = ''; document.getElementById('spotlightAuthor').value = ''; document.getElementById('spotlightRole').value = ''; document.getElementById('spotlightActive').checked = true }
+  document.getElementById('spotlightModal').classList.remove('hidden')
+}
+async function saveSpotlight() {
+  const collegeId = document.querySelector('#spotlightsTab .componentCollegeSelect').value, id = document.getElementById('spotlightId').value, payload = { college_id: collegeId, title: document.getElementById('spotlightTitle').value.trim(), quote: document.getElementById('spotlightQuote').value.trim(), author: document.getElementById('spotlightAuthor').value.trim(), role: document.getElementById('spotlightRole').value.trim(), is_active: document.getElementById('spotlightActive').checked }
+  if(!payload.title || !payload.quote || !payload.author){ toast('Fill required fields', 'error'); return }; try { const file = document.getElementById('spotlightImageInput').files[0]; if(file) payload.image_url = await uploadComponentImage(file, 'spotlights'); let error; if(id) ({error} = await sb.from('college_spotlights').update(payload).eq('id', id)); else ({error} = await sb.from('college_spotlights').insert(payload)); if(error) throw error; toast('Spotlight saved!'); closeModal('spotlightModal'); loadComponentData('spotlights') } catch(e) { toast('Error: '+e.message, 'error') }
+}
+
+async function openArticleModal(id) {
+  const collegeId = document.querySelector('#articlesTab .componentCollegeSelect').value; if(!collegeId && !id){ toast('Select a college first','error'); return }
+  if(id){ const { data: page } = await sb.from('college_pages').select('*').eq('id', id).single(); switchTab('collegePage', document.getElementById('navCollegePage')); document.getElementById('wbCollegeSelect').value = page.college_id; await onWbCollegeChange(); document.getElementById('wbPageSelect').value = page.id; await loadWbPage(); toast('Opened in Article Editor', 'info') }
+  else { switchTab('collegePage', document.getElementById('navCollegePage')); document.getElementById('wbCollegeSelect').value = collegeId; await onWbCollegeChange(); wbCreatingArticle = true; openNewPageModal() }
+}
+
+// ════════════════════════════════════════════════════════════════════════
 //  SLIDESHOW MANAGER
 // ════════════════════════════════════════════════════════════════════════
 let slidesCurrentCollegeId = null
@@ -2035,12 +2322,12 @@ function onTypeChange(){
   if(t==='slide') populateLecturerDrop()
 }
 
-async function populateLecturerDrop(){
-  const courseId=document.getElementById('courseSelect').value; const sel=document.getElementById('lecturerUploadSelect')
+async function populateLecturerDrop(cid, sid){
+  const courseId=cid||document.getElementById('courseSelect').value; const sel=document.getElementById(sid||'lecturerUploadSelect')
   if(!courseId){ sel.innerHTML='<option value="">Select a course first</option>'; return }
   const {data}=await sb.from('lecturers').select('*').eq('course_id',courseId).order('name')
   sel.innerHTML='<option value="">Select lecturer (optional)...</option>'
-  if(data) data.forEach(l=>sel.innerHTML+=`<option value="${l.id}">${esc(l.name)}</option>`)
+  if(data) data.forEach(l=>sel.innerHTML+=`<option value="${l.id}" data-name="${escAttr(l.name)}">${esc(l.name)}</option>`)
 }
 
 function previewCover(input){
@@ -2075,17 +2362,19 @@ async function extractText(file){
 async function uploadCoverToStorage(file,matId){ const ext=file.name.split('.').pop(); const path=`covers/${matId}.${ext}`; const {error}=await sb.storage.from('college-logos').upload(path,file,{upsert:true}); if(error) throw error; return sb.storage.from('college-logos').getPublicUrl(path).data.publicUrl }
 
 async function handleUpload(){
-  const courseId=document.getElementById('courseSelect').value, title=document.getElementById('titleInput').value.trim(), type=document.getElementById('typeSelect').value, year=document.getElementById('academicYearInput').value.trim(), premium=document.getElementById('premiumCheck').checked, file=document.getElementById('fileInput').files[0]
-  if(!courseId||!title||!file){ showMsg('Please fill all fields and select a file',true); return }
+  const collegeId=document.getElementById('collegeSelect').value, classId=document.getElementById('classSelect').value, courseId=document.getElementById('courseSelect').value, title=document.getElementById('titleInput').value.trim(), type=document.getElementById('typeSelect').value, year=document.getElementById('academicYearInput').value.trim(), premium=document.getElementById('premiumCheck').checked, file=document.getElementById('fileInput').files[0]
+  if(!collegeId||!classId||!courseId||!title||!file){ showMsg('Please select college, class, course, title and a file',true); return }
   showMsg('Uploading file...')
   const ext=file.name.split('.').pop().toLowerCase(), path=`${courseId}/${Date.now()}.${ext}`
   const {error:upErr}=await sb.storage.from('materials').upload(path,file)
   if(upErr){ showMsg('Upload failed: '+upErr.message,true); return }
   const fileUrl=sb.storage.from('materials').getPublicUrl(path).data.publicUrl
   let contentText=null; try{ contentText=await extractText(file) }catch(e){ console.log('Extraction failed',e) }
-  const lecId=type==='slide'?(document.getElementById('lecturerUploadSelect').value||null):null
-  const insert={course_id:courseId,uploaded_by:session.user.id,title,type,file_url:fileUrl,file_size:file.size,is_premium:premium,academic_year:(type!=='book'&&year)?year:null,status:'published',content_text:contentText}
-  if(lecId) insert.lecturer_id=lecId
+  const lecSel=document.getElementById('lecturerUploadSelect')
+  const lecId=type==='slide'?(lecSel.value||null):null
+  const lecName=lecId?lecSel.options[lecSel.selectedIndex].dataset.name:null
+  const insert={college_id:collegeId,class_id:classId,course_id:courseId,uploaded_by:session.user.id,title,type,file_url:fileUrl,file_size:file.size,is_premium:premium,academic_year:(type!=='book'&&year)?year:null,status:'published',content_text:contentText}
+  if(lecId){ insert.lecturer_id=lecId; insert.lecturer_name=lecName }
   const {data:matData,error:dbErr}=await sb.from('materials').insert(insert).select().single()
   if(dbErr){ showMsg('DB error: '+dbErr.message,true); return }
   const coverFile=document.getElementById('coverFileInput').files[0]
@@ -2140,7 +2429,7 @@ async function loadMaterials(){
       <td><button onclick="togglePremium('${m.id}',${m.is_premium})" style="padding:4px 12px;border-radius:20px;border:none;cursor:pointer;font-size:12px;font-weight:700;background:${premBg};color:${premColor}">${m.is_premium?'Premium':'Free'}</button></td>
       <td style="color:#9CA3AF;font-size:12px">${fmtDate(m.created_at)}</td>
       <td><div style="display:flex;gap:6px">
-        <button class="btn-sm btn-edit" data-id="${m.id}" data-title="${escAttr(m.title)}" data-type="${m.type}" data-year="${escAttr(m.academic_year||'')}" data-premium="${m.is_premium}" data-ai="${!!m.content_text}" data-cover="${escAttr(m.cover_url||'')}" onclick="openEditMat(this)">Edit</button>
+        <button class="btn-sm btn-edit" data-id="${m.id}" data-title="${escAttr(m.title)}" data-type="${m.type}" data-year="${escAttr(m.academic_year||'')}" data-premium="${m.is_premium}" data-ai="${!!m.content_text}" data-cover="${escAttr(m.cover_url||'')}" data-course-id="${m.course_id}" data-lecturer-id="${m.lecturer_id||''}" onclick="openEditMat(this)">Edit</button>
         <a href="${esc(m.file_url)}" target="_blank" class="btn-sm" style="background:#F3F4F6;color:#374151;text-decoration:none;padding:7px 12px">View</a>
       </div></td>
     </tr>`
@@ -2150,14 +2439,25 @@ async function loadMaterials(){
 function clearFilters(){ ['filterCollege','filterClass','filterType','filterYear'].forEach(id=>document.getElementById(id).value=''); loadMaterials() }
 async function togglePremium(id,current){ await sb.from('materials').update({is_premium:!current}).eq('id',id); toast(current?'Set to Free':'Set to Premium'); loadMaterials() }
 
-function openEditMat(btn){
+async function openEditMat(btn){
   editMatId=btn.dataset.id; document.getElementById('editMatId').value=editMatId; document.getElementById('editMatType').value=btn.dataset.type; document.getElementById('editMatTitle').value=btn.dataset.title; document.getElementById('editMatTypeSelect').value=btn.dataset.type; document.getElementById('editMatYear').value=btn.dataset.year; document.getElementById('editMatPremium').checked=btn.dataset.premium==='true'; document.getElementById('editAiStatus').innerHTML=btn.dataset.ai==='true'?'<span class="ai-badge">✓ AI text extracted</span>':'<span class="no-ai-badge">No AI text</span>'
-  const isBook=btn.dataset.type==='book'; document.getElementById('editCoverSection').style.display=isBook?'block':'none'
+  const isBook=btn.dataset.type==='book', isSlide=btn.dataset.type==='slide'
+  document.getElementById('editCoverSection').style.display=isBook?'block':'none'
   if(isBook){ const img=document.getElementById('editCoverImg'),ph=document.getElementById('editCoverPh'),db=document.getElementById('deleteCoverBtn'); if(btn.dataset.cover){ img.src=btn.dataset.cover; img.style.display='block'; ph.style.display='none'; db.style.display='block' } else{ img.style.display='none'; ph.style.display='flex'; db.style.display='none' } }
+  document.getElementById('editLecturerField').style.display=isSlide?'block':'none'
+  if(isSlide){ await populateLecturerDrop(btn.dataset.courseId, 'editMatLecturerSelect'); document.getElementById('editMatLecturerSelect').value=btn.dataset.lecturerId||'' }
   document.getElementById('editMaterialModal').classList.remove('hidden')
 }
 
-async function saveMaterial(){ const title=document.getElementById('editMatTitle').value.trim(),type=document.getElementById('editMatTypeSelect').value,year=document.getElementById('editMatYear').value.trim(),prem=document.getElementById('editMatPremium').checked; if(!title){ toast('Title cannot be empty','error'); return }; const {error}=await sb.from('materials').update({title,type,academic_year:year||null,is_premium:prem}).eq('id',editMatId); if(error){ toast('Error: '+error.message,'error'); return }; toast('Material updated!'); closeModal('editMaterialModal'); loadMaterials() }
+async function saveMaterial(){
+  const title=document.getElementById('editMatTitle').value.trim(),type=document.getElementById('editMatTypeSelect').value,year=document.getElementById('editMatYear').value.trim(),prem=document.getElementById('editMatPremium').checked
+  if(!title){ toast('Title cannot be empty','error'); return }
+  const upd={title,type,academic_year:year||null,is_premium:prem}
+  if(type==='slide'){ const sel=document.getElementById('editMatLecturerSelect'); const lid=sel.value||null; upd.lecturer_id=lid; upd.lecturer_name=lid?sel.options[sel.selectedIndex].dataset.name:null }
+  const {error}=await sb.from('materials').update(upd).eq('id',editMatId)
+  if(error){ toast('Error: '+error.message,'error'); return }
+  toast('Material updated!'); closeModal('editMaterialModal'); loadMaterials()
+}
 async function uploadEditCover(input){ const file=input.files[0]; if(!file) return; toast('Uploading cover...','info'); try{ const url=await uploadCoverToStorage(file,editMatId); await sb.from('materials').update({cover_url:url}).eq('id',editMatId); const img=document.getElementById('editCoverImg'); img.src=url+'?t='+Date.now(); img.style.display='block'; document.getElementById('editCoverPh').style.display='none'; document.getElementById('deleteCoverBtn').style.display='block'; toast('Cover updated!'); loadMaterials() }catch(e){ toast('Cover upload failed: '+e.message,'error') } }
 async function deleteCover(){ if(!confirm('Remove cover image?')) return; await sb.from('materials').update({cover_url:null}).eq('id',editMatId); document.getElementById('editCoverImg').style.display='none'; document.getElementById('editCoverPh').style.display='flex'; document.getElementById('deleteCoverBtn').style.display='none'; toast('Cover removed.'); loadMaterials() }
 async function reExtractText(){ const input=document.createElement('input'); input.type='file'; input.accept='.pdf,.docx,.pptx'; input.onchange=async()=>{ const file=input.files[0]; if(!file) return; try{ const txt=await extractText(file); if(!txt){ toast('Could not extract text','error'); return }; await sb.from('materials').update({content_text:txt}).eq('id',editMatId); toast('AI text updated!'); document.getElementById('editAiStatus').innerHTML='<span class="ai-badge">✓ AI text extracted</span>'; loadMaterials() }catch(e){ toast('Extraction failed: '+e.message,'error') } }; input.click() }
@@ -2494,6 +2794,48 @@ async function loadFeatureFlags(){
 
 async function toggleFlagEnabled(key,cur){ await sb.from('feature_flags').update({is_enabled:!cur}).eq('key',key); toast(`"${key}" ${cur?'disabled':'enabled'}`); loadFeatureFlags() }
 async function toggleFlagPremium(key,cur){ await sb.from('feature_flags').update({is_premium_only:!cur}).eq('key',key); toast(`"${key}" is now ${cur?'free for all':'premium only'}`); loadFeatureFlags() }
+
+// ════════════════════════════════════════════════════════════════════════
+//  USER ACTIVITIES
+// ════════════════════════════════════════════════════════════════════════
+async function loadActivitiesTab(){
+  const tbody=document.getElementById('activitiesListBody');
+  tbody.innerHTML='<tr><td colspan="4" class="empty-state">Loading activities...</td></tr>';
+  const {data,error}=await sb.from('user_activities').select('*,profiles(full_name)').order('created_at',{ascending:false}).limit(100);
+  if(error){
+    if(error.code==='42P01') tbody.innerHTML='<tr><td colspan="4" class="empty-state"><div class="empty-icon">📉</div>Table not created yet.<br>Please run the database migration.</td></tr>';
+    else tbody.innerHTML=`<tr><td colspan="4" class="empty-state">Error: ${esc(error.message)}</td></tr>`;
+    return;
+  }
+  if(!data||!data.length){ tbody.innerHTML='<tr><td colspan="4" class="empty-state"><div class="empty-icon">📉</div>No recent activities found</td></tr>'; return }
+  tbody.innerHTML=data.map(a=>`<tr>
+    <td style="font-weight:600;color:#111827">${esc(a.profiles?.full_name||'Unknown (or deleted)')}</td>
+    <td><span style="background:#EFF6FF;color:#1A56DB;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700">${esc(a.action)}</span></td>
+    <td style="font-size:13px;color:#64748B">${esc(JSON.stringify(a.details||{}))}</td>
+    <td style="color:#9CA3AF;font-size:12px">${fmtDate(a.created_at)} ${new Date(a.created_at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</td>
+  </tr>`).join('')
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  CRASHES
+// ════════════════════════════════════════════════════════════════════════
+async function loadCrashesTab(){
+  const tbody=document.getElementById('crashesListBody');
+  tbody.innerHTML='<tr><td colspan="4" class="empty-state">Loading crash reports...</td></tr>';
+  const {data,error}=await sb.from('crashes').select('*,profiles(full_name)').order('created_at',{ascending:false}).limit(100);
+  if(error){
+    if(error.code==='42P01') tbody.innerHTML='<tr><td colspan="4" class="empty-state"><div class="empty-icon">💥</div>Table not created yet.<br>Please run the database migration.</td></tr>';
+    else tbody.innerHTML=`<tr><td colspan="4" class="empty-state">Error: ${esc(error.message)}</td></tr>`;
+    return;
+  }
+  if(!data||!data.length){ tbody.innerHTML='<tr><td colspan="4" class="empty-state"><div class="empty-icon">💥</div>No recent crashes found</td></tr>'; return }
+  tbody.innerHTML=data.map(c=>`<tr>
+    <td style="font-weight:600;color:#111827">${esc(c.profiles?.full_name||'Anonymous/Unknown')}</td>
+    <td style="font-size:13px;color:#DC2626;word-break:break-word;white-space:pre-wrap">${esc(c.error_message)}<br><span style="font-size:11px;color:#94A3B8">${esc(c.stack_trace||'')}</span></td>
+    <td style="font-size:13px;color:#64748B"><span style="background:#F1F5F9;padding:3px 8px;border-radius:6px;font-weight:600">${esc(c.app_version||'Unknown')}</span></td>
+    <td style="color:#9CA3AF;font-size:12px">${fmtDate(c.created_at)} ${new Date(c.created_at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</td>
+  </tr>`).join('')
+}
 
 </script>
 </body>

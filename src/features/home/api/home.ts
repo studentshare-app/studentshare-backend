@@ -136,16 +136,32 @@ export async function fetchDashboard(userId: string) {
     filters.push('and(course_id.is.null,lecturer_id.is.null)')
     const orString = filters.join(',')
 
-    const [materialsRes, countRes] = await Promise.all([
+    const [materialsRes, countRes, rankRes] = await Promise.all([
       supabase.from('materials').select('id, title, type, file_url, created_at, courses(name)').or(orString).eq('status', 'published').order('created_at', { ascending: false }).limit(5),
       supabase.from('materials').select('id', { count: 'exact', head: true }).or(orString).eq('status', 'published'),
+      profileData.college_id 
+        ? supabase.rpc('sq_get_leaderboard', { p_period: 'weekly', p_college_id: profileData.college_id, p_limit: 1000 })
+        : Promise.resolve({ data: null }),
     ])
 
     materials = materialsRes.data || []
     totalMaterialCount = countRes.count ?? materials.length
+    
+    // Extract user rank from leaderboard data
+    const collegeRank = rankRes.data?.find((r: any) => r.id === userId)?.rank ?? null
+
+    return { 
+      profile, 
+      materials, 
+      stats: { 
+        total: totalMaterialCount, 
+        courses: courseCount,
+        college_rank: collegeRank 
+      } 
+    }
   }
 
-  return { profile, materials, stats: { total: totalMaterialCount, courses: courseCount } }
+  return { profile, materials: [], stats: { total: 0, courses: 0, college_rank: null } }
 }
 
 export async function fetchAnnouncements(classId: string | null, collegeId: string | null): Promise<Announcement[]> {

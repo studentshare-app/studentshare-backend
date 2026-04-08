@@ -1,19 +1,6 @@
-/**
- * features/home/hooks/useStudyPlannerSnapshot.ts
- *
- * Fix 6: Storage keys are now scoped to userId.
- * - Accept userId (string | null) as a parameter
- * - Keys become `${KEYS.BLOCKS}_${userId}` / `${KEYS.GOALS}_${userId}`
- * - When userId changes, state resets and re-reads from new user's keys
- * - When userId is null, hook returns empty defaults and stays dormant
- *
- * NOTE: The study-planner screen must also write to the same scoped keys.
- * Pass userId into that screen's storage writes using the same pattern:
- *   `ss_planner_blocks_${userId}` / `ss_study_goals_${userId}`
- */
-
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { supabase } from '@/core/api/supabase'
 
 // ─── Storage key roots (must match study-planner.tsx scoped keys) ──────────
 const KEYS = {
@@ -64,6 +51,7 @@ function toISO(d: Date): string {
 }
 
 function blockDurationMins(b: PlannerBlock): number {
+  if (!b.startTime || !b.endTime) return 0
   const [sh, sm] = b.startTime.split(':').map(Number)
   const [eh, em] = b.endTime.split(':').map(Number)
   return (eh * 60 + em) - (sh * 60 + sm)
@@ -108,14 +96,18 @@ function formatDuration(mins: number): string {
 }
 
 function deriveScheduleItem(block: PlannerBlock): HomeScheduleItem {
-  const [hStr] = block.startTime.split(':')
+  const startTime = block.startTime || "00:00"
+  const endTime   = block.endTime || "00:00"
+  
+  const [hStr] = startTime.split(':')
   const h24    = parseInt(hStr, 10)
   const h12    = h24 === 0 ? 12 : h24 > 12 ? h24 - 12 : h24
   const period = h24 < 12 ? 'AM' : 'PM'
 
-  const nowMins   = new Date().getHours() * 60 + new Date().getMinutes()
-  const [sh, sm]  = block.startTime.split(':').map(Number)
-  const [eh, em]  = block.endTime.split(':').map(Number)
+  const now       = new Date()
+  const nowMins   = now.getHours() * 60 + now.getMinutes()
+  const [sh, sm]  = startTime.split(':').map(Number)
+  const [eh, em]  = endTime.split(':').map(Number)
   const startMins = sh * 60 + sm
   const endMins   = eh * 60 + em
   const durMins   = blockDurationMins(block)
@@ -124,12 +116,14 @@ function deriveScheduleItem(block: PlannerBlock): HomeScheduleItem {
   let tagColor: string
   let tagBg: string
 
-  if (nowMins >= startMins && nowMins < endMins) {
-    tagLabel = 'Live now'; tagColor = '#FB923C'; tagBg = '#2A1208'
+  if (block.completed) {
+    tagLabel = 'Done';     tagColor = '#4A5168'; tagBg = 'rgba(74, 81, 104, 0.12)'
+  } else if (nowMins >= startMins && nowMins < endMins) {
+    tagLabel = 'Ongoing'; tagColor = '#FB923C'; tagBg = 'rgba(251, 146, 60, 0.12)'
   } else if (nowMins >= endMins) {
-    tagLabel = 'Done';     tagColor = '#4A5168'; tagBg = '#161A22'
+    tagLabel = 'Ended';   tagColor = '#EE6868'; tagBg = 'rgba(238, 104, 104, 0.12)'
   } else {
-    tagLabel = 'Upcoming'; tagColor = '#5B8DEF'; tagBg = '#0D1A35'
+    tagLabel = 'Upcoming'; tagColor = '#5B8DEF'; tagBg = 'rgba(91, 141, 239, 0.12)'
   }
 
   return {
@@ -179,43 +173,70 @@ export function useStudyPlannerSnapshot(userId: string | null): StudyPlannerSnap
     isLoadedRef.current = false
   }, [userId])
 
-  // ── Stable refresh function — recreated only when keys change ─────────
   const refreshRef = useRef<() => Promise<void>>(async () => {})
 
   useEffect(() => {
     refreshRef.current = async () => {
-      if (loadingRef.current) return
-      if (!blocksKey || !goalsKey) {
-        // No userId — return empty defaults
-        setWeeklyHours(0)
-        setWeeklyGoalHours(DEFAULT_GOAL_HOURS)
-        setTodayBlocks([])
-        if (!isLoadedRef.current) { isLoadedRef.current = true; setIsLoaded(true) }
+      if (loadingRef.current || !userId || !blocksKey || !goalsKey) {
+        if (!userId) {
+          setWeeklyHours(0)
+          setWeeklyGoalHours(DEFAULT_GOAL_HOURS)
+          setTodayBlocks([])
+          if (!isLoadedRef.current) { isLoadedRef.current = true; setIsLoaded(true) }
+        }
         return
       }
 
       loadingRef.current = true
       try {
+        // 1. AsyncStorage cache (for instant load)
         const [rawBlocks, rawGoals] = await Promise.all([
           AsyncStorage.getItem(blocksKey),
           AsyncStorage.getItem(goalsKey),
         ])
 
-        const blocks: PlannerBlock[] = rawBlocks ? JSON.parse(rawBlocks) : []
-        const goals: StudyGoals      = rawGoals
-          ? JSON.parse(rawGoals)
+        let blocks: PlannerBlock[] = rawBlocks ? JSON.parse(rawBlocks) : []
+        let goals: StudyGoals      = rawGoals 
+          ? JSON.parse(rawGoals) 
           : { weekly_hours: DEFAULT_GOAL_HOURS } as StudyGoals
+
+        // 2. Supabase Sync (background refresh)
+        const [blocksRes, profileRes] = await Promise.all([
+          supabase.from('planner_blocks').select('*').eq('user_id', userId).order('date', { ascending: false }),
+          supabase.from('profiles').select('study_goals').eq('id', userId).single(),
+        ])
+
+        if (blocksRes.data && blocksRes.data.length > 0) {
+          // Map snake_case from DB to camelCase for UI
+          const syncedBlocks: PlannerBlock[] = blocksRes.data.map((b: any) => ({
+            id: b.id,
+            subject: b.subject,
+            type: b.type,
+            date: b.date,
+            startTime: b.start_time,
+            endTime: b.end_time,
+            color: b.color,
+            completed: b.completed
+          }))
+          blocks = syncedBlocks
+          void AsyncStorage.setItem(blocksKey, JSON.stringify(blocks)).catch(() => {})
+        }
+
+        if (profileRes.data?.study_goals) {
+          goals = profileRes.data.study_goals as StudyGoals
+          void AsyncStorage.setItem(goalsKey, JSON.stringify(goals)).catch(() => {})
+        }
 
         const today  = todayISO()
         const sorted = blocks
           .filter(b => b.date === today)
-          .sort((a, b) => a.startTime.localeCompare(b.startTime))
+          .sort((a, b) => (a.startTime || "").localeCompare(b.startTime || ""))
 
         setWeeklyHours(getWeeklyBlockHours(blocks))
         setWeeklyGoalHours(goals.weekly_hours ?? DEFAULT_GOAL_HOURS)
         setTodayBlocks(sorted.map(deriveScheduleItem))
-      } catch {
-        // silently fail — stale data remains on screen
+      } catch (err) {
+        console.error('[useStudyPlannerSnapshot] refresh error:', err)
       } finally {
         loadingRef.current = false
         if (!isLoadedRef.current) {
@@ -224,12 +245,14 @@ export function useStudyPlannerSnapshot(userId: string | null): StudyPlannerSnap
         }
       }
     }
-  }, [blocksKey, goalsKey])
+  }, [userId, blocksKey, goalsKey])
 
   const refresh = useCallback(() => refreshRef.current(), [])
 
-  // Run on mount and whenever keys change (userId changed)
-  useEffect(() => { refreshRef.current() }, [blocksKey, goalsKey])
+  // Run on mount and whenever userId changes
+  useEffect(() => { 
+    if (userId) refreshRef.current() 
+  }, [userId, blocksKey, goalsKey])
 
   return { weeklyHours, weeklyGoalHours, todayBlocks, isLoaded, refresh }
-}
+}

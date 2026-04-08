@@ -103,9 +103,11 @@ export type MaterialRecord = {
     is_official?:  boolean
   } | null
   lecturers?: { name: string } | null
+  lecturer_name?:  string | null
 }
 
 type LecturerGroup = {
+  id:            string
   name:          string
   materialCount: number
   materials:     MaterialRecord[]
@@ -198,7 +200,8 @@ function filterList(list: MaterialRecord[], filter: FilterKey, q: string): Mater
       !q.trim() ||
       m.title.toLowerCase().includes(q.toLowerCase()) ||
       (m.courses?.name ?? '').toLowerCase().includes(q.toLowerCase()) ||
-      (m.courses?.code ?? '').toLowerCase().includes(q.toLowerCase())
+      (m.courses?.code ?? '').toLowerCase().includes(q.toLowerCase()) ||
+      (m.lecturers?.name ?? '').toLowerCase().includes(q.toLowerCase())
     return matchType && matchQuery
   })
 }
@@ -403,7 +406,7 @@ function MaterialCard({
   const isDownloaded = item.downloadStatus === 'done'
 
   return (
-    <ScalePress style={ss.matCard} onPress={isOfficial ? undefined : onOpen}>
+    <ScalePress style={ss.matCard} onPress={onOpen}>
       <View style={[ss.matAccent, { backgroundColor: cfg.accentColor }]} />
       {isOfficial && (
         <View style={ss.officialBadge}>
@@ -427,6 +430,12 @@ function MaterialCard({
                 <Ionicons name="calendar-outline" size={11} color={C.textSub} />
                 <Text allowFontScaling={false} style={ss.matMetaText}>{fmtDate(item.created_at)}</Text>
               </View>
+              {item.type === 'slide' && item.lecturers?.name && (
+                <View style={ss.matMetaItem}>
+                  <Ionicons name="person-outline" size={11} color={C.textSub} />
+                  <Text allowFontScaling={false} style={ss.matMetaText}>{item.lecturers.name}</Text>
+                </View>
+              )}
               {item.file_size ? (
                 <View style={ss.matMetaItem}>
                   <Ionicons name="server-outline" size={11} color={C.textSub} />
@@ -447,7 +456,7 @@ function MaterialCard({
               </Text>
             </View>
           )}
-          {item.lecturers?.name && (
+          {item.lecturers?.name && item.type !== 'slide' && (
             <View style={ss.stat}>
               <Ionicons name="person-outline" size={12} color={C.textSub} />
               <Text allowFontScaling={false} style={ss.statText}>{item.lecturers.name}</Text>
@@ -542,11 +551,16 @@ export default function StudyMaterialsScreen() {
   const [profileInfo,     setProfileInfo]     = useState<{ classId: string | null; collegeId: string | null } | null>(null)
 
   // ── Offline Queries ──────────────────────────
-  const { records: localMaterials, loading: materialsLoading } = useMaterials() as { records: any[], loading: boolean }
-  const { records: localCourses }                              = useCourses(undefined) as { records: any[] }
-  const { records: localLecturers }                            = useLecturers() as { records: any[] }
-  const { records: localBookmarks }                            = useBookmarks(userId || '', 'material') as { records: any[] }
   const { user: localUser }                                    = useUser(userId || undefined)
+
+  const effectiveClassId   = useMemo(() => localUser?.classId || profileInfo?.classId || null, [localUser, profileInfo])
+  const effectiveCollegeId = useMemo(() => localUser?.collegeId || profileInfo?.collegeId || null, [localUser, profileInfo])
+
+  // ── WatermelonDB reactive hooks ──────────────────────────
+  const { records: localMaterials, loading: materialsLoading } = useMaterials() as { records: any[], loading: boolean }
+  const { records: localCourses }                              = useCourses(effectiveClassId) as { records: any[] }
+  const { records: localLecturers }                            = useLecturers(effectiveCollegeId) as { records: any[] }
+  const { records: localBookmarks }                            = useBookmarks(userId || '', 'material') as { records: any[] }
 
   const [bookmarkLoading, setBookmarkLoading] = useState<string | null>(null)
 
@@ -565,25 +579,40 @@ export default function StudyMaterialsScreen() {
       .then(({ data }) => { if (data) setProfileInfo({ classId: data.class_id, collegeId: data.college_id }) })
   }, [userId, localUser])
 
-  const effectiveClassId   = localUser?.classId || profileInfo?.classId || null
-  const effectiveCollegeId = localUser?.collegeId || profileInfo?.collegeId || null
+  const coursesMap = useMemo(() => {
+    const map = new Map<string, any>()
+    localCourses.forEach(c => {
+      map.set(c.id, c)
+      if (c.remoteId) map.set(c.remoteId, c)
+    })
+    return map
+  }, [localCourses])
 
-  const coursesMap   = useMemo(() => new Map(localCourses.map(c => [c.remoteId || c.id, c])), [localCourses])
-  const lecturersMap = useMemo(() => new Map(localLecturers.map(l => [l.remoteId || l.id, l])), [localLecturers])
+  const lecturersMap = useMemo(() => {
+    const map = new Map<string, any>()
+    localLecturers.forEach(l => {
+      map.set(l.id, l)
+      if (l.remoteId) map.set(l.remoteId, l)
+    })
+    return map
+  }, [localLecturers])
 
   // ── Material Transform ───────────────────────
   const materials = useMemo((): MaterialRecord[] => {
     return localMaterials
+      .filter(m => !!effectiveClassId && m.classId === effectiveClassId)
       .filter(m => {
         if (m.courseId) {
           const course = coursesMap.get(m.courseId);
-          if (course && effectiveClassId && course.classId && course.classId !== effectiveClassId) return false
+          if (course) return true
+          return false 
         }
         if (m.lecturerId) {
           const lecturer = lecturersMap.get(m.lecturerId);
-          if (lecturer && effectiveCollegeId && lecturer.collegeId && lecturer.collegeId !== effectiveCollegeId) return false
+          if (lecturer) return true
+          return false 
         }
-        return true
+        return true 
       })
       .map(m => {
         const course = coursesMap.get(m.courseId)
@@ -602,6 +631,7 @@ export default function StudyMaterialsScreen() {
           courses: course ? { name: course.name, code: course.code, class_id: course.classId, is_official: course.isOfficial } : null,
           lecturers: lecturer ? { name: lecturer.name } : null,
           lecturer_id:    m.lecturerId,
+          lecturer_name:  m.lecturerName || lecturer?.name || null,
         } as MaterialRecord
       })
   }, [localMaterials, coursesMap, lecturersMap, effectiveClassId, effectiveCollegeId])
@@ -611,18 +641,19 @@ export default function StudyMaterialsScreen() {
   const lecturerGroups = useMemo((): LecturerGroup[] => {
     const map = new Map<string, LecturerGroup>()
     materials.forEach(m => {
-      const name = m.lecturers?.name
-      if (!name) return
-      if (!map.has(name)) {
-        map.set(name, { name, materialCount: 0, materials: [], types: new Set() })
+      const lid = m.lecturer_id
+      if (!lid) return
+      if (!map.has(lid)) {
+        const name = m.lecturer_name || 'Unknown Lecturer'
+        map.set(lid, { id: lid, name, materialCount: 0, materials: [], types: new Set() })
       }
-      const group = map.get(name)!
+      const group = map.get(lid)!
       group.materials.push(m)
       group.materialCount++
       group.types.add(m.type)
     })
     return [...map.values()].sort((a, b) => a.name.localeCompare(b.name))
-  }, [materials])
+  }, [materials, lecturersMap])
 
   // ── Filtered Lists ───────────────────────────
   const filtered     = filterList(materials, filter, query)
@@ -742,7 +773,7 @@ export default function StudyMaterialsScreen() {
               <View style={ss.matSection}>
                 <SectionHead title="Lecturers" right={<View style={ss.countBadge}><Text style={ss.countBadgeText}>{lecturerGroups.length} lecturers</Text></View>} />
                 {lecturerGroups.map(group => (
-                  <LecturerCard key={group.name} group={group} onPress={() => setSelectedLecturer(group)} />
+                  <LecturerCard key={group.id} group={group} onPress={() => setSelectedLecturer(group)} />
                 ))}
               </View>
             )}
@@ -757,7 +788,7 @@ export default function StudyMaterialsScreen() {
                 <SectionHead title={selectedLecturer.name} right={<View style={ss.countBadge}><Text style={ss.countBadgeText}>{selectedLecturer.materialCount} files</Text></View>} />
                 {selectedLecturer.materials.map(m => (
                   <MaterialCard
-                    key={m.id} item={m} isOfficial={m.courses?.is_official === true} isNew={false} isBookmarked={bookmarkedIds.has(m.id)} bookmarkLoading={bookmarkLoading === m.id}
+                    key={m.id} item={m} isOfficial={true} isNew={false} isBookmarked={bookmarkedIds.has(m.id)} bookmarkLoading={bookmarkLoading === m.id}
                     onOpen={() => openMaterial(m)} onDownload={() => handleDownload(m)}
                     onChat={() => router.push({ pathname: '/chat' as any, params: { material_title: m.title, file_url: m.file_url, material_id: m.id } })}
                     onBookmark={() => toggleBookmark(m)}
@@ -786,28 +817,22 @@ export default function StudyMaterialsScreen() {
                   </View>
                 )}
 
-                {officialList.length > 0 && (
+                {(officialList.length > 0 || studentList.length > 0) && (
                   <View style={ss.matSection}>
-                    <SectionHead title="Official Resources" right={<View style={ss.countBadge}><Text style={ss.countBadgeText}>{officialList.length} files</Text></View>} />
-                    {officialList.map(m => (
+                    <SectionHead 
+                      title="Official Resources" 
+                      right={<View style={ss.countBadge}><Text style={ss.countBadgeText}>{officialList.length + studentList.length} files</Text></View>} 
+                    />
+                    {[...officialList, ...studentList].map(m => (
                       <MaterialCard
-                        key={m.id} item={m} isOfficial isNew={false} isBookmarked={bookmarkedIds.has(m.id)} bookmarkLoading={bookmarkLoading === m.id}
-                        onOpen={() => openMaterial(m)} onDownload={() => handleDownload(m)}
-                        onChat={() => router.push({ pathname: '/chat' as any, params: { material_title: m.title, file_url: m.file_url, material_id: m.id } })}
-                        onBookmark={() => toggleBookmark(m)}
-                        onQuiz={() => router.push({ pathname: '/quiz-flashcards' as any, params: { material_id: m.id, title: m.title, file_url: m.file_url, type: m.type, auto_generate: '1' } })}
-                      />
-                    ))}
-                  </View>
-                )}
-
-                {studentList.length > 0 && (
-                  <View style={ss.matSection}>
-                    <SectionHead title="Student Uploads" right={<View style={ss.countBadge}><Text style={ss.countBadgeText}>{studentList.length} files</Text></View>} />
-                    {studentList.map(m => (
-                      <MaterialCard
-                        key={m.id} item={m} isOfficial={false} isNew={false} isBookmarked={bookmarkedIds.has(m.id)} bookmarkLoading={bookmarkLoading === m.id}
-                        onOpen={() => openMaterial(m)} onDownload={() => handleDownload(m)}
+                        key={m.id} 
+                        item={m} 
+                        isOfficial={true} 
+                        isNew={false} 
+                        isBookmarked={bookmarkedIds.has(m.id)} 
+                        bookmarkLoading={bookmarkLoading === m.id}
+                        onOpen={() => openMaterial(m)} 
+                        onDownload={() => handleDownload(m)}
                         onChat={() => router.push({ pathname: '/chat' as any, params: { material_title: m.title, file_url: m.file_url, material_id: m.id } })}
                         onBookmark={() => toggleBookmark(m)}
                         onQuiz={() => router.push({ pathname: '/quiz-flashcards' as any, params: { material_id: m.id, title: m.title, file_url: m.file_url, type: m.type, auto_generate: '1' } })}
