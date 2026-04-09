@@ -47,11 +47,12 @@ export function NoticeTicker({ notices }: { notices: CollegeNotice[] }) {
         <Animated.View
           style={{
             flexDirection: 'row',
+            alignSelf: 'flex-start',
             transform: [{ translateX: scrollX }],
           }}
           onLayout={e => setTextWidth(e.nativeEvent.layout.width)}
         >
-          <Text style={ss.tickerText} numberOfLines={1}>
+          <Text style={ss.tickerText}>
             {fullText}
           </Text>
         </Animated.View>
