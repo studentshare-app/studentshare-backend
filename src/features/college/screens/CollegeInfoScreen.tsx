@@ -147,7 +147,7 @@ export default function CollegeInfoScreen() {
         <NoticeTicker notices={notices.data || []} />
         <EventsSection events={events.data || []} />
         <ClubsSection clubs={clubs.data || []} />
-        <SpotlightSection spotlight={spotlights.data || null} />
+        <SpotlightSection spotlights={spotlights.data || []} />
 
         {/* Tabs & WebView Content */}
         {tabList.length > 0 ? (

@@ -18,13 +18,12 @@ const TABLE_CONFIG: Record<string, TableConfig> = {
   courses:               { cursorCol: 'created_at', cursorType: 'iso',    localName: 'courses'           },
   lecturers:             { cursorCol: 'created_at', cursorType: 'iso',    localName: 'lecturers'         },
   sq_posts:              { cursorCol: 'updated_at', cursorType: 'iso',    localName: 'posts'             },
-  sq_comments:           { cursorCol: 'updated_at', cursorType: 'iso',    localName: 'comments'          },
+  comments:              { cursorCol: 'updated_at', cursorType: 'iso',    localName: 'comments'          },
   materials:             { cursorCol: 'updated_at', cursorType: 'iso',    localName: 'materials'         },
   notes:                 { cursorCol: 'updated_at', cursorType: 'iso',    localName: 'notes'             },
   conversations:         { cursorCol: 'updated_at', cursorType: 'iso',    localName: 'conversations'     },
   sq_messages:           { cursorCol: 'created_at', cursorType: 'iso',    localName: 'messages'          },
-  sq_post_interactions:  { cursorCol: 'created_at', cursorType: 'iso',    localName: 'post_interactions' },
-  bookmarks:             { cursorCol: 'created_at', cursorType: 'iso',    localName: 'bookmarks'         },
+  sq_bookmarks:          { cursorCol: 'created_at', cursorType: 'iso',    localName: 'bookmarks'         },
 }
 
 // ─── Sync Interface (Aliases for external use) ───────────────────────────────

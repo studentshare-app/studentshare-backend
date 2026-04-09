@@ -212,9 +212,9 @@ export function useCollegeInfo() {
       staleTime: 5 * 60 * 1000,
       queryFn: async () => {
         const net = await NetInfo.fetch()
-        if (!net.isConnected) return null
-        const { data } = await supabase.from('college_spotlights').select('*').eq('college_id', collegeId).eq('is_active', true).order('created_at', { ascending: false }).limit(1).single()
-        return (data || null) as CollegeSpotlight | null
+        if (!net.isConnected) return []
+        const { data } = await supabase.from('college_spotlights').select('*').eq('college_id', collegeId).eq('is_active', true).order('created_at', { ascending: false })
+        return (data || []) as CollegeSpotlight[]
       }
     }),
   }

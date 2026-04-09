@@ -1,16 +1,13 @@
 /**
  * Unified Mapping Registry for Supabase <-> WatermelonDB
- *
- * This utility ensures that field names are correctly translated between
- * the remote Supabase schema (snake_case) and the local WatermelonDB
- * models (camelCase property names).
  */
 
 type TableName = 'users' | 'posts' | 'comments' | 'materials' | 'conversations' | 'messages' | 'notes' | 'courses' | 'lecturers' | 'post_interactions' | 'bookmarks';
 
 interface MappingRule {
-  fields: Record<string, string>; // remote_key -> local_property
-  dates?: string[];               // remote_keys that are timestamps
+  fields: Record<string, string>;
+  dates?: string[];
+  readonlyDates?: string[]; // dates that are @readonly in the model — skip setting these
 }
 
 const MAPPING_RULES: Record<TableName, MappingRule> = {
@@ -37,7 +34,8 @@ const MAPPING_RULES: Record<TableName, MappingRule> = {
       is_official:       'isOfficial',
       deleted:           'deleted',
     },
-    dates: ['created_at', 'updated_at'],
+    dates: [],
+    readonlyDates: ['created_at', 'updated_at'],
   },
   lecturers: {
     fields: {
@@ -46,7 +44,8 @@ const MAPPING_RULES: Record<TableName, MappingRule> = {
       college_id:        'collegeId',
       deleted:           'deleted',
     },
-    dates: ['created_at', 'updated_at'],
+    dates: [],
+    readonlyDates: ['created_at', 'updated_at'],
   },
   posts: {
     fields: {
@@ -98,7 +97,7 @@ const MAPPING_RULES: Record<TableName, MappingRule> = {
       lecturer_id:       'lecturerId',
       lecturer_name:     'lecturerName',
       uploader_id:       'uploaderId',
-      uploaded_by:       'uploaderId', // Support dashboard's field name
+      uploaded_by:       'uploaderId',
       status:            'status',
       academic_year:     'academicYear',
       is_premium:        'isPremium',
@@ -137,7 +136,7 @@ const MAPPING_RULES: Record<TableName, MappingRule> = {
       synced:            'synced',
       deleted:           'deleted',
     },
-    dates: ['created_at', 'updated_at'],
+    dates: ['created_at'],
   },
   notes: {
     fields: {
@@ -153,7 +152,8 @@ const MAPPING_RULES: Record<TableName, MappingRule> = {
       synced:            'synced',
       deleted:           'deleted',
     },
-    dates: ['created_at', 'updated_at'],
+    dates: [],
+    readonlyDates: ['created_at', 'updated_at', 'server_updated_at'],
   },
   post_interactions: {
     fields: {
@@ -186,14 +186,12 @@ export function mapRemoteToLocal(table: TableName, remote: any, local: any) {
   Object.entries(rule.fields).forEach(([remoteKey, localProp]) => {
     let value = remote[remoteKey];
     if (value === undefined || value === null) {
-      // Fallback for denormalized fields (e.g. materials.lecturer_name from lecturers.name join)
       if (table === 'materials' && remoteKey === 'lecturer_name' && remote.lecturers) {
         value = remote.lecturers.name;
       }
     }
 
     if (value !== undefined && value !== null) {
-      // Cast IDs to strings to match WatermelonDB schema (prevents BigInt vs String issues)
       if (localProp === 'remoteId' || localProp.endsWith('Id')) {
         value = String(value);
       }
@@ -201,11 +199,10 @@ export function mapRemoteToLocal(table: TableName, remote: any, local: any) {
     }
   });
 
-  // Handle timestamps (convert ISO/BigInt to Unix ms)
+  // Handle writable timestamps only
   rule.dates?.forEach(remoteKey => {
     let localProp = rule.fields[remoteKey];
-    
-    // Auto-map standard timestamps if not explicitly defined
+
     if (!localProp) {
       if (remoteKey === 'created_at') localProp = 'createdAt';
       else if (remoteKey === 'updated_at') localProp = 'updatedAt';
@@ -223,7 +220,8 @@ export function mapRemoteToLocal(table: TableName, remote: any, local: any) {
     }
   });
 
-  // Default values for common fields
+  // readonlyDates are intentionally skipped — WatermelonDB manages them automatically
+
   if (local.synced === undefined) local.synced = true;
   if (local.deleted === undefined) local.deleted = false;
 }
@@ -235,7 +233,6 @@ export function mapLocalToRemote(table: TableName, local: any): any {
 
   const remote: any = {};
   Object.entries(rule.fields).forEach(([remoteKey, localProp]) => {
-    // Special case: don't push internal IDs if they aren't remote IDs
     if (remoteKey === 'id' && local.remoteId) {
       remote.id = local.remoteId;
       return;
@@ -243,7 +240,6 @@ export function mapLocalToRemote(table: TableName, local: any): any {
 
     const value = local[localProp];
     if (value !== undefined && value !== null) {
-      // Convert timestamps back to ISO for Supabase timestamptz columns
       if (rule.dates?.includes(remoteKey)) {
         remote[remoteKey] = new Date(value).toISOString();
       } else {

@@ -22,7 +22,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Slot, useRootNavigationState, useRouter } from 'expo-router'
 import * as WebBrowser from 'expo-web-browser'
 import { useEffect, useRef, useState } from 'react'
-import { AppState, LogBox, Text, View } from 'react-native'
+import { AppState, LogBox, View } from 'react-native'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { SyncIndicator } from '@/components/SyncIndicator'
 
@@ -67,8 +67,16 @@ async function hasStoredRefreshToken(): Promise<boolean> {
   }
 }
 
-// ── Onboarding key — must match the one in OnboardingScreen ───────────────
+// ── Onboarding key – must match the one in OnboardingScreen ──────────────────
 const ONBOARDING_KEY = 'onboarding_complete'
+
+// ── Auth check with timeout to prevent hanging when offline ──────────────────
+function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>(resolve => setTimeout(() => resolve(fallback), ms)),
+  ])
+}
 
 export default function RootLayout() {
   const router = useRouter()
@@ -76,7 +84,6 @@ export default function RootLayout() {
   const navReady = !!navigationState?.key
 
   const [status, setStatus] = useState<AuthStatus>('loading')
-  // null = not yet checked, true/false = resolved
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
   const [hasHandledInitialNav, setHasHandledInitialNav] = useState(false)
 
@@ -88,7 +95,29 @@ export default function RootLayout() {
   useEffect(() => {
     const doSessionCheck = async (): Promise<AuthStatus> => {
       try {
-        const { data: { session }, error } = await supabase.auth.getSession()
+        // ✅ Check network first — if offline, skip Supabase call entirely
+        const netState = await withTimeout(
+          NetInfo.fetch(),
+          2000,
+          { isConnected: false } as any
+        )
+        const isOnline = netState.isConnected
+
+        if (!isOnline) {
+          // Offline — use stored token to determine auth status
+          console.log('[Auth] Offline — checking stored token')
+          const hasRefresh = await hasStoredRefreshToken()
+          return hasRefresh ? 'authenticated' : 'unauthenticated'
+        }
+
+        // Online — check Supabase session with a timeout fallback
+        const sessionResult = await withTimeout(
+          supabase.auth.getSession(),
+          5000,
+          { data: { session: null }, error: new Error('timeout') } as any
+        )
+
+        const { data: { session }, error } = sessionResult
 
         if (error) {
           const msg = error.message?.toLowerCase() ?? ''
@@ -101,6 +130,10 @@ export default function RootLayout() {
             await supabase.auth.signOut().catch(() => {})
             return 'unauthenticated'
           }
+
+          // Soft error (e.g. timeout) — fall back to stored token
+          const hasRefresh = await hasStoredRefreshToken()
+          return hasRefresh ? 'authenticated' : 'unauthenticated'
         }
 
         if (session) return 'authenticated'
@@ -109,12 +142,12 @@ export default function RootLayout() {
         return hasRefresh ? 'authenticated' : 'unauthenticated'
 
       } catch {
+        // Any unexpected error — fall back to stored token
         const hasRefresh = await hasStoredRefreshToken()
         return hasRefresh ? 'authenticated' : 'unauthenticated'
       }
     }
 
-    // Resolve both auth and onboarding status in parallel
     const init = async () => {
       const [authResult, onboardingRaw] = await Promise.all([
         doSessionCheck(),
@@ -129,10 +162,6 @@ export default function RootLayout() {
     const { data: { subscription } } =
       supabase.auth.onAuthStateChange(async (event) => {
         if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-          // ✅ Do NOT reset navigatedRef here.
-          // Login/Signup screens already call router.replace() on success.
-          // Resetting navigatedRef caused the nav effect to fire a second
-          // router.replace() that conflicted, briefly hitting +not-found.
           setStatus('authenticated')
         }
 
@@ -146,11 +175,9 @@ export default function RootLayout() {
             if (!current) {
               const hasRefresh = await hasStoredRefreshToken()
               if (!hasRefresh) {
-                // ✅ Reset navigatedRef so the nav effect fires again
-                // and redirects the user back to auth/onboarding.
-                 navigatedRef.current = false
-                 setHasHandledInitialNav(false)
-                 setStatus('unauthenticated')
+                navigatedRef.current = false
+                setHasHandledInitialNav(false)
+                setStatus('unauthenticated')
               }
             }
           }, 300)
@@ -225,7 +252,7 @@ export default function RootLayout() {
   // NAVIGATION — sole authority for cold-start routing
   useEffect(() => {
     if (status === 'loading') return
-    if (onboardingDone === null) return   // still checking onboarding
+    if (onboardingDone === null) return
     if (!navReady) return
     if (navigatedRef.current) return
 
@@ -242,16 +269,11 @@ export default function RootLayout() {
       router.replace('/(auth)/login' as any)
     }
 
-    // Hide the native splash screen after a short delay to let the
-    // destination screen mount and paint.
     setTimeout(() => {
       SplashScreen.hideAsync().catch(() => {})
     }, 150)
   }, [status, onboardingDone, navReady])
 
-  // Always render Slot — expo-router requires it to be mounted for
-  // router.replace() to have a navigator to work with. The native
-  // splash screen covers the content until navigation completes.
   return (
     <DatabaseProvider>
       <QueryClientProvider client={queryClient}>
@@ -267,4 +289,3 @@ export default function RootLayout() {
     </DatabaseProvider>
   )
 }
-

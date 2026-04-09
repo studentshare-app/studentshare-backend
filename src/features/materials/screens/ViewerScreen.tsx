@@ -620,7 +620,15 @@ export default function ViewerScreen() {
     } catch {}
   }
 
-  function send(type: string, data: any = {}) { webviewRef.current?.postMessage(JSON.stringify({ type, ...data })) }
+  function send(type: string, data: any = {}) {
+  const payload = JSON.stringify({ type, ...data })
+  webviewRef.current?.injectJavaScript(`
+    (function() {
+      window.dispatchEvent(new MessageEvent('message', { data: ${JSON.stringify(payload)} }));
+    })();
+    true;
+  `)
+}
   function handleZoom(delta: number) { const n = Math.max(0.5, Math.min(2.5, zoom + delta)); setZoom(n); send('setZoom', { zoom: n }) }
   function handleRotate() { 
     const n = (rotation + 90) % 360; 

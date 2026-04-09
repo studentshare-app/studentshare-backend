@@ -747,8 +747,8 @@ const s = StyleSheet.create({
   getPremiumStar:  { fontSize: 9, color: '#fff' },
   getPremiumText:  { fontSize: 11, fontWeight: '800', color: '#fff', letterSpacing: 0.3 },
 
-  infoPillsRow:      { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'nowrap', alignSelf: 'flex-start' },
-  infoPill:          { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: C.raised, borderWidth: 1, borderColor: C.border, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5, maxWidth: 130, flexShrink: 1 },
+  infoPillsRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+infoPill:     { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: C.raised, borderWidth: 1, borderColor: C.border, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5, flexShrink: 1, flexGrow: 0, minWidth: 0 },
   infoPillClass:     { backgroundColor: 'rgba(75,140,245,0.08)', borderColor: 'rgba(75,140,245,0.2)' },
   infoPillMats:      { backgroundColor: 'rgba(223,168,60,0.08)', borderColor: 'rgba(223,168,60,0.22)' },
   infoPillIcon:      { fontSize: 11 },

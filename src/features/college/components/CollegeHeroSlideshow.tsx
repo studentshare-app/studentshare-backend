@@ -8,7 +8,7 @@ import { CollegeProfile, Slide } from '../hooks/useCollegeInfo'
 
 const { width: W, height: SCREEN_H } = Dimensions.get('window')
 const STATUS_H = StatusBar.currentHeight ?? 44
-export const HERO_H = Math.round(SCREEN_H * 0.36)
+export const HERO_H = Math.round(SCREEN_H * 0.28)
 
 type HeroItem =
   | { kind: 'profile'; college: CollegeProfile }

@@ -1,41 +1,58 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Animated, StyleSheet, Text, View } from 'react-native'
 import { C } from '@/lib/colors'
 import { CollegeNotice } from '../hooks/useCollegeInfo'
 
 export function NoticeTicker({ notices }: { notices: CollegeNotice[] }) {
-  const [idx, setIdx] = useState(0)
-  const [fadeAnim] = useState(new Animated.Value(1))
-  const [slideAnim] = useState(new Animated.Value(0))
+  const [containerWidth, setContainerWidth] = useState(0)
+  const [textWidth, setTextWidth] = useState(0)
+  const scrollX = useRef(new Animated.Value(0)).current
+
+  const fullText = notices.map(n => n.message).join('    •    ')
 
   useEffect(() => {
-    if (!notices || notices.length <= 1) return
-    const t = setInterval(() => {
-      Animated.parallel([
-        Animated.timing(fadeAnim, { toValue: 0, duration: 300, useNativeDriver: true }),
-        Animated.timing(slideAnim, { toValue: -6, duration: 300, useNativeDriver: true })
-      ]).start(() => {
-        setIdx((prev) => (prev + 1) % notices.length)
-        slideAnim.setValue(6)
-        Animated.parallel([
-          Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
-          Animated.timing(slideAnim, { toValue: 0, duration: 300, useNativeDriver: true })
-        ]).start()
-      })
-    }, 4500)
-    return () => clearInterval(t)
-  }, [notices.length])
+    if (!notices || notices.length === 0 || !containerWidth || !textWidth) return
+
+    // Speed: 50 pixels per second
+    const duration = (textWidth + containerWidth) * 20
+
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(scrollX, {
+          toValue: -textWidth,
+          duration: duration,
+          useNativeDriver: true,
+          easing: (t) => t, // Linear
+        }),
+        Animated.timing(scrollX, {
+          toValue: containerWidth,
+          duration: 0,
+          useNativeDriver: true,
+        }),
+      ])
+    )
+
+    anim.start()
+    return () => anim.stop()
+  }, [notices.length, containerWidth, textWidth])
 
   if (!notices || notices.length === 0) return null
+
   return (
-    <View style={ss.tickerWrap}>
+    <View style={ss.tickerWrap} onLayout={e => setContainerWidth(e.nativeEvent.layout.width)}>
       <View style={ss.tickerBadge}>
         <Text style={ss.tickerBadgeText}>NOTICE</Text>
       </View>
-      <View style={{ flex: 1, overflow: 'hidden', height: 18, justifyContent: 'center' }}>
-        <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }], position: 'absolute', width: '100%' }}>
+      <View style={{ flex: 1, overflow: 'hidden', height: 20, justifyContent: 'center' }}>
+        <Animated.View
+          style={{
+            flexDirection: 'row',
+            transform: [{ translateX: scrollX }],
+          }}
+          onLayout={e => setTextWidth(e.nativeEvent.layout.width)}
+        >
           <Text style={ss.tickerText} numberOfLines={1}>
-            {notices[idx].message}
+            {fullText}
           </Text>
         </Animated.View>
       </View>
