@@ -8,10 +8,13 @@ export function NoticeTicker({ notices }: { notices: CollegeNotice[] }) {
   const [textWidth, setTextWidth] = useState(0)
   const scrollX = useRef(new Animated.Value(0)).current
 
-  const fullText = notices.map(n => n.message).join('    •    ')
+  const fullText = notices.map(n => n.message).join('    •    ') + '          '
 
   useEffect(() => {
     if (!notices || notices.length === 0 || !containerWidth || !textWidth) return
+
+    // Ensure it starts from the right edge
+    scrollX.setValue(containerWidth)
 
     // Speed: 50 pixels per second
     const duration = (textWidth + containerWidth) * 20
