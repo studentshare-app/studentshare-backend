@@ -263,6 +263,184 @@ app.get('/api/all-subscriptions', adminLimiter, requireAdmin, async (req, res) =
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() })
 })
+// POST /api/create-checkout — creates a Monime checkout session
+app.post('/api/create-checkout', generalLimiter, async (req, res) => {
+  const { plan, userId, userEmail, userName } = req.body
+
+  if (!userId || !plan) {
+    return res.status(400).json({ error: 'Missing required fields' })
+  }
+  if (!isValidUUID(userId)) {
+    return res.status(400).json({ error: 'Invalid userId' })
+  }
+
+  const MONIME_PLANS = {
+    monthly:       { name: 'Monthly Plan',       price: 2500,  days: 30  },
+    academic_year: { name: 'Academic Year Plan', price: 15000, days: 270 },
+    yearly:        { name: 'Yearly Plan',        price: 30000, days: 365 },
+  }
+
+  const planInfo = MONIME_PLANS[plan]
+  if (!planInfo) {
+    return res.status(400).json({ error: 'Invalid plan' })
+  }
+
+  try {
+    // 1. Create subscription record in pending state
+    const { data: sub, error: subError } = await supabase
+      .from('subscriptions')
+      .insert({
+        user_id: userId,
+        plan,
+        status: 'pending',
+        amount: planInfo.price / 100,
+        currency: 'SLE',
+        created_at: new Date().toISOString(),
+      })
+      .select()
+      .single()
+
+    if (subError) throw new Error(subError.message)
+
+    // 2. Create Monime checkout session
+    const idempotencyKey = `sub_${sub.id}_${Date.now()}`
+    const backendUrl = process.env.BACKEND_URL || 'https://studentshare-backend.onrender.com'
+
+    const monimeRes = await fetch(`https://api.monime.io/v1/checkout-sessions`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.MONIME_ACCESS_TOKEN}`,
+        'Monime-Space-Id': process.env.MONIME_SPACE_ID,
+        'Content-Type': 'application/json',
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: JSON.stringify({
+        name: `StudentShare ${planInfo.name}`,
+        description: `Premium subscription for ${userName || userEmail || 'student'}`,
+        reference: sub.id,
+        successUrl: `${backendUrl}/payment-success?sub=${sub.id}`,
+        cancelUrl: `${backendUrl}/payment-cancel?sub=${sub.id}`,
+        lineItems: [
+          {
+            name: planInfo.name,
+            type: 'custom',
+            quantity: 1,
+            price: {
+              currency: 'SLE',
+              value: planInfo.price,
+            },
+          },
+        ],
+        paymentOptions: {
+          card:   { disable: true },
+          bank:   { disable: true },
+          momo:   { disable: false },
+          wallet: { disable: true },
+        },
+        brandingOptions: {
+          primaryColor: '#F59E0B',
+        },
+        metadata: {
+          userId,
+          plan,
+          subscriptionId: sub.id,
+        },
+      }),
+    })
+
+    const monimeData = await monimeRes.json()
+    if (!monimeRes.ok) {
+      throw new Error(monimeData?.message || 'Monime checkout creation failed')
+    }
+
+    // 3. Store monime session ID on subscription
+    await supabase
+      .from('subscriptions')
+      .update({ monime_session_id: monimeData.result.id })
+      .eq('id', sub.id)
+
+    res.json({
+      checkoutUrl: monimeData.result.redirectUrl,
+      sessionId: monimeData.result.id,
+      subscriptionId: sub.id,
+    })
+
+  } catch (err) {
+    console.error('[create-checkout]', err)
+    res.status(500).json({ error: err.message || 'Failed to create checkout' })
+  }
+})
+
+// POST /api/monime-webhook — receives Monime payment events
+app.post('/api/monime-webhook', express.raw({ type: '*/*' }), async (req, res) => {
+  try {
+    const body = req.body.toString('utf8')
+    const event = JSON.parse(body)
+
+    console.log('[Monime Webhook]', event.type, event.data?.id)
+
+    if (event.type !== 'checkout_session.completed') {
+      return res.json({ received: true })
+    }
+
+    const session = event.data
+    const subscriptionId = session?.reference || session?.metadata?.subscriptionId
+    const userId = session?.metadata?.userId
+    const plan = session?.metadata?.plan
+
+    if (!subscriptionId || !userId) {
+      console.error('[Webhook] Missing subscriptionId or userId', session)
+      return res.status(400).json({ error: 'Missing reference data' })
+    }
+
+    const MONIME_PLANS = {
+      monthly:       { days: 30  },
+      academic_year: { days: 270 },
+      yearly:        { days: 365 },
+    }
+
+    const planInfo = MONIME_PLANS[plan]
+    if (!planInfo) return res.status(400).json({ error: 'Unknown plan' })
+
+    const expiresAt = new Date()
+    expiresAt.setDate(expiresAt.getDate() + planInfo.days)
+
+    await supabase
+      .from('subscriptions')
+      .update({
+        status: 'active',
+        approved_at: new Date().toISOString(),
+        expires_at: expiresAt.toISOString(),
+      })
+      .eq('id', subscriptionId)
+
+    await supabase
+      .from('profiles')
+      .update({
+        is_premium: true,
+        premium_plan: plan,
+        premium_expires_at: expiresAt.toISOString(),
+      })
+      .eq('id', userId)
+
+    console.log(`[Webhook] ✅ Activated premium for user ${userId}, plan ${plan}`)
+    res.json({ received: true })
+
+  } catch (err) {
+    console.error('[Webhook Error]', err)
+    res.status(500).json({ error: 'Webhook processing failed' })
+  }
+})
+
+// GET /payment-success — redirect back to app after payment
+app.get('/payment-success', (req, res) => {
+  res.redirect('studentshare://payment-success')
+})
+
+// GET /payment-cancel — redirect back to app if cancelled
+app.get('/payment-cancel', (req, res) => {
+  res.redirect('studentshare://payment-cancel')
+})
 
 // ─── 404 handler ──────────────────────────────────────────────────────────────
 app.use((req, res) => {
