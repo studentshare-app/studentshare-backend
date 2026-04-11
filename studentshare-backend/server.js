@@ -377,9 +377,9 @@ app.post('/api/create-checkout', generalLimiter, async (req, res) => {
 app.post('/api/monime-webhook', express.raw({ type: '*/*' }), async (req, res) => {
   try {
     const body = req.body.toString('utf8')
-    const event = JSON.parse(body)
-
-    console.log('[Monime Webhook]', event.type, event.data?.id)
+const event = JSON.parse(body)
+console.log('[Monime Webhook Full]', body) // temporary debug
+console.log('[Monime Webhook]', event.type, event.data?.id)
 
     if (event.type !== 'checkout_session.completed') {
       return res.json({ received: true })
