@@ -6,6 +6,7 @@ const helmet = require('helmet')
 const { createClient } = require('@supabase/supabase-js')
 
 const app = express()
+app.set('trust proxy', 1) // trust Render's proxy
 
 // ─── Security headers ─────────────────────────────────────────────────────────
 app.use(helmet())
