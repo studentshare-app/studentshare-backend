@@ -28,6 +28,8 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-secret'],
 }))
 
+// ─── Raw body for webhook (must be before express.json) ───────────────────────
+app.use('/api/monime-webhook', express.raw({ type: '*/*' }))
 app.use(express.json({ limit: '16kb' })) // prevent large payload attacks
 
 // ─── Supabase — use SERVICE ROLE key server-side (bypasses RLS safely) ────────
