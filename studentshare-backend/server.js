@@ -377,22 +377,23 @@ app.post('/api/create-checkout', generalLimiter, async (req, res) => {
 app.post('/api/monime-webhook', express.raw({ type: '*/*' }), async (req, res) => {
   try {
     const body = req.body.toString('utf8')
-const event = JSON.parse(body)
-console.log('[Monime Webhook Full]', body) // temporary debug
-console.log('[Monime Webhook]', event.type, event.data?.id)
+    const event = JSON.parse(body)
+    const eventName = event.event?.name
+    const session = event.data
 
-    if (event.type !== 'checkout_session.completed') {
+    console.log('[Monime Webhook]', eventName, session?.id)
+
+    if (eventName !== 'checkout_session.completed') {
       return res.json({ received: true })
     }
 
-    const session = event.data
-    const subscriptionId = session?.reference || session?.metadata?.subscriptionId
     const userId = session?.metadata?.userId
     const plan = session?.metadata?.plan
+    const monimeSessionId = session?.id
 
-    if (!subscriptionId || !userId) {
-      console.error('[Webhook] Missing subscriptionId or userId', session)
-      return res.status(400).json({ error: 'Missing reference data' })
+    if (!userId || !plan) {
+      console.error('[Webhook] Missing userId or plan in metadata', session?.metadata)
+      return res.status(400).json({ error: 'Missing metadata' })
     }
 
     const MONIME_PLANS = {
@@ -407,15 +408,25 @@ console.log('[Monime Webhook]', event.type, event.data?.id)
     const expiresAt = new Date()
     expiresAt.setDate(expiresAt.getDate() + planInfo.days)
 
-    await supabase
+    // Find subscription by monime session ID
+    const { data: sub } = await supabase
       .from('subscriptions')
-      .update({
-        status: 'active',
-        approved_at: new Date().toISOString(),
-        expires_at: expiresAt.toISOString(),
-      })
-      .eq('id', subscriptionId)
+      .select('id')
+      .eq('monime_session_id', monimeSessionId)
+      .single()
 
+    if (sub?.id) {
+      await supabase
+        .from('subscriptions')
+        .update({
+          status: 'active',
+          approved_at: new Date().toISOString(),
+          expires_at: expiresAt.toISOString(),
+        })
+        .eq('id', sub.id)
+    }
+
+    // Always update profile directly using userId from metadata
     await supabase
       .from('profiles')
       .update({
