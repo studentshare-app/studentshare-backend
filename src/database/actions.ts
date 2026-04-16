@@ -253,6 +253,8 @@ export async function createPost(userId: string, data: any) {
   await database.write(async () => {
     newPost = await col<any>('posts').create((p: any) => {
       p.authorId = userId;
+      p.collegeId = data.collegeId || null;
+      p.classId = data.classId || null;
       p.content = data.content || '';
       p.imageUrl = data.imageUrl || null;
       p.pollOptions = data.pollOptions ? JSON.stringify(data.pollOptions) : null;
@@ -280,6 +282,8 @@ export async function createPost(userId: string, data: any) {
   await enqueue(userId, 'posts', 'create', {
     local_id: newPost.id,
     content: newPost.content,
+    college_id: newPost.collegeId,
+    class_id: newPost.classId,
     image_url: newPost.imageUrl,
     poll_options: data.pollOptions,
     reply_to_id: newPost.replyToId,

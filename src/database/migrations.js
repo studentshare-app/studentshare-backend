@@ -1,4 +1,4 @@
-import { schemaMigrations, addColumns } from '@nozbe/watermelondb/Schema/migrations';
+import { schemaMigrations, addColumns, createTable } from '@nozbe/watermelondb/Schema/migrations';
 
 export default schemaMigrations({
   migrations: [
@@ -36,6 +36,18 @@ export default schemaMigrations({
           table: 'materials',
           columns: [
             { name: 'lecturer_name', type: 'string', isOptional: true },
+          ],
+        }),
+      ],
+    },
+    {
+      toVersion: 12,
+      steps: [
+        addColumns({
+          table: 'posts',
+          columns: [
+            { name: 'college_id', type: 'string', isOptional: true },
+            { name: 'class_id',   type: 'string', isOptional: true },
           ],
         }),
       ],

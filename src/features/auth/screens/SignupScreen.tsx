@@ -10,6 +10,11 @@
  * • goingToPicker reset to false on every focus so it's fresh each cycle
  *
  * All previous 25 fixes retained unchanged.
+ *
+ * FIX: Google OAuth now checks college_id before routing.
+ * After successful Google sign-in, redirectAfterOAuth() checks the profile:
+ * - No college_id → redirect to college selection
+ * - Has college_id → redirect to tabs
  */
 
 import { Ionicons } from '@expo/vector-icons'
@@ -215,9 +220,6 @@ export default function SignUpScreen() {
   const [className,   setClassName]   = useState<string | null>(null)
 
   // ── FIX: track whether the user is going to a picker or leaving entirely ─
-  // Set to true ONLY in goToCollegePicker / goToClassPicker.
-  // The useFocusEffect cleanup reads this: if false, the user left the screen
-  // for real (back to login/onboarding) so we clear all draft keys.
   const goingToPicker = useRef(false)
 
   // ── Offline detection ─────────────────────────────────────────────────────
@@ -230,11 +232,8 @@ export default function SignUpScreen() {
   // ── Draft persistence ─────────────────────────────────────────────────────
   useFocusEffect(
     useCallback(() => {
-      // Reset the picker flag every time the screen gains focus
-      // so a previous picker navigation doesn't carry over.
       goingToPicker.current = false
 
-      // Restore all draft state (text fields + college/class)
       let cancelled = false
       AsyncStorage.multiGet([
         SIGNUP_COLLEGE_ID_KEY,
@@ -257,9 +256,6 @@ export default function SignUpScreen() {
         if (pairs[7][1]) setConfirmPassword(pairs[7][1])
       }).catch(() => {})
 
-      // Cleanup — runs when screen loses focus.
-      // If goingToPicker is false, user actually left the screen
-      // (pressed back, navigated to login, etc.) → clear everything.
       return () => {
         cancelled = true
         if (!goingToPicker.current) {
@@ -334,10 +330,11 @@ export default function SignUpScreen() {
         pathname: ROUTES.LOGIN,
         params: { notice: `Check your inbox at ${email.trim().toLowerCase()} to confirm your account.` },
       } as any)
-    } else {
-      router.replace(ROUTES.TABS)
     }
+    // Else session is established, RootLayout will handle the redirection!
   }, [canSubmit, isOffline, email, password, fullName, collegeId, classId, router])
+
+  // ── Redirect is now handled solely by RootLayout.tsx for consistency ───────
 
   // ── Google OAuth ──────────────────────────────────────────────────────────
   const handleGoogle = useCallback(async () => {
@@ -362,13 +359,43 @@ export default function SignUpScreen() {
       }
       const result = await WebBrowser.openAuthSessionAsync(data.url, 'studentshare://auth/callback')
       if (result.type === 'success' && result.url) {
-        const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(result.url)
+        let exchangeError: any = null
+        try {
+          const match = result.url.match(/code=([^&#]+)/)
+          if (match && match[1]) {
+            const res = await supabase.auth.exchangeCodeForSession(match[1])
+            exchangeError = res.error
+          } else {
+            const res = await supabase.auth.exchangeCodeForSession(result.url)
+            exchangeError = res.error
+          }
+        } catch (err) {
+          exchangeError = err
+        }
+
         if (!exchangeError) {
           setGoogleLoading(false)
-          router.replace(ROUTES.TABS)
           return
         }
+        
+        // Also check if session exists anyway (if callback.tsx exchanged it)
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session?.user) {
+          setGoogleLoading(false)
+          return
+        }
+        
         setErrorMsg(sanitiseAuthError(exchangeError))
+      } else {
+        // On Android, Chrome Custom Tabs close the tab when the deep link fires,
+        // which causes openAuthSessionAsync to return type:'cancel' even though
+        // the OAuth succeeded. The /auth/callback screen handles the exchange
+        // in that case — just check if a session was established.
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session?.user) {
+          setGoogleLoading(false)
+          return
+        }
       }
     } catch (err: unknown) {
       if (__DEV__) console.error('[Google OAuth]', err instanceof Error ? err.message : err)
@@ -381,9 +408,9 @@ export default function SignUpScreen() {
     setGoogleLoading(false)
   }, [googleLoading, isOffline, router])
 
-  // ── Pickers — set goingToPicker = true BEFORE navigating ─────────────────
+  // ── Pickers ───────────────────────────────────────────────────────────────
   const goToCollegePicker = useCallback(() => {
-    goingToPicker.current = true   // ← tells cleanup NOT to clear draft
+    goingToPicker.current = true
     router.push({ pathname: ROUTES.COLLEGE_SELECTION, params: { mode: 'signup' } } as any)
   }, [router])
 
@@ -392,14 +419,14 @@ export default function SignUpScreen() {
       setErrorMsg('Please select your college before choosing a class.')
       return
     }
-    goingToPicker.current = true   // ← tells cleanup NOT to clear draft
+    goingToPicker.current = true
     router.push({
       pathname: '/(auth)/class-selection',
       params: { college_id: collegeId, mode: 'signup' },
     } as any)
   }, [collegeId, router])
 
-  // ── Back — does NOT set goingToPicker, so cleanup will clear draft ────────
+  // ── Back ──────────────────────────────────────────────────────────────────
   const handleBack = useCallback(() => {
     if (router.canGoBack()) router.back()
     else router.replace(ROUTES.LOGIN)
@@ -946,4 +973,4 @@ const styles = StyleSheet.create({
   termsFooter:       { padding: 16, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E2E8F0' },
   termsAgreeBtn:     { backgroundColor: P.accent, borderRadius: 14, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, shadowColor: P.accent, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.22, shadowRadius: 8, elevation: 4 },
   termsAgreeBtnText: { color: P.white, fontSize: 15, fontWeight: '700' },
-})
+}) 

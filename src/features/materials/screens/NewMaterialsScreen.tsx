@@ -32,7 +32,7 @@ import { LinearGradient } from 'expo-linear-gradient'
 
 import { supabase } from '@/lib/supabase'
 import { toggleBookmark as dbToggleBookmark } from '@/database/actions'
-import { triggerSync } from '@/core/sync/syncService'
+import { triggerSync, cacheProfileIds } from '@/core/sync/syncService'
 import {
   useMaterials,
   useCourses,
@@ -510,12 +510,16 @@ export default function NewMaterialsScreen() {
     if (!userId) return
     if (user && user.classId && user.collegeId) {
       setProfileInfo({ classId: user.classId, collegeId: user.collegeId })
+      // ✅ Cache so sync engine has IDs on next app launch without network
+      cacheProfileIds(user.classId, user.collegeId).catch(() => {})
       return
     }
     supabase.from('profiles').select('college_id, class_id').eq('id', userId).single()
       .then(({ data }) => {
-        if (data) {
+        if (data?.class_id && data?.college_id) {
           setProfileInfo({ classId: data.class_id, collegeId: data.college_id })
+          // ✅ Cache for offline sync
+          cacheProfileIds(data.class_id, data.college_id).catch(() => {})
         }
       })
   }, [userId, user])
@@ -540,10 +544,16 @@ export default function NewMaterialsScreen() {
     return map
   }, [localLecturers])
 
+  // Show ALL local materials immediately. Once effectiveClassId resolves, hide
+  // materials that belong to a different class (cross-user isolation).
   const materials = useMemo((): MaterialRecord[] => {
     if (materialsLoading && localMaterials.length === 0) return []
     return localMaterials
-      .filter((m: any) => !!effectiveClassId && m.classId === effectiveClassId)
+      .filter((m: any) => {
+        // If we know the class and this material belongs to a different one, hide it
+        if (effectiveClassId && m.classId && m.classId !== effectiveClassId) return false
+        return true
+      })
       .map((m: any) => {
         const course   = coursesMap.get(m.courseId)
         const lecturer = lecturersMap.get(m.lecturerId)

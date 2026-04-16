@@ -27,17 +27,15 @@ import AsyncStorage from '@react-native-async-storage/async-storage'
 import { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react'
 import { AppState, AppStateStatus } from 'react-native'
 import { supabase } from '@/core/api/supabase'
+import NetInfo from '@react-native-community/netinfo'
 
-// ─── Cache key ────────────────────────────────────────────────────────────────
+// ── Cache key ────────────────────────────────────────────────────────────────
 const PREMIUM_CACHE_KEY = 'studentshare_is_premium_v1'
 
-// ─── Context shape ────────────────────────────────────────────────────────────
+// ── Context shape ─────────────────────────────────────────────────────────────
 type PremiumContextValue = {
-  /** Whether the current user has an active premium subscription */
   isPremium: boolean
-  /** True only during the very first cold-start check (cache not yet read) */
   isLoading: boolean
-  /** Call this to force an immediate re-check (e.g. after payment confirmed) */
   refresh: () => Promise<void>
 }
 
@@ -47,7 +45,7 @@ const PremiumContext = createContext<PremiumContextValue>({
   refresh: async () => {},
 })
 
-// ─── Core check ───────────────────────────────────────────────────────────────
+// ── Core check ────────────────────────────────────────────────────────────────
 async function checkPremium(userId: string): Promise<boolean> {
   const [subRes, profileRes] = await Promise.all([
     supabase
@@ -71,7 +69,7 @@ async function checkPremium(userId: string): Promise<boolean> {
   )
 }
 
-// ─── Provider ────────────────────────────────────────────────────────────────
+// ── Provider ──────────────────────────────────────────────────────────────────
 export function PremiumProvider({ children }: { children: React.ReactNode }) {
   const [isPremium, setIsPremium] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
@@ -114,14 +112,23 @@ export function PremiumProvider({ children }: { children: React.ReactNode }) {
 
     void init()
 
-    // ── Auth state changes (sign-in / sign-out) ──────────────────────────
+    // ── Auth state changes (sign-in / sign-out) ───────────────────────────
     const { data: { subscription: authSub } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_OUT' || !session?.user) {
+        // ✅ Ignore SIGNED_OUT when offline — Supabase fires this when it
+        // can't refresh the token, but the user is still logged in locally
+        const net = await NetInfo.fetch().catch(() => ({ isConnected: true }))
+        if (!net.isConnected) {
+          console.log('[PremiumProvider] SIGNED_OUT received while offline — ignoring')
+          return
+        }
+
         userIdRef.current = null
         if (mountedRef.current) { setIsPremium(false); setIsLoading(false) }
         await AsyncStorage.setItem(PREMIUM_CACHE_KEY, 'false').catch(() => {})
         return
       }
+
       if (event === 'SIGNED_IN' && session.user.id !== userIdRef.current) {
         userIdRef.current = session.user.id
         try {
@@ -183,7 +190,7 @@ export function PremiumProvider({ children }: { children: React.ReactNode }) {
       .subscribe()
 
     return () => { supabase.removeChannel(channel) }
-  }, [userIdRef.current]) // re-subscribe if userId changes
+  }, [userIdRef.current])
 
   // ── AppState: re-check when app comes back to foreground ─────────────────
   useEffect(() => {
@@ -217,7 +224,7 @@ export function PremiumProvider({ children }: { children: React.ReactNode }) {
   )
 }
 
-// ─── Hook ────────────────────────────────────────────────────────────────────
+// ── Hook ──────────────────────────────────────────────────────────────────────
 export function usePremium(): PremiumContextValue {
   return useContext(PremiumContext)
 }

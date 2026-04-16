@@ -11,7 +11,8 @@
  *   3. Navigate:
  *        unauthenticated + onboarding NOT done → /(auth)/onboarding
  *        unauthenticated + onboarding done     → /(auth)/login
- *        authenticated                         → /(tabs)
+ *        authenticated + no college_id         → /(auth)/college-selection
+ *        authenticated + has college_id        → /(tabs)
  */
 
 import { DatabaseProvider } from '@/contexts/DatabaseContext'
@@ -19,7 +20,7 @@ import { supabase } from '@/core/api/supabase'
 import { PremiumProvider } from '@/core/entitlements/PremiumProvider'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { Slot, useRootNavigationState, useRouter } from 'expo-router'
+import { Slot, useRootNavigationState, useRouter, usePathname } from 'expo-router'
 import * as WebBrowser from 'expo-web-browser'
 import { useEffect, useRef, useState } from 'react'
 import { AppState, LogBox, View } from 'react-native'
@@ -49,6 +50,7 @@ const queryClient = new QueryClient({
 
 type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated'
 
+// Dynamic session key based on Supabase URL — matches how Supabase stores it
 const SUPABASE_SESSION_KEY =
   'sb-' +
   (process.env.EXPO_PUBLIC_SUPABASE_URL ?? '')
@@ -61,7 +63,7 @@ async function hasStoredRefreshToken(): Promise<boolean> {
     const raw = await AsyncStorage.getItem(SUPABASE_SESSION_KEY)
     if (!raw) return false
     const parsed = JSON.parse(raw)
-    return !!parsed?.currentSession?.refresh_token
+    return !!(parsed?.refresh_token || parsed?.currentSession?.refresh_token)
   } catch {
     return false
   }
@@ -76,6 +78,38 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T
     promise,
     new Promise<T>(resolve => setTimeout(() => resolve(fallback), ms)),
   ])
+}
+
+// ── Check if user has completed profile setup ─────────────────────────────────
+async function hasCompletedProfile(userId: string): Promise<{ complete: boolean; collegeId?: string }> {
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('college_id, class_id')
+      .eq('id', userId)
+      .single()
+
+    if (error || !data) {
+      console.log('[AuthCheck] Profile missing or error:', error?.message)
+      return { complete: false }
+    }
+
+    if (!data.college_id) {
+      console.log('[AuthCheck] Profile incomplete: No college')
+      return { complete: false }
+    }
+
+    if (!data.class_id) {
+      console.log('[AuthCheck] Profile incomplete: No class')
+      return { complete: false, collegeId: data.college_id }
+    }
+
+    console.log('[AuthCheck] Profile complete')
+    return { complete: true }
+  } catch (err) {
+    console.error('[AuthCheck] Profile fetch exception:', err)
+    return { complete: false } // Fail-closed: require setup on error
+  }
 }
 
 export default function RootLayout() {
@@ -104,7 +138,6 @@ export default function RootLayout() {
         const isOnline = netState.isConnected
 
         if (!isOnline) {
-          // Offline — use stored token to determine auth status
           console.log('[Auth] Offline — checking stored token')
           const hasRefresh = await hasStoredRefreshToken()
           return hasRefresh ? 'authenticated' : 'unauthenticated'
@@ -142,7 +175,6 @@ export default function RootLayout() {
         return hasRefresh ? 'authenticated' : 'unauthenticated'
 
       } catch {
-        // Any unexpected error — fall back to stored token
         const hasRefresh = await hasStoredRefreshToken()
         return hasRefresh ? 'authenticated' : 'unauthenticated'
       }
@@ -166,6 +198,13 @@ export default function RootLayout() {
         }
 
         if (event === 'SIGNED_OUT') {
+          // ✅ Ignore SIGNED_OUT when offline
+          const net = await NetInfo.fetch().catch(() => ({ isConnected: true }))
+          if (!net.isConnected) {
+            console.log('[Auth] SIGNED_OUT received while offline — ignoring to prevent accidental logout')
+            return
+          }
+
           if (signOutTimer.current) clearTimeout(signOutTimer.current)
 
           signOutTimer.current = setTimeout(async () => {
@@ -175,6 +214,8 @@ export default function RootLayout() {
             if (!current) {
               const hasRefresh = await hasStoredRefreshToken()
               if (!hasRefresh) {
+                // ✅ Clear cached profile IDs so the next user gets a fresh sync
+                await AsyncStorage.removeItem('user_profile_ids').catch(() => {})
                 navigatedRef.current = false
                 setHasHandledInitialNav(false)
                 setStatus('unauthenticated')
@@ -249,30 +290,69 @@ export default function RootLayout() {
     }
   }, [status])
 
-  // NAVIGATION — sole authority for cold-start routing
+  const pathname = usePathname()
+
+  // ── Auth routes that are allowed even if not logged in ──────────────────────
+  const isAuthRoute = (path: string) => {
+    return (
+      path.includes('(auth)') ||
+      path.includes('/auth/') ||
+      ['/login', '/signup', '/forgot-password', '/onboarding', '/reset-password', '/college-selection', '/class-selection'].some(sub => path.includes(sub))
+    )
+  }
+
+  // NAVIGATION — reactive authority for routing
   useEffect(() => {
-    if (status === 'loading') return
-    if (onboardingDone === null) return
-    if (!navReady) return
-    if (navigatedRef.current) return
+    // In cold start, we wait for everything. 
+    // On status changes (like login), we want to re-evaluate navigation.
+    if (status === 'loading' || onboardingDone === null || !navReady) return
 
-    navigatedRef.current = true
+    // ✅ Never interrupt the OAuth callback route prematurely.
+    // Let callback.tsx handle the token exchange. Once the session is recovered,
+    // status will become 'authenticated' and RootLayout will gracefully handle routing.
+    const navigate = async () => {
+      // 1. If currently on the callback route, wait for the session to be established.
+      // Once authenticated, we proceed to navigation to handle profile checks.
+      if (pathname === '/auth/callback' && status !== 'authenticated') return
 
-    if (status === 'authenticated') {
-      console.log('[NAV] → /(tabs)  (authenticated)')
-      router.replace('/(tabs)' as any)
-    } else if (!onboardingDone) {
-      console.log('[NAV] → /(auth)/onboarding  (first launch)')
-      router.replace('/(auth)/onboarding' as any)
-    } else {
-      console.log('[NAV] → /(auth)/login  (unauthenticated)')
-      router.replace('/(auth)/login' as any)
+      if (status === 'authenticated') {
+        const { data: { session } } = await supabase.auth.getSession()
+        const userId = session?.user?.id
+
+        if (userId) {
+          const profileResult = await hasCompletedProfile(userId)
+          
+          if (!profileResult.complete) {
+            if (profileResult.collegeId) {
+              console.log('[NAV] → Class Selection (class missing)')
+              router.replace({ pathname: '/(auth)/class-selection', params: { college_id: profileResult.collegeId } } as any)
+            } else {
+              console.log('[NAV] → College Selection (college missing)')
+              router.replace('/(auth)/college-selection' as any)
+            }
+          } else {
+            // Only redirect to tabs if at the root or on an auth screen that is no longer needed
+            const isLandingPath = pathname === '/' || isAuthRoute(pathname) || pathname === '/index'
+            if (!isLandingPath || pathname.includes('(tabs)')) return
+
+            console.log('[NAV] → Tabs (profile complete)')
+            router.replace('/(tabs)' as any)
+          }
+        }
+      } else {
+        // If on any auth screen, stay there and let it handle its own state.
+        if (isAuthRoute(pathname)) return
+        console.log('[NAV] → Login (unauthenticated, current:', pathname, ')')
+        router.replace('/(auth)/login' as any)
+      }
+
+      setTimeout(() => {
+        SplashScreen.hideAsync().catch(() => {})
+      }, 150)
     }
 
-    setTimeout(() => {
-      SplashScreen.hideAsync().catch(() => {})
-    }, 150)
-  }, [status, onboardingDone, navReady])
+    navigate()
+  }, [status, onboardingDone, navReady, pathname])
 
   return (
     <DatabaseProvider>

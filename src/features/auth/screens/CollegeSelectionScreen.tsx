@@ -227,17 +227,41 @@ export default function CollegeSelectionScreen() {
     retryCount.current += 1
     setLoading(true)
     setFetchError(false)
-    const { data, error } = await supabase
-      .from('colleges')
-      .select('id, name, short_name, display_order, logo_url')
-      .order('display_order')
-    setLoading(false)
-    if (error || !data) {
+
+    try {
+      console.log('[fetchColleges] Starting query...')
+      
+      // Create a 10s timeout promise
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Supabase fetch timed out')), 10000)
+      )
+
+      // Race the supabase request against the timeout
+      const result: any = await Promise.race([
+        supabase
+          .from('colleges')
+          .select('id, name, short_name, display_order, logo_url')
+          .order('display_order'),
+        timeoutPromise
+      ])
+
+      console.log('[fetchColleges] Query completed, result count:', result.data?.length)
+
+      setLoading(false)
+      
+      const { data, error } = result
+      if (error || !data) {
+        console.warn('[fetchColleges] Error from Supabase:', error)
+        setFetchError(true)
+      } else {
+        retryCount.current = 0
+        setColleges(data)
+        setFiltered(data)
+      }
+    } catch (err: any) {
+      console.warn('[fetchColleges] Exception caught:', err?.message || err)
+      setLoading(false)
       setFetchError(true)
-    } else {
-      retryCount.current = 0
-      setColleges(data)
-      setFiltered(data)
     }
   }
 
@@ -269,8 +293,8 @@ export default function CollegeSelectionScreen() {
       }
 
       if (!userId) { Alert.alert('Session expired', 'Please log in again.'); router.replace('/(auth)/login'); return }
-      const updatePayload = { college_id: selected, class_id: null }
-      const { error } = await supabase.from('profiles').update(updatePayload).eq('id', userId)
+      const upsertPayload = { id: userId, college_id: selected, class_id: null }
+      const { error } = await supabase.from('profiles').upsert(upsertPayload)
       if (error) throw error
       if (isEditMode) {
         Alert.alert('College updated ✓', 'Your college has been saved. Would you like to update your class now?', [
@@ -366,7 +390,17 @@ export default function CollegeSelectionScreen() {
         )}
 
         {!isEditMode && !isSignupMode && (
-          <Text style={s.stepLabel}>STEP 2 OF 3</Text>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={s.stepLabel}>STEP 2 OF 3</Text>
+            <TouchableOpacity 
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              onPress={async () => {
+                await supabase.auth.signOut()
+              }}
+            >
+              <Text style={{ fontSize: 11, color: C.textSub, fontWeight: '700', letterSpacing: 0.5 }}>SIGN OUT</Text>
+            </TouchableOpacity>
+          </View>
         )}
 
         <Text style={s.heroTitle}>

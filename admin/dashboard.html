@@ -1534,14 +1534,16 @@ function switchTab(tab, btn){
 async function loadCollegesIntoSelects(){
   const {data:colleges} = await sb.from('colleges').select('*').order('display_order')
   const selIds = ['collegeSelect','filterCollege','classCollegeSelect','courseCollegeSelect','filterCourseCollege',
-                  'lecturerCollegeSelect','filterLecCollege','wbCollegeSelect','citCollegeSelect','slidesCollegeSelect']
+                  'lecturerCollegeSelect','filterLecCollege','wbCollegeSelect','citCollegeSelect','slidesCollegeSelect',
+                  'notifCollegeSelect']
   selIds.forEach(id=>{
     const el=document.getElementById(id); if(!el) return
     const isFilter = id.startsWith('filter')
     const isWb = id==='wbCollegeSelect'
     const isCit = id==='citCollegeSelect'
     const isSlides = id==='slidesCollegeSelect'
-    let def = isFilter ? 'All Colleges' : isWb ? 'Choose a college...' : (isCit||isSlides) ? 'Select a college...' : 'Select college...'
+    const isNotif = id==='notifCollegeSelect'
+    let def = isFilter ? 'All Colleges' : isWb ? 'Choose a college...' : (isCit||isSlides||isNotif) ? 'Select a college...' : 'Select college...'
     el.innerHTML = `<option value="">${def}</option>`
     colleges.forEach(c=>el.innerHTML+=`<option value="${c.id}">${esc(c.name)}</option>`)
   })
@@ -1627,7 +1629,17 @@ function onNotifTargetChange() {
   const val = document.getElementById('notifTarget').value
   document.getElementById('notifCollegeRow').style.display = (val === 'college' || val === 'class') ? 'block' : 'none'
   document.getElementById('notifClassRow').style.display   = val === 'class' ? 'block' : 'none'
-  if (val === 'college' || val === 'class') loadNotifColleges()
+  if (val === 'college' || val === 'class') {
+    // If colleges already loaded (from boot), skip re-fetch; otherwise load them
+    const sel = document.getElementById('notifCollegeSelect')
+    if (sel.options.length <= 1) loadNotifColleges()
+    // If switching to class and a college is already picked, populate classes immediately
+    if (val === 'class' && sel.value) loadNotifClasses()
+  }
+  if (val !== 'class') {
+    // Reset class dropdown when switching away from class target
+    document.getElementById('notifClassSelect').innerHTML = '<option value="">Select class...</option>'
+  }
 }
 
 async function loadNotifColleges() {
@@ -1654,6 +1666,17 @@ async function sendNotification() {
 
   if (!title || !body) { toast('Enter a title and message', 'error'); return }
 
+  // Validate college / class selections before disabling the button
+  let collegeId = null, classId = null
+  if (target === 'college' || target === 'class') {
+    collegeId = document.getElementById('notifCollegeSelect').value
+    if (!collegeId) { toast('Please select a college', 'error'); return }
+  }
+  if (target === 'class') {
+    classId = document.getElementById('notifClassSelect').value
+    if (!classId) { toast('Please select a class', 'error'); return }
+  }
+
   const btn    = document.getElementById('sendNotifBtn')
   const status = document.getElementById('notifSendStatus')
   btn.disabled = true
@@ -1663,55 +1686,44 @@ async function sendNotification() {
   try {
     let recipientCount = 0
 
+    const basePayload = {
+      p_title:    title,
+      p_body:     body,
+      p_type:     type,
+      p_sent_by:  session.user.id,
+      p_metadata: { source: 'admin_dashboard', target, custom: true },
+    }
+
     if (target === 'all') {
-      const { data, error } = await sb.rpc('notify_all_users', {
-        p_title:    title,
-        p_body:     body,
-        p_type:     type,
-        p_sent_by:  session.user.id,
-        p_metadata: { source: 'admin_dashboard' },
-      })
+      const { data, error } = await sb.rpc('notify_all_users', basePayload)
       if (error) throw error
       recipientCount = data || 0
 
     } else if (target === 'college') {
-      const collegeId = document.getElementById('notifCollegeSelect').value
-      if (!collegeId) { toast('Select a college', 'error'); return }
-      const { data, error } = await sb.rpc('notify_college', {
-        p_college_id: collegeId,
-        p_title:      title,
-        p_body:       body,
-        p_type:       type,
-        p_sent_by:    session.user.id,
-        p_metadata:   { source: 'admin_dashboard' },
-      })
+      const payload = { ...basePayload, p_college_id: collegeId }
+      const { data, error } = await sb.rpc('notify_college', payload)
       if (error) throw error
       recipientCount = data || 0
 
     } else if (target === 'class') {
-      const classId = document.getElementById('notifClassSelect').value
-      if (!classId) { toast('Select a class', 'error'); return }
-      const { data, error } = await sb.rpc('notify_class', {
-        p_class_id:  classId,
-        p_title:     title,
-        p_body:      body,
-        p_type:      type,
-        p_sent_by:   session.user.id,
-        p_metadata:  { source: 'admin_dashboard' },
-      })
+      // Pass both college_id and class_id so the RPC can filter correctly
+      const payload = { ...basePayload, p_college_id: collegeId, p_class_id: classId }
+      const { data, error } = await sb.rpc('notify_class', payload)
       if (error) throw error
       recipientCount = data || 0
     }
 
-    // Record in notification_templates for history
+    // Record in notification_templates for history (include targeting ids)
     await sb.from('notification_templates').insert({
       title,
       body,
       type,
       target,
-      created_by: session.user.id,
-      sent_at:    new Date().toISOString(),
-      send_count: recipientCount,
+      college_id:  collegeId,
+      class_id:    classId,
+      created_by:  session.user.id,
+      sent_at:     new Date().toISOString(),
+      send_count:  recipientCount,
     })
 
     toast(`✅ Sent to ${recipientCount} user${recipientCount !== 1 ? 's' : ''}!`)
@@ -1777,7 +1789,13 @@ async function loadNotificationsTab() {
 
     tbody.innerHTML = (history || []).map(h => {
       const tc = TYPE_COLORS[h.type] || TYPE_COLORS.general
-      const targetLabel = h.target === 'all' ? '📢 Everyone' : h.target === 'college' ? '🏛 College' : '🎓 Class'
+      let targetLabel
+      if (h.target === 'all')          targetLabel = '📢 Everyone'
+      else if (h.target === 'college') targetLabel = '🏛 College'
+      else if (h.target === 'class')   targetLabel = '🎓 Class'
+      else                             targetLabel = h.target || '—'
+      const cid = h.college_id ? `'${escAttr(h.college_id)}'` : 'null'
+      const kid = h.class_id   ? `'${escAttr(h.class_id)}'`   : 'null'
       return `<tr>
         <td style="font-weight:600;color:#111827;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(h.title)}">${esc(h.title)}</td>
         <td><span style="background:${tc.bg};color:${tc.color};padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700">${NOTIF_TYPE_ICONS[h.type] || '🔔'} ${cap(h.type.replace(/_/g,' '))}</span></td>
@@ -1785,7 +1803,7 @@ async function loadNotificationsTab() {
         <td style="font-size:12px;color:#9CA3AF">${h.sent_at ? timeAgo(h.sent_at) : '—'}</td>
         <td style="font-weight:700;color:#1A56DB">${(h.send_count || 0).toLocaleString()}</td>
         <td>
-          <button class="btn-sm btn-edit" onclick="resendNotification('${escAttr(h.title)}','${escAttr(h.body)}','${h.type}','${h.target}')">↩ Resend</button>
+          <button class="btn-sm btn-edit" onclick="resendNotification('${escAttr(h.title)}','${escAttr(h.body)}','${h.type}','${h.target}',${cid},${kid})">↩ Resend</button>
           <button class="btn-sm btn-reject" onclick="deleteNotifTemplate('${h.id}')" style="margin-left:4px">🗑</button>
         </td>
       </tr>`
@@ -1796,12 +1814,25 @@ async function loadNotificationsTab() {
   }
 }
 
-function resendNotification(title, body, type, target) {
+async function resendNotification(title, body, type, target, collegeId, classId) {
   document.getElementById('notifTitle').value  = title
   document.getElementById('notifBody').value   = body
   document.getElementById('notifType').value   = type
   document.getElementById('notifTarget').value = target
   onNotifTargetChange()
+
+  // Restore college / class selectors if this was a targeted notification
+  if ((target === 'college' || target === 'class') && collegeId) {
+    const sel = document.getElementById('notifCollegeSelect')
+    // Ensure the colleges list is loaded before setting the value
+    if (sel.options.length <= 1) await loadNotifColleges()
+    sel.value = collegeId
+  }
+  if (target === 'class' && classId) {
+    await loadNotifClasses()
+    document.getElementById('notifClassSelect').value = classId
+  }
+
   updateNotifCounts()
   updateNotifPreview()
   document.getElementById('notifTitle').scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -2380,17 +2411,21 @@ async function handleUpload(){
   const coverFile=document.getElementById('coverFileInput').files[0]
   if(type==='book'&&coverFile&&matData){ try{ const cu=await uploadCoverToStorage(coverFile,matData.id); await sb.from('materials').update({cover_url:cu}).eq('id',matData.id) }catch(e){ console.log('Cover failed',e) } }
   
-  // Auto-notify all users about new material
+  // Auto-notify users in the specific class about new material
   try {
-    await sb.rpc('notify_all_users', {
-      p_title:    `📄 New Material Available`,
-      p_body:     `"${title}" has just been uploaded. Tap to check it out!`,
-      p_type:     'material_upload',
-      p_sent_by:  session.user.id,
-      p_metadata: { source: 'material_upload', material_id: matData.id },
+    const { error: notifErr } = await sb.rpc('notify_class', {
+      p_college_id: collegeId,
+      p_class_id:   classId,
+      p_title:      `📄 New Material Available`,
+      p_body:       `"${title}" has just been uploaded for your class. Tap to explore!`,
+      p_type:       'material_upload',
+      p_sent_by:    session.user.id,
+      p_metadata:   { source: 'material_upload', material_id: matData.id },
     })
+    if (notifErr) throw notifErr
   } catch(e) {
     console.warn('Notification send failed:', e)
+    toast('⚠️ Uploaded, but notification failed: ' + e.message, 'error')
   }
 
   showMsg(contentText?'✅ Uploaded! AI text extracted.':'✅ Uploaded! (No text extracted)')
@@ -2692,7 +2727,14 @@ async function approvePayment(id) {
     })
     const data = await res.json()
     if (!res.ok || !data.success) throw new Error(data.error || 'API failed')
-    toast('✅ Approved! User now has premium access.')
+    
+    // Also ensure badges are toggled (even if API does it, we do it here for safety)
+    const { data: subData } = await sb.from('subscriptions').select('user_id').eq('id', id).single()
+    if (subData) {
+      await sb.from('profiles').update({ is_verified: true }).eq('id', subData.user_id)
+    }
+
+    toast('✅ Approved! User now has premium and verified access.')
     loadPayments()
     loadUsers()
   } catch (e) {
@@ -2707,8 +2749,11 @@ async function approvePayment(id) {
         confirmed_at: new Date().toISOString(), expires_at: expiresAt.toISOString()
       }).eq('id', id)
       if (error) throw error
+      
+      // Automatic badges: Verified + Premium (premium status is derived from active sub)
       await sb.from('profiles').update({ is_verified: true }).eq('id', sub.user_id)
-      toast('✅ Approved via fallback!')
+      
+      toast('✅ Approved via fallback! User now verified + premium.')
       loadPayments(); loadUsers()
     } catch (fe) {
       toast('Approve failed: ' + fe.message, 'error')

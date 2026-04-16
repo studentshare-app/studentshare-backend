@@ -4,13 +4,14 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useFocusEffect } from 'expo-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import NetInfo from '@react-native-community/netinfo'
 
-// ── Cache keys ─────────────────────────────────────────
+// ── Cache keys ──────────────────────────────────────────────────────
 const USER_ID_CACHE_KEY = 'studentshare_user_id_cache'
 const DASHBOARD_CACHE_KEY = 'studentshare_dashboard_cache'
 const STALE_TIME_MS = 2 * 60 * 1000
 
-// ── Avatar Lock ───────────────────────────────────────
+// ── Avatar Lock ─────────────────────────────────────────────────────
 let avatarUploadLockUntil = 0
 
 export function lockAvatarRefetch() {
@@ -21,7 +22,7 @@ export function isAvatarRefetchLocked() {
   return Date.now() < avatarUploadLockUntil
 }
 
-// ── Types ─────────────────────────────────────────────
+// ── Types ────────────────────────────────────────────────────────────
 export type SyncedProfile = {
   full_name: string
   avatar_url: string | null
@@ -38,13 +39,14 @@ export type SyncedProfile = {
 
 export type UseProfileSyncResult = {
   profile: SyncedProfile | null
+  stats: any | null
   userId: string | null
   loading: boolean
   isOnline: boolean
   isAdmin: boolean
 }
 
-// ── Helpers ───────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────
 function safeParseDashboard(raw: string | null): any | null {
   if (!raw) return null
   try {
@@ -56,7 +58,7 @@ function safeParseDashboard(raw: string | null): any | null {
   }
 }
 
-// ── Hook ──────────────────────────────────────────────
+// ── Hook ─────────────────────────────────────────────────────────────
 export function useProfileSync(): UseProfileSyncResult {
   const queryClient = useQueryClient()
 
@@ -68,8 +70,10 @@ export function useProfileSync(): UseProfileSyncResult {
   const cachedDashboardRef = useRef<any>(null)
   const userIdRef = useRef<string | null>(null)
   const cancelledRef = useRef(false)
+  // ✅ Track active channel to prevent duplicate subscriptions
+  const channelRef = useRef<any>(null)
 
-  // ── INIT ────────────────────────────────────────────
+  // ── INIT ──────────────────────────────────────────────────────────
   useEffect(() => {
     cancelledRef.current = false
 
@@ -98,12 +102,15 @@ export function useProfileSync(): UseProfileSyncResult {
         setUserId(session.user.id)
         await AsyncStorage.setItem(USER_ID_CACHE_KEY, session.user.id)
       }
+
+      const net = await NetInfo.fetch()
+      setIsOnline(net.isConnected ?? true)
     }
 
     init()
 
     const { data: { subscription } } =
-      supabase.auth.onAuthStateChange((event: AuthChangeEvent, session: Session | null) => {
+      supabase.auth.onAuthStateChange(async (event: AuthChangeEvent, session: Session | null) => {
         if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session?.user) {
           if (session.user.id !== userIdRef.current) {
             userIdRef.current = session.user.id
@@ -112,17 +119,16 @@ export function useProfileSync(): UseProfileSyncResult {
         }
 
         if (event === 'SIGNED_OUT') {
-          // ✅ Wipe ALL in-memory React Query cache — prevents previous user's
-          // data being served as placeholderData to the next login
-          queryClient.clear()
+          const net = await NetInfo.fetch().catch(() => ({ isConnected: true }))
+          if (!net.isConnected) {
+            console.log('[Sync] SIGNED_OUT received while offline — skipping cache wipe')
+            return
+          }
 
-          // ✅ Clear cached userId ref so init() doesn't re-hydrate old user
+          queryClient.clear()
           userIdRef.current = null
           cachedDashboardRef.current = null
 
-          // ✅ Remove all persistent keys — dashboard is now user-scoped in
-          // useHomeDashboard, but also wipe the legacy unscoped key if it
-          // still exists on the device
           AsyncStorage.multiRemove([
             USER_ID_CACHE_KEY,
             DASHBOARD_CACHE_KEY,
@@ -137,13 +143,18 @@ export function useProfileSync(): UseProfileSyncResult {
         }
       })
 
+    const netSub = NetInfo.addEventListener((state: any) => {
+      setIsOnline(state.isConnected ?? true)
+    })
+
     return () => {
       cancelledRef.current = true
       subscription.unsubscribe()
+      netSub()
     }
   }, [])
 
-  // ── ADMIN CHECK ─────────────────────────────────────
+  // ── ADMIN CHECK ───────────────────────────────────────────────────
   useEffect(() => {
     if (!userId) return
 
@@ -163,7 +174,7 @@ export function useProfileSync(): UseProfileSyncResult {
     }
   }, [userId])
 
-  // ── QUERY CACHE ACCESS ──────────────────────────────
+  // ── QUERY CACHE ACCESS ────────────────────────────────────────────
   const { data: subscribedData } = useQuery({
     queryKey: ['dashboard', userId],
     queryFn: () => Promise.resolve(null),
@@ -175,12 +186,22 @@ export function useProfileSync(): UseProfileSyncResult {
   const effectiveData = subscribedData ?? cachedDashboardRef.current
   const profile: SyncedProfile | null = effectiveData?.profile ?? null
 
-  // ── REALTIME SYNC ───────────────────────────────────
+  // ── REALTIME SYNC ─────────────────────────────────────────────────
   useEffect(() => {
     if (!userId) return
 
+    // ✅ Remove any existing channel before creating a new one
+    // This prevents the "cannot add callbacks after subscribe()" error
+    if (channelRef.current) {
+      supabase.removeChannel(channelRef.current)
+      channelRef.current = null
+    }
+
+    // ✅ Use a unique channel name with timestamp to avoid conflicts
+    const channelName = `profile-sync-${userId}-${Date.now()}`
+
     const channel = supabase
-      .channel(`profile-sync-${userId}`)
+      .channel(channelName)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'profiles', filter: `id=eq.${userId}` },
@@ -191,12 +212,17 @@ export function useProfileSync(): UseProfileSyncResult {
       )
       .subscribe()
 
+    channelRef.current = channel
+
     return () => {
-      supabase.removeChannel(channel)
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current)
+        channelRef.current = null
+      }
     }
   }, [userId])
 
-  // ── FOCUS REFRESH ───────────────────────────────────
+  // ── FOCUS REFRESH ─────────────────────────────────────────────────
   const lastFocusRef = useRef(Date.now())
 
   useFocusEffect(
@@ -213,7 +239,7 @@ export function useProfileSync(): UseProfileSyncResult {
     }, [userId])
   )
 
-  // ── GLOBAL INVALIDATION ─────────────────────────────
+  // ── GLOBAL INVALIDATION ───────────────────────────────────────────
   useEffect(() => {
     if (!userId || !profile?.college_id || !profile?.class_id) return
 
@@ -232,7 +258,6 @@ export function useProfileSync(): UseProfileSyncResult {
       }
     })
 
-    // ✅ dashboard cache is now user-scoped in useHomeDashboard — removed from here
     AsyncStorage.multiRemove([
       'studentshare_materials_cache',
       'studentshare_materials_meta',
@@ -244,6 +269,7 @@ export function useProfileSync(): UseProfileSyncResult {
 
   return {
     profile,
+    stats: effectiveData?.stats ?? null,
     userId,
     loading: !cacheReady,
     isOnline,

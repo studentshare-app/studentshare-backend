@@ -68,9 +68,7 @@
       }
     },
     "owner": "studentshare",
-    "runtimeVersion": {
-      "policy": "appVersion"
-    },
+    "runtimeVersion": "1.0.1",
     "updates": {
       "url": "https://u.expo.dev/3ca4e0b4-196e-460d-b14f-8c95827d28cb"
     }

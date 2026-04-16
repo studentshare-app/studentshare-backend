@@ -1,6 +1,6 @@
 // features/home/components/LeaderboardPreview.tsx
 import { useQuery } from '@tanstack/react-query'
-import { useCallback, useEffect, useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { Animated, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
 import { C } from '@/lib/colors'
 import { fetchCollegeLeaderboard } from '@/lib/leaderboard'
@@ -69,52 +69,23 @@ export function LeaderboardPreview({
   onOpenFull: () => void
 }) {
   const { data: collegeBoard = [] } = useQuery({
-    queryKey: ['leaderboard_college', collegeId, 'weekly'],
-    queryFn: () => fetchCollegeLeaderboard(collegeId, 'weekly'),
-    enabled: !!collegeId,
-    staleTime: 5 * 60 * 1000,
-  })
+  queryKey: ['leaderboard_college', collegeId, 'weekly'],
+  queryFn: () => fetchCollegeLeaderboard(collegeId, 'weekly'),
+  enabled: !!collegeId,
+  staleTime: 5 * 60 * 1000,
+  gcTime: 24 * 60 * 60 * 1000,   // keep cache for 24 hours
+  placeholderData: (prev) => prev, // show previous data while offline
+})
 
   const activeBoard = collegeBoard as LeaderboardEntry[]
   const myEntry     = activeBoard.find(entry => entry.id === userId)
   const total       = activeBoard.length
   const topScore    = activeBoard[0]?.score || 1
+if (activeBoard.length === 0) return null
 
-  // ── Nearby Logic ────────────────────────────────────────────────────────
-  // If user is top 3, show normal podium.
-  // If user is 4+, show user in center, with neighbors on left/right.
-  const isTop3 = myEntry && myEntry.rank <= 3
-  
-  let podium: LeaderboardEntry[] = []
-  let displayLabel = 'TOP CAMPUS CONTRIBUTORS'
-
-  if (activeBoard.length === 0) return null
-
-  if (!myEntry || isTop3) {
-    podium = activeBoard.slice(0, 3)
-  } else {
-    displayLabel = `YOUR RANK NEIGHBORS`
-    const myIndex = activeBoard.findIndex(e => e.id === userId)
-    
-    // Attempt to get [Rank-1, Me, Rank+1]
-    const neighbors = []
-    if (myIndex > 0) neighbors.push(activeBoard[myIndex - 1])
-    neighbors.push(activeBoard[myIndex])
-    if (myIndex < activeBoard.length - 1) neighbors.push(activeBoard[myIndex + 1])
-    
-    // We want specifically 3 slots for the UI. 
-    // If we're at the very end, take the last 3.
-    if (neighbors.length < 3 && activeBoard.length >= 3) {
-      podium = activeBoard.slice(-3)
-    } else {
-      podium = neighbors
-    }
-  }
-
-  // Determine "Rest" of the list (next 2 after podium or just top 4-5)
-  const rest = isTop3 
-    ? activeBoard.slice(3, 5) 
-    : [] // Don't show "rest" if we are showing neighbors to keep it clean
+const podium = activeBoard.slice(0, 3)
+const displayLabel = 'TOP CAMPUS CONTRIBUTORS'
+const rest = activeBoard.slice(3, 5)
 
   return (
     <View style={styles.card}>
@@ -133,55 +104,54 @@ export function LeaderboardPreview({
         </TouchableOpacity>
       </View>
 
-      {podium.length >= 1 && (
+     {podium.length >= 1 && (
         <View style={styles.podiumWrap}>
-          {/* Left Slot: Rank X-1 or #2 */}
+          {/* Left Slot: #2 */}
           <View style={[styles.podSlot, { alignSelf: 'flex-end' }]}>
             {podium.length >= 2 && (
               <>
-                <PodiumAvatar entry={isTop3 ? podium[1] : podium[0]} size={68} bg="#5A6070" />
+                <PodiumAvatar entry={podium[1]} size={68} bg="#5A6070" />
                 <Text allowFontScaling={false} style={styles.podName} numberOfLines={1}>
-                  {(isTop3 ? podium[1] : podium[0]).full_name?.split(' ')[0]}
+                  {podium[1].full_name?.split(' ')[0]}
                 </Text>
                 <Text allowFontScaling={false} style={styles.podPts}>
-                  {(isTop3 ? podium[1] : podium[0]).score.toLocaleString()}
+                  {podium[1].score.toLocaleString()}
                 </Text>
-                <View style={[styles.podBase2, !isTop3 && { backgroundColor: 'rgba(255,255,255,0.03)' }]} />
+                <View style={styles.podBase2} />
               </>
             )}
           </View>
 
-          {/* Center Slot: Me (Rank X) or #1 */}
+          {/* Center Slot: #1 */}
           <View style={[styles.podSlot, { alignSelf: 'flex-end', marginBottom: 0 }]}>
-            {(isTop3 || podium.length === 0) && <AnimatedCrown />}
-            <PodiumAvatar entry={isTop3 ? podium[0] : (podium[1] || podium[0])} size={84} bg={isTop3 ? "#BF9730" : C.orange} />
+            <AnimatedCrown />
+            <PodiumAvatar entry={podium[0]} size={84} bg="#BF9730" />
             <Text allowFontScaling={false} style={[styles.podName, { color: C.text }]} numberOfLines={1}>
-              {(isTop3 ? podium[0] : (podium[1] || podium[0])).full_name?.split(' ')[0]}
+              {podium[0].full_name?.split(' ')[0]}
             </Text>
-            <Text allowFontScaling={false} style={[styles.podPts, { color: isTop3 ? C.gold : C.orange, fontWeight: '700', fontSize: 13 }]}>
-              {(isTop3 ? podium[0] : (podium[1] || podium[0])).score.toLocaleString()}
+            <Text allowFontScaling={false} style={[styles.podPts, { color: C.gold, fontWeight: '700', fontSize: 13 }]}>
+              {podium[0].score.toLocaleString()}
             </Text>
-            <View style={isTop3 ? styles.podBase1 : [styles.podBase1, { backgroundColor: C.orange + '20' }]} />
+            <View style={styles.podBase1} />
           </View>
 
-          {/* Right Slot: Rank X+1 or #3 */}
+          {/* Right Slot: #3 */}
           <View style={[styles.podSlot, { alignSelf: 'flex-end' }]}>
             {podium.length >= 3 && (
               <>
-                <PodiumAvatar entry={isTop3 ? podium[2] : podium[2]} size={68} bg="#7A4A28" />
+                <PodiumAvatar entry={podium[2]} size={68} bg="#7A4A28" />
                 <Text allowFontScaling={false} style={styles.podName} numberOfLines={1}>
                   {podium[2].full_name?.split(' ')[0]}
                 </Text>
                 <Text allowFontScaling={false} style={styles.podPts}>
                   {podium[2].score.toLocaleString()}
                 </Text>
-                <View style={[styles.podBase3, !isTop3 && { backgroundColor: 'rgba(255,255,255,0.03)' }]} />
+                <View style={styles.podBase3} />
               </>
             )}
           </View>
         </View>
       )}
-
       <View style={styles.rankSection}>
         {rest.map((entry) => {
           const isMe = entry.id === userId
@@ -252,7 +222,6 @@ const styles = StyleSheet.create({
 
   podiumWrap: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 18, paddingHorizontal: 4 },
   podSlot:    { flex: 1, alignItems: 'center', marginBottom: 4 },
-  // ✅ Animated crown — replaces hardcoded '??'
   crown:      { fontSize: 22, marginBottom: 4, textAlign: 'center' },
   podAvatarBadge:    { position: 'absolute', right: -2, bottom: -2, minWidth: 22, height: 22, borderRadius: 11, backgroundColor: C.orange, borderWidth: 2, borderColor: C.surface, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 4 },
   podAvatarBadgeText:{ color: '#fff', fontSize: 10, fontWeight: '800' },

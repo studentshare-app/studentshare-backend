@@ -136,19 +136,24 @@ export async function fetchDashboard(userId: string) {
     filters.push('and(course_id.is.null,lecturer_id.is.null)')
     const orString = filters.join(',')
 
-    const [materialsRes, countRes, rankRes] = await Promise.all([
+    const [materialsRes, countRes, sharedCountRes, rankRes, globalRankRes] = await Promise.all([
       supabase.from('materials').select('id, title, type, file_url, created_at, courses(name)').or(orString).eq('status', 'published').order('created_at', { ascending: false }).limit(5),
       supabase.from('materials').select('id', { count: 'exact', head: true }).or(orString).eq('status', 'published'),
+      supabase.from('materials').select('id', { count: 'exact', head: true }).eq('uploader_id', userId),
       profileData.college_id 
         ? supabase.rpc('sq_get_leaderboard', { p_period: 'weekly', p_college_id: profileData.college_id, p_limit: 1000 })
-        : Promise.resolve({ data: null }),
+        : Promise.resolve({ data: null, error: null }),
+      supabase.rpc('sq_get_leaderboard', { p_period: 'alltime', p_limit: 1000 })
     ])
 
     materials = materialsRes.data || []
     totalMaterialCount = countRes.count ?? materials.length
+    const sharedMaterialsCount = sharedCountRes.count ?? 0
     
     // Extract user rank from leaderboard data
     const collegeRank = rankRes.data?.find((r: any) => r.id === userId)?.rank ?? null
+    const globalRank = globalRankRes.data?.find((r: any) => r.id === userId)?.rank ?? null
+    const totalPoints = globalRankRes.data?.find((r: any) => r.id === userId)?.score ?? 0
 
     return { 
       profile, 
@@ -156,7 +161,10 @@ export async function fetchDashboard(userId: string) {
       stats: { 
         total: totalMaterialCount, 
         courses: courseCount,
-        college_rank: collegeRank 
+        college_rank: collegeRank,
+        global_rank: globalRank,
+        total_points: totalPoints,
+        shared_materials_count: sharedMaterialsCount
       } 
     }
   }

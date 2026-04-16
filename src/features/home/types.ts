@@ -14,6 +14,21 @@ export type Profile = {
   class: { name: string } | null
 }
 
+export type DashboardStats = {
+  total: number
+  courses: number
+  college_rank: number | null
+  global_rank?: number | null
+  total_points?: number
+  shared_materials_count?: number
+}
+
+export type DashboardData = {
+  profile: Profile
+  materials: Material[]
+  stats: DashboardStats
+}
+
 export type Material = {
   id: string
   title: string

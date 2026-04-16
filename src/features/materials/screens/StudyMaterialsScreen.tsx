@@ -39,7 +39,7 @@ import {
 import { usePremium } from '@/core/entitlements/PremiumProvider'
 import { useNetworkStatus } from '@/hooks/useNetworkStatus'
 import { downloadMaterial as syncDownload } from '@/core/sync/fileSyncService'
-import { triggerSync } from '@/core/sync/syncService'
+import { triggerSync, cacheProfileIds } from '@/core/sync/syncService'
 
 // ─────────────────────────────────────────────
 // Design Tokens
@@ -573,10 +573,18 @@ export default function StudyMaterialsScreen() {
     if (!userId) return
     if (localUser && localUser.classId && localUser.collegeId) {
       setProfileInfo({ classId: localUser.classId, collegeId: localUser.collegeId })
+      // ✅ Cache so sync engine can use on next launch without network
+      cacheProfileIds(localUser.classId, localUser.collegeId).catch(() => {})
       return
     }
     supabase.from('profiles').select('college_id, class_id').eq('id', userId).single()
-      .then(({ data }) => { if (data) setProfileInfo({ classId: data.class_id, collegeId: data.college_id }) })
+      .then(({ data }) => {
+        if (data?.class_id && data?.college_id) {
+          setProfileInfo({ classId: data.class_id, collegeId: data.college_id })
+          // ✅ Cache for offline sync
+          cacheProfileIds(data.class_id, data.college_id).catch(() => {})
+        }
+      })
   }, [userId, localUser])
 
   const coursesMap = useMemo(() => {
@@ -598,21 +606,14 @@ export default function StudyMaterialsScreen() {
   }, [localLecturers])
 
   // ── Material Transform ───────────────────────
+  // Show ALL local materials immediately. Once effectiveClassId resolves, hide
+  // materials that clearly belong to a different class (cross-user isolation).
   const materials = useMemo((): MaterialRecord[] => {
     return localMaterials
-      .filter(m => !!effectiveClassId && m.classId === effectiveClassId)
       .filter(m => {
-        if (m.courseId) {
-          const course = coursesMap.get(m.courseId);
-          if (course) return true
-          return false 
-        }
-        if (m.lecturerId) {
-          const lecturer = lecturersMap.get(m.lecturerId);
-          if (lecturer) return true
-          return false 
-        }
-        return true 
+        // If we know the class and this material has a different class, hide it
+        if (effectiveClassId && m.classId && m.classId !== effectiveClassId) return false
+        return true
       })
       .map(m => {
         const course = coursesMap.get(m.courseId)

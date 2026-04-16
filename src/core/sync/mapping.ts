@@ -50,6 +50,8 @@ const MAPPING_RULES: Record<TableName, MappingRule> = {
   posts: {
     fields: {
       id:                'remoteId',
+      college_id:        'collegeId',
+      class_id:          'classId',
       title:             'title',
       body:              'content',
       author_id:         'authorId',
@@ -224,9 +226,16 @@ export function mapRemoteToLocal(table: TableName, remote: any, local: any) {
 
   if (local.synced === undefined) local.synced = true;
   if (local.deleted === undefined) local.deleted = false;
-}
 
-/** Maps local model properties back to remote record keys for pushing */
+  // ── Default required fields for specific tables ───────────────────────
+  if (table === 'materials') {
+    if (!local.status)         local.status = 'published'  // Required non-optional field
+    if (!local.downloadStatus) local.downloadStatus = 'none' // Required non-optional field
+    if (local.isPremium === undefined) local.isPremium = false
+    if (local.isPublic === undefined)  local.isPublic  = true
+    if (local.cached === undefined)    local.cached    = false
+  }
+}
 export function mapLocalToRemote(table: TableName, local: any): any {
   const rule = MAPPING_RULES[table];
   if (!rule) return {};

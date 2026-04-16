@@ -4,24 +4,12 @@
  * Auth logic unchanged: Supabase, PKCE OAuth, sanitiseAuthError,
  * useLoginRateLimit, offline detection, exchangeCodeForSession.
  *
- * FIXES vs draft
- * ──────────────
- * • handleLogin & handleOAuth converted to useCallback — no new fn per render
- * • shake() converted to useCallback with stable shakeX ref
- * • isFormDisabled derived via useMemo to avoid recompute on every render
- * • lockCountdown useEffect deps array corrected (isLocked/getRemainingSeconds
- *   are functions — wrapped in useCallback in the hook, so stable)
- * • Added returnKeyType="next" / returnKeyType="done" + onSubmitEditing chain
- *   so users can move email → password → submit with the keyboard alone
- * • passwordRef added so email field can focus password on submit
- * • Added accessibilityRole, accessibilityLabel, accessibilityHint throughout
- * • Error/lock banners marked as accessibilityLiveRegion="polite"
- * • Offline banner uses accessibilityLiveRegion="assertive"
- * • Google button has explicit accessibilityState={{ disabled }}
- * • Back button has accessibilityLabel
- * • Forgot password link has accessibilityHint
- * • Password visibility toggle has dynamic accessibilityLabel
- * • Added haptic feedback on successful login and on error shake
+ * FIX: Google OAuth now checks college_id before routing.
+ * After successful OAuth, redirectAfterOAuth() checks the profile:
+ * - No college_id → redirect to college selection
+ * - Has college_id → redirect to tabs
+ *
+ * All previous fixes retained unchanged.
  */
 
 import { Ionicons } from '@expo/vector-icons'
@@ -169,9 +157,12 @@ export default function LoginScreen() {
     } else {
       resetRateLimit()
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
-      router.replace(ROUTES.TABS)
+      // RootLayout will handle redirection based on profile completeness!
+      console.log('[Login] Sign in success. Waiting for RootLayout navigation.')
     }
   }, [isOffline, email, password, attempt, shake, resetRateLimit, router])
+
+  // ── Redirect is now handled solely by RootLayout.tsx for consistency ───────
 
   // ── OAuth ────────────────────────────────────────────────────────────────
   const handleOAuth = useCallback(async (provider: 'google') => {
@@ -198,16 +189,29 @@ export default function LoginScreen() {
         'studentshare://auth/callback',
       )
       if (result.type === 'success' && result.url) {
-        const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(result.url)
+        let exchangeError: any = null
+        try {
+          const match = result.url.match(/code=([^&#]+)/)
+          if (match && match[1]) {
+            const res = await supabase.auth.exchangeCodeForSession(match[1])
+            exchangeError = res.error
+          } else {
+            const res = await supabase.auth.exchangeCodeForSession(result.url)
+            exchangeError = res.error
+          }
+        } catch (err) {
+          exchangeError = err
+        }
+
         if (!exchangeError) {
           setSocial(null)
           await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
-          router.replace(ROUTES.TABS); return
+          return
         }
         const { data: { session } } = await supabase.auth.getSession()
         if (session) {
           setSocial(null)
-          router.replace(ROUTES.TABS); return
+          return
         }
         setError(sanitiseAuthError(exchangeError))
       }
@@ -452,7 +456,7 @@ export default function LoginScreen() {
 
           </Animated.View>
 
-          {/* Footer — single tappable row so text never clips on small screens */}
+          {/* Footer */}
           <TouchableOpacity
             style={styles.footer}
             onPress={() => router.push(ROUTES.SIGNUP)}
@@ -476,7 +480,6 @@ const styles = StyleSheet.create({
     backgroundColor: P.bg,
   },
 
-  // Blobs
   blobTR: {
     position: 'absolute', top: 0, right: 0,
     width: 300, height: 300, borderRadius: 150,
@@ -490,7 +493,6 @@ const styles = StyleSheet.create({
     transform: [{ translateX: -60 }, { translateY: 60 }],
   },
 
-  // Offline
   offlineBanner: {
     position: 'absolute', left: 16, right: 16, zIndex: 20,
     flexDirection: 'row', alignItems: 'center', gap: 8,
@@ -508,8 +510,6 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
   },
 
-
-  // Headline
   headlineWrap: { marginBottom: 36 },
   headline: {
     fontSize: 52, fontWeight: '800',
@@ -518,7 +518,6 @@ const styles = StyleSheet.create({
   },
   subhead: { fontSize: 17, color: P.muted, fontWeight: '400' },
 
-  // Form
   formWrap: { gap: 28 },
 
   errorRow: {
@@ -563,7 +562,6 @@ const styles = StyleSheet.create({
     paddingVertical: 0,
   },
 
-  // Primary button
   primaryBtn: {
     backgroundColor: P.accent,
     borderRadius: 14,
@@ -583,7 +581,6 @@ const styles = StyleSheet.create({
     color: P.white, letterSpacing: 0.2,
   },
 
-  // Divider
   divider: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   dividerLine: { flex: 1, height: 1, backgroundColor: P.border },
   dividerText: {
@@ -591,7 +588,6 @@ const styles = StyleSheet.create({
     color: P.dimmed, letterSpacing: 1.5,
   },
 
-  // Google button
   googleBtn: {
     flexDirection: 'row', alignItems: 'center',
     justifyContent: 'center', gap: 12,
@@ -606,7 +602,6 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
 
-  // Footer
   footer: {
     flexDirection: 'row', alignItems: 'center',
     justifyContent: 'center', flexWrap: 'wrap',

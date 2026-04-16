@@ -199,10 +199,9 @@ export function useForumInteractions({
   const handleDeletePost = useCallback(async (postId: string) => {
     if (!profile.userId) return
     
-    // We need the ACTUAL WatermelonDB model instance to call deletePost
-    // But for now, we'll assume we can handle it via ID in the future if needed
-    // Actually, ForumScreen should pass the record.
-    showToast('Post deletion queued')
+    // WatermelonDB observe() will pick up the 'deleted' flag and hide the UI card immediately
+    await dbDeletePost(postId, profile.userId)
+    showToast('Post deleted')
   }, [profile.userId, showToast])
 
   // ── New post ──────────────────────────────────────────────────────────────
@@ -225,6 +224,8 @@ export function useForumInteractions({
     try {
       await createPost(profile.userId, {
         title:           null,
+        collegeId:       profile.collegeId,
+        classId:         profile.classId,
         content:         text,
         imageUrl,
         pollOptions,

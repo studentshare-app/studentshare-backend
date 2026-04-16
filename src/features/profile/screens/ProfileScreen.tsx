@@ -98,14 +98,21 @@ const MOCK_STATS = [
   { label: 'Docs Shared', value: '48'    },
 ]
 
-// ── Mock badges ───────────────────────────────────────────────────────────
-const BADGES = [
-  { icon: 'trophy',   label: 'Top Contributor', earned: true  },
-  { icon: 'sunny',    label: 'Early Bird',       earned: true  },
-  { icon: 'heart',    label: 'Helper',           earned: false },
-  { icon: 'flash',    label: 'Fast Learner',     earned: false },
-  { icon: 'moon',     label: 'Night Owl',        earned: false },
+// ── Badge Helpers ────────────────────────────────────────────────────────
+const BADGE_THRESHOLDS = [
+  { icon: 'trophy',   label: 'Scholar',        min: 100   },
+  { icon: 'sunny',    label: 'Contributor',    min: 500   },
+  { icon: 'heart',    label: 'Academic Hero',  min: 1000  },
+  { icon: 'flash',    label: 'Elite Student',  min: 2500  },
+  { icon: 'moon',     label: 'Legend',         min: 5000  },
 ]
+
+function getEarnedBadges(points: number) {
+  return BADGE_THRESHOLDS.map(b => ({
+    ...b,
+    earned: points >= b.min
+  }))
+}
 
 // ─────────────────────────────────────────────
 // BioEditor
@@ -472,13 +479,14 @@ export default function ProfileScreen() {
   const queryClient = useQueryClient()
   const insets      = useSafeAreaInsets()
 
-  const { profile, userId, loading, isAdmin } = useProfileSync()
+  const { profile, stats, userId, loading, isAdmin } = useProfileSync()
 
   const pulseAnim = useRef(new Animated.Value(1)).current
 
   const [showAbout,       setShowAbout]       = useState(false)
   const [showPrivacy,     setShowPrivacy]     = useState(false)
   const [showCollegeDialog, setShowCollegeDialog] = useState(false)
+  const [showMenu,        setShowMenu]        = useState(false)
 
   // Pulsing avatar ring
   useEffect(() => {
@@ -563,11 +571,49 @@ const handleProfileUpdate = async () => {
         <View style={[s.headerWrapper, { paddingTop: insets.top }]}>
           <View style={s.header}>
             <Text style={s.headerTitle}>Profile</Text>
-            <TouchableOpacity style={s.headerBtn}>
+            <TouchableOpacity style={s.headerBtn} onPress={() => setShowMenu(true)}>
               <Ionicons name="ellipsis-vertical" size={18} color={C.text} />
             </TouchableOpacity>
           </View>
         </View>
+
+        {/* ── Three-Dots Menu Modal ── */}
+        <Modal
+          visible={showMenu}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setShowMenu(false)}
+        >
+          <TouchableOpacity 
+            style={s.menuOverlay} 
+            activeOpacity={1} 
+            onPress={() => setShowMenu(false)}
+          >
+            <View style={[s.menuContent, { top: insets.top + 50 }]}>
+              <TouchableOpacity style={s.menuItem} onPress={() => { setShowMenu(false); setShowAbout(true); }}>
+                <Ionicons name="information-circle-outline" size={18} color={C.text} />
+                <Text style={s.menuItemText}>About StudentShare</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity style={s.menuItem} onPress={() => { setShowMenu(false); setShowPrivacy(true); }}>
+                <Ionicons name="shield-checkmark-outline" size={18} color={C.text} />
+                <Text style={s.menuItemText}>Privacy Policy</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={s.menuItem} onPress={() => { setShowMenu(false); Linking.openURL('mailto:infostudentshare@gmail.com'); }}>
+                <Ionicons name="mail-outline" size={18} color={C.text} />
+                <Text style={s.menuItemText}>Help & Support</Text>
+              </TouchableOpacity>
+
+              <View style={s.menuDivider} />
+
+              <TouchableOpacity style={[s.menuItem]} onPress={() => { setShowMenu(false); handleLogout(); }}>
+                <Ionicons name="log-out-outline" size={18} color={C.red} />
+                <Text style={[s.menuItemText, { color: C.red }]}>Log Out</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </Modal>
 
         {/* ── Hero ── */}
         <View style={s.hero}>
@@ -637,12 +683,18 @@ const handleProfileUpdate = async () => {
 
           {/* Stats row */}
           <View style={s.statsRow}>
-            {MOCK_STATS.map(stat => (
-              <View key={stat.label} style={s.statCard}>
-                <Text style={s.statValue}>{stat.value}</Text>
-                <Text style={s.statLabel}>{stat.label}</Text>
-              </View>
-            ))}
+            <View style={s.statCard}>
+              <Text style={s.statValue}>{stats?.total_points?.toLocaleString() ?? '0'}</Text>
+              <Text style={s.statLabel}>Points</Text>
+            </View>
+            <View style={s.statCard}>
+              <Text style={s.statValue}>{stats?.global_rank ? `#${stats.global_rank}` : '—'}</Text>
+              <Text style={s.statLabel}>Global Rank</Text>
+            </View>
+            <View style={s.statCard}>
+              <Text style={s.statValue}>{stats?.shared_materials_count?.toLocaleString() ?? '0'}</Text>
+              <Text style={s.statLabel}>Materials Shared</Text>
+            </View>
           </View>
         </View>
 
@@ -672,13 +724,21 @@ const handleProfileUpdate = async () => {
             <TouchableOpacity><Text style={s.viewAll}>View all</Text></TouchableOpacity>
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.badgesScroll}>
-            {BADGES.map(badge => (
-              <View key={badge.label} style={[s.badgeCircle, badge.earned && s.badgeCircleEarned]}>
-                <Ionicons
-                  name={badge.icon as any}
-                  size={26}
-                  color={badge.earned ? C.orange : C.textMute}
-                />
+            {getEarnedBadges(stats?.total_points ?? 0).map(badge => (
+              <View key={badge.label} style={s.badgeItem}>
+                <View style={[s.badgeCircle, badge.earned && s.badgeCircleEarned]}>
+                  <Ionicons
+                    name={badge.icon as any}
+                    size={26}
+                    color={badge.earned ? C.orange : C.textMute}
+                  />
+                  {!badge.earned && (
+                    <View style={s.badgeLock}>
+                      <Ionicons name="lock-closed" size={10} color={C.textMute} />
+                    </View>
+                  )}
+                </View>
+                <Text style={[s.badgeLabelText, badge.earned && s.badgeLabelEarned]}>{badge.label}</Text>
               </View>
             ))}
           </ScrollView>
@@ -888,6 +948,35 @@ const s = StyleSheet.create({
   },
   statValue: { fontSize: 21, fontWeight: '800', color: C.orange, lineHeight: 25 },
   statLabel: { fontSize: 9, fontWeight: '700', color: C.textSub, letterSpacing: 0.8, marginTop: 4, textTransform: 'uppercase', textAlign: 'center' },
+  
+  // ── Menu Modal ────────────────────────────────────────────────────────
+  menuOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.1)' },
+  menuContent: {
+    position: 'absolute', right: 20,
+    width: 220, backgroundColor: C.surface,
+    borderRadius: 18, padding: 8,
+    borderWidth: 1, borderColor: C.border,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.3, shadowRadius: 15, elevation: 20,
+  },
+  menuItem: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingHorizontal: 12, paddingVertical: 12,
+    borderRadius: 12,
+  },
+  menuItemText: { fontSize: 14, fontWeight: '600', color: C.text },
+  menuDivider: { height: 1, backgroundColor: C.border, marginVertical: 4, marginHorizontal: 8 },
+
+  // ── Badges ──────────────────────────────────────────────────────────
+  badgeItem: { alignItems: 'center', gap: 8, width: 80 },
+  badgeLabelText: { fontSize: 10, fontWeight: '700', color: C.textMute, textAlign: 'center' },
+  badgeLabelEarned: { color: C.text },
+  badgeLock: {
+    position: 'absolute', bottom: -2, right: -2,
+    width: 18, height: 18, borderRadius: 9,
+    backgroundColor: C.raised, borderWidth: 1, borderColor: C.border,
+    justifyContent: 'center', alignItems: 'center',
+  },
 
   // ── Bio section ───────────────────────────────────────────────────────
   bioSection: { paddingHorizontal: 20, marginTop: 28 },

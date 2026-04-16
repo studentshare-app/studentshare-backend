@@ -26,6 +26,7 @@ import {
   Animated,
   FlatList,
   Image,
+  Modal,
   RefreshControl,
   Share,
   StyleSheet,
@@ -338,6 +339,7 @@ function PostCard({
   onHashtag?:     (tag: string) => void
   onAvatarPress?: (userId: string) => void
   onDelete:       (id: string) => void
+  onImagePress:   (uri: string) => void
 }) {
   const isOwn = post.authorId === myUserId
   const [showOptions, setShowOptions] = useState(false)
@@ -419,9 +421,13 @@ function PostCard({
           <RichText text={post.text} onHashtag={onHashtag} />
 
           {post.imageUrl ? (
-            <View style={s.postImageWrap}>
+            <TouchableOpacity 
+              activeOpacity={0.9} 
+              onPress={() => onImagePress(post.imageUrl!)}
+              style={s.postImageWrap}
+            >
               <Image source={{ uri: post.imageUrl }} style={s.postImage} resizeMode="cover" />
-            </View>
+            </TouchableOpacity>
           ) : null}
 
           {post.type === 'poll' && post.poll && (
@@ -583,6 +589,7 @@ export default function ForumScreen() {
   const [replyTo,        setReplyTo]        = useState<Post | null>(null)
   const [toastMsg,       setToastMsg]       = useState('')
   const [toastVis,       setToastVis]       = useState(false)
+  const [previewImg,     setPreviewImg]     = useState<string | null>(null)
   const toastTimer = useRef<any>(null)
 
   setShowCompose = _setShowCompose
@@ -665,6 +672,7 @@ export default function ForumScreen() {
             onShare={handleShare} onOpen={handleOpenThread} onVote={handleVote}
             onHashtag={q => { setSearchQuery(q); setShowSearch(true) }}
             onAvatarPress={setProfileUserId} onDelete={handleDeletePost}
+            onImagePress={setPreviewImg}
           />
         )}
         ListEmptyComponent={
@@ -684,6 +692,28 @@ export default function ForumScreen() {
       <ThreadModal post={threadPost} visible={!!threadPost} onClose={() => setThreadPost(null)} onLike={handleLike} onRepost={handleRepost} onBookmark={handleBookmark} onShare={handleShare} profile={profile} onNewReply={handleNewReply} myUserId={profile.userId} onDeleteReply={handleDeletePost} />
       <ProfileCardModal userId={profileUserId} visible={!!profileUserId} onClose={() => setProfileUserId(null)} currentUserId={profile.userId} onOpen={handleOpenThread} onDelete={handleDeletePost} />
       <Toast message={toastMsg} visible={toastVis} />
+ 
+      {/* Twitter-style Image Preview Modal */}
+      <Modal visible={!!previewImg} transparent animationType="fade" statusBarTranslucent>
+        <TouchableOpacity 
+          activeOpacity={1} 
+          onPress={() => setPreviewImg(null)} 
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center' }}
+        >
+          <View style={{ position: 'absolute', top: insets.top + 10, right: 20, zIndex: 10 }}>
+             <TouchableOpacity onPress={() => setPreviewImg(null)} style={{ padding: 8, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20 }}>
+                <Ionicons name="close" size={24} color="#fff" />
+             </TouchableOpacity>
+          </View>
+          {previewImg && (
+            <Image 
+              source={{ uri: previewImg }} 
+              style={{ width: '100%', height: '80%' }} 
+              resizeMode="contain" 
+            />
+          )}
+        </TouchableOpacity>
+      </Modal>
     </View>
   )
 }

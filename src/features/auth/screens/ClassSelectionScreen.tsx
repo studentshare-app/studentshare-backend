@@ -249,7 +249,7 @@ export default function ClassSelectionScreen() {
       if (!session?.user) { Alert.alert('Session expired', 'Please log in again.'); router.replace('/(auth)/login'); return }
       const isValidClass = classes.some(c => c.id === selected)
       if (!isValidClass) { Alert.alert('Invalid selection', 'Please select a valid class.'); setSelected(null); return }
-      const { error } = await supabase.from('profiles').update({ class_id: selected }).eq('id', session.user.id)
+      const { error } = await supabase.from('profiles').upsert({ id: session.user.id, class_id: selected })
       if (error) throw error
       if (mode === 'strict') {
         Alert.alert('Class Updated ✓', 'Materials and content will now refresh for your class.', [

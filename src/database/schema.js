@@ -1,7 +1,7 @@
 import { appSchema, tableSchema } from '@nozbe/watermelondb';
 
 export default appSchema({
-  version: 11, // bumped from 10 — added lecturer_name to materials
+  version: 12, // bumped from 11 — added college_id, class_id to posts
   tables: [
 
     // USERS
@@ -58,6 +58,8 @@ export default appSchema({
       name: 'posts',
       columns: [
         { name: 'remote_id',         type: 'string',  isOptional: true },
+        { name: 'college_id',        type: 'string',  isOptional: true },
+        { name: 'class_id',          type: 'string',  isOptional: true },
         { name: 'title',             type: 'string',  isOptional: true },
         { name: 'content',           type: 'string' }, // maps to 'body' in Supabase
         { name: 'author_id',         type: 'string' },

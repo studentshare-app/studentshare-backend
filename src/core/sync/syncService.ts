@@ -2,7 +2,10 @@ import { supabase } from '@/core/api/supabase'
 import { Q } from '@nozbe/watermelondb'
 import database from '@/database'
 import NetInfo from '@react-native-community/netinfo'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import { mapRemoteToLocal, mapLocalToRemote } from './mapping'
+
+const PROFILE_IDS_KEY = 'user_profile_ids'
 
 // ─── Per-table sync config ───────────────────────────────────────────────────
 
@@ -18,7 +21,7 @@ const TABLE_CONFIG: Record<string, TableConfig> = {
   courses:               { cursorCol: 'created_at', cursorType: 'iso',    localName: 'courses'           },
   lecturers:             { cursorCol: 'created_at', cursorType: 'iso',    localName: 'lecturers'         },
   sq_posts:              { cursorCol: 'updated_at', cursorType: 'iso',    localName: 'posts'             },
-  comments:              { cursorCol: 'updated_at', cursorType: 'iso',    localName: 'comments'          },
+  comments:              { cursorCol: 'updated_at', cursorType: 'bigint', localName: 'comments'          },
   materials:             { cursorCol: 'updated_at', cursorType: 'iso',    localName: 'materials'         },
   notes:                 { cursorCol: 'updated_at', cursorType: 'iso',    localName: 'notes'             },
   conversations:         { cursorCol: 'updated_at', cursorType: 'iso',    localName: 'conversations'     },
@@ -179,25 +182,66 @@ export async function pullIncoming(
 
 // ─── Full sync cycle ─────────────────────────────────────────────────────────
 
+/** Cache the user's profile IDs in AsyncStorage for use across app restarts and sync cycles */
+export async function cacheProfileIds(classId: string, collegeId: string): Promise<void> {
+  try {
+    await AsyncStorage.setItem(PROFILE_IDS_KEY, JSON.stringify({ classId, collegeId }))
+  } catch (e) {}
+}
+
+/** Resolve the current user's classId and collegeId from local DB → AsyncStorage → Supabase (in that order) */
+async function resolveProfileIds(): Promise<{ classId: string | null; collegeId: string | null }> {
+  // 1. Try local WatermelonDB first (fastest)
+  try {
+    const users = await database.collections.get('users').query(Q.where('deleted', false), Q.take(1)).fetch() as any[]
+    if (users.length > 0 && users[0].classId && users[0].collegeId) {
+      return { classId: users[0].classId, collegeId: users[0].collegeId }
+    }
+  } catch (e) {}
+
+  // 2. Try AsyncStorage cache (available offline after first login)
+  try {
+    const raw = await AsyncStorage.getItem(PROFILE_IDS_KEY)
+    if (raw) {
+      const cached = JSON.parse(raw)
+      if (cached?.classId && cached?.collegeId) {
+        return { classId: cached.classId, collegeId: cached.collegeId }
+      }
+    }
+  } catch (e) {}
+
+  // 3. Fall back to Supabase profiles table (requires network)
+  try {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (session?.user?.id) {
+      const { data } = await supabase
+        .from('profiles')
+        .select('class_id, college_id')
+        .eq('id', session.user.id)
+        .single()
+      if (data?.class_id && data?.college_id) {
+        // Cache for future use
+        await cacheProfileIds(data.class_id, data.college_id)
+        return { classId: data.class_id, collegeId: data.college_id }
+      }
+    }
+  } catch (e) {}
+
+  return { classId: null, collegeId: null }
+}
+
 export async function runSync(): Promise<void> {
   // 1. Push local changes
   await pushOutbox()
 
-  // 2. Refresh profile for filtering
-  let collegeId: string | null = null
-  let classId: string | null = null
-  try {
-    const users = await database.collections.get('users').query(Q.where('deleted', false), Q.take(1)).fetch() as any[]
-    if (users.length > 0) {
-      collegeId = users[0].collegeId
-      classId = users[0].classId
-    }
-  } catch (e) {}
+  // 2. Resolve profile IDs (local DB → AsyncStorage cache → Supabase)
+  let { classId, collegeId } = await resolveProfileIds()
 
   const tables = Object.keys(TABLE_CONFIG)
 
   for (const table of tables) {
     try {
+
       const cfg = TABLE_CONFIG[table]
       
       // Get current cursor for this table
@@ -207,13 +251,24 @@ export async function runSync(): Promise<void> {
       // Default cursors (approx. "beginning of time")
       let currentCursor: string | number = cfg.cursorType === 'bigint' ? 0 : '1970-01-01T00:00:00Z'
       if (currentCursorRaw) {
-        currentCursor = cfg.cursorType === 'bigint' ? (cfg.cursorType === 'bigint' && !isNaN(Number(currentCursorRaw)) ? Number(currentCursorRaw) : currentCursorRaw) : currentCursor
+        currentCursor = cfg.cursorType === 'bigint' && !isNaN(Number(currentCursorRaw)) 
+          ? Number(currentCursorRaw) 
+          : currentCursorRaw
       }
 
       let queryBuilder: ((q: any) => any) | undefined
-      if (table === 'courses' && classId) queryBuilder = (q) => q.eq('class_id', classId)
-      if (table === 'lecturers' && collegeId) queryBuilder = (q) => q.eq('college_id', collegeId)
-      if (table === 'materials' && classId) queryBuilder = (q) => q.eq('class_id', classId)
+      if (table === 'courses') {
+        if (!classId) continue
+        queryBuilder = (q) => q.eq('class_id', classId)
+      }
+      if (table === 'lecturers') {
+        if (!collegeId) continue
+        queryBuilder = (q) => q.eq('college_id', collegeId)
+      }
+      if (table === 'materials') {
+        if (!classId) continue
+        queryBuilder = (q) => q.eq('class_id', classId)
+      }
 
       let hasMore = true
       let recordsFetched = 0

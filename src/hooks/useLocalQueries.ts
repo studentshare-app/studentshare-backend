@@ -206,9 +206,9 @@ export function useForumPosts(feedTab: string, userId?: string | null, collegeId
     // so we return an impossible condition to yield empty for the following feed.
     conditions.push(Q.where('id', '$$NONE$$'));
   } else if (feedTab === 'campus' && collegeId) {
-    conditions.push(Q.on('users', 'college_id', collegeId));
+    conditions.push(Q.where('college_id', collegeId));
   } else if (feedTab === 'classes' && classId) {
-    conditions.push(Q.on('users', 'class_id', classId));
+    conditions.push(Q.where('class_id', classId));
   }
 
   conditions.push(Q.sortBy('created_at', Q.desc));
