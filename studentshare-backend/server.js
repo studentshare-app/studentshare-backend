@@ -148,6 +148,17 @@ function signaturesMatch(rawBody, webhookSecret, providedSignature) {
   return safeEqual(normalized, expectedBase64)
 }
 
+function bearerAuthMatches(req, monimeAccessToken, monimeSpaceId) {
+  const authHeader = req.headers['authorization']
+  const spaceHeader = req.headers['monime-space-id']
+  if (typeof authHeader !== 'string') return false
+  if (typeof spaceHeader !== 'string') return false
+
+  const bearer = authHeader.trim()
+  const expectedBearer = `Bearer ${monimeAccessToken}`
+  return bearer === expectedBearer && spaceHeader.trim() === monimeSpaceId
+}
+
 const PLANS = {
   monthly: { name: 'Monthly', days: 30,  price: 10  },
   termly:  { name: 'Termly',  days: 120, price: 25  },
@@ -444,13 +455,11 @@ app.post('/api/monime-webhook', async (req, res) => {
     const providedSig = typeof signatureHeader === 'string' ? signatureHeader : ''
 
     if (NODE_ENV === 'production') {
-      if (!providedSig) {
-        console.error('[Webhook Auth] Missing signature header')
-        return res.status(401).json({ error: 'Missing webhook signature' })
-      }
-      if (!signaturesMatch(body, env.monimeWebhookSecret, providedSig)) {
-        console.error('[Webhook Auth] Signature mismatch')
-        return res.status(401).json({ error: 'Invalid webhook signature' })
+      const signatureOk = providedSig && signaturesMatch(body, env.monimeWebhookSecret, providedSig)
+      const bearerOk = bearerAuthMatches(req, env.monimeAccessToken, env.monimeSpaceId)
+      if (!signatureOk && !bearerOk) {
+        console.error('[Webhook Auth] No valid signature or bearer auth')
+        return res.status(401).json({ error: 'Invalid webhook authentication' })
       }
     }
 
