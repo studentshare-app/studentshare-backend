@@ -23,6 +23,8 @@ app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (mobile apps, Postman in dev)
     if (!origin) return callback(null, true)
+    // Allow file:// local testing only outside production.
+    if (origin === 'null' && NODE_ENV !== 'production') return callback(null, true)
     if (ALLOWED_ORIGINS.length === 0) return callback(null, true) // dev fallback
     if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true)
     callback(new Error(`CORS: origin ${origin} not allowed`))
@@ -113,6 +115,37 @@ function validateBody(validators) {
     }
     next()
   }
+}
+
+function normalizeSignature(value) {
+  if (typeof value !== 'string') return ''
+  return value.replace(/^sha256=/i, '').trim()
+}
+
+function signaturesMatch(rawBody, webhookSecret, providedSignature) {
+  if (!providedSignature || !webhookSecret) return false
+
+  const normalized = normalizeSignature(providedSignature)
+  const expectedHex = crypto
+    .createHmac('sha256', webhookSecret)
+    .update(rawBody)
+    .digest('hex')
+  const expectedBase64 = crypto
+    .createHmac('sha256', webhookSecret)
+    .update(rawBody)
+    .digest('base64')
+
+  const safeEqual = (a, b) => {
+    const ab = Buffer.from(a)
+    const bb = Buffer.from(b)
+    return ab.length === bb.length && crypto.timingSafeEqual(ab, bb)
+  }
+
+  if (/^[0-9a-f]+$/i.test(normalized)) {
+    return safeEqual(normalized.toLowerCase(), expectedHex.toLowerCase())
+  }
+
+  return safeEqual(normalized, expectedBase64)
 }
 
 const PLANS = {
@@ -405,23 +438,18 @@ app.post(
 app.post('/api/monime-webhook', async (req, res) => {
   try {
     const signatureHeader = req.headers['monime-signature']
+      || req.headers['x-monime-signature']
+      || req.headers['x-signature']
     const body = req.body.toString('utf8')
-    const expectedSig = crypto
-      .createHmac('sha256', env.monimeWebhookSecret || 'dev-only-missing-secret')
-      .update(body)
-      .digest('hex')
-    const providedSig = typeof signatureHeader === 'string'
-      ? signatureHeader.replace(/^sha256=/i, '').trim()
-      : ''
+    const providedSig = typeof signatureHeader === 'string' ? signatureHeader : ''
 
     if (NODE_ENV === 'production') {
-      if (!providedSig) return res.status(401).json({ error: 'Missing webhook signature' })
-      const providedBuffer = Buffer.from(providedSig, 'hex')
-      const expectedBuffer = Buffer.from(expectedSig, 'hex')
-      if (
-        providedBuffer.length !== expectedBuffer.length ||
-        !crypto.timingSafeEqual(providedBuffer, expectedBuffer)
-      ) {
+      if (!providedSig) {
+        console.error('[Webhook Auth] Missing signature header')
+        return res.status(401).json({ error: 'Missing webhook signature' })
+      }
+      if (!signaturesMatch(body, env.monimeWebhookSecret, providedSig)) {
+        console.error('[Webhook Auth] Signature mismatch')
         return res.status(401).json({ error: 'Invalid webhook signature' })
       }
     }
@@ -432,7 +460,7 @@ app.post('/api/monime-webhook', async (req, res) => {
     const webhookEventIdHeader = req.headers['monime-event-id']
     const webhookEventId = typeof webhookEventIdHeader === 'string'
       ? webhookEventIdHeader.trim()
-      : (event.id || event.event?.id || '')
+      : (event.event?.id || event.id || '')
 
     console.log('[Monime Webhook]', eventName, session?.id)
 
