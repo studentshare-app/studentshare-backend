@@ -404,6 +404,18 @@ app.post(
 // POST /api/monime-webhook — receives Monime payment events
 app.post('/api/monime-webhook', async (req, res) => {
   try {
+    console.log('[Webhook Debug]', {
+      nodeEnv: NODE_ENV,
+      hasWebhookSecret: Boolean(env.monimeWebhookSecret),
+      hasSignatureHeader: Boolean(req.headers['monime-signature']),
+      eventIdHeader: req.headers['monime-event-id'] || null,
+      contentType: req.headers['content-type'] || null,
+      bodyType: Buffer.isBuffer(req.body) ? 'buffer' : typeof req.body,
+      bodyLength: Buffer.isBuffer(req.body)
+        ? req.body.length
+        : (typeof req.body === 'string' ? req.body.length : null),
+    })
+
     const signatureHeader = req.headers['monime-signature']
     const body = req.body.toString('utf8')
     const expectedSig = crypto
