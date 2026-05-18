@@ -26,6 +26,7 @@ import {
 } from 'react'
 import {
   ActivityIndicator,
+  Modal,
   Animated,
   KeyboardAvoidingView,
   Platform,
@@ -71,10 +72,11 @@ export default function LoginScreen() {
   const [email,         setEmail]    = useState('')
   const [password,      setPassword] = useState('')
   const [showPass,      setShowPass] = useState(false)
-  const [loading,       setLoading]  = useState(false)
-  const [socialLoading, setSocial]   = useState<'google' | null>(null)
-  const [error,         setError]    = useState('')
-  const [focusedField,  setFocused]  = useState<'email' | 'password' | null>(null)
+  const [loading,         setLoading]         = useState(false)
+  const [socialLoading,   setSocial]          = useState<'google' | null>(null)
+  const [error,           setError]           = useState('')
+  const [showGoogleModal, setShowGoogleModal] = useState(false)
+  const [focusedField,    setFocused]         = useState<'email' | 'password' | null>(null)
   const [lockCountdown, setCountdown]= useState(0)
   const [isOffline,     setOffline]  = useState(false)
 
@@ -164,68 +166,43 @@ export default function LoginScreen() {
 
   // ── Redirect is now handled solely by RootLayout.tsx for consistency ───────
 
-  // ── OAuth ────────────────────────────────────────────────────────────────
-  const handleOAuth = useCallback(async (provider: 'google') => {
-    setError('')
-    if (isOffline) {
-      setError('No internet connection. Please connect and try again.')
-      shake(); return
-    }
-    setSocial(provider)
+  // ── Post-OAuth navigation helper ───────────────────────────────────────
+  // Actively routes the user after a successful Google sign-in: new users
+  // (no college_id) go to college-selection, users with college but no class
+  // go to class-selection, and complete profiles let RootLayout navigate to tabs.
+  const navigateAfterOAuth = useCallback(async () => {
     try {
-      const { data, error: oauthError } = await supabase.auth.signInWithOAuth({
-        provider,
-        options: {
-          redirectTo: 'studentshare://auth/callback',
-          skipBrowserRedirect: true,
-        },
-      })
-      if (oauthError || !data.url) {
-        setError(sanitiseAuthError(oauthError ?? { message: 'Could not start sign-in.' }))
-        setSocial(null); return
-      }
-      const result = await WebBrowser.openAuthSessionAsync(
-        data.url,
-        'studentshare://auth/callback',
-      )
-      if (result.type === 'success' && result.url) {
-        let exchangeError: any = null
-        try {
-          const match = result.url.match(/code=([^&#]+)/)
-          if (match && match[1]) {
-            const res = await supabase.auth.exchangeCodeForSession(match[1])
-            exchangeError = res.error
-          } else {
-            const res = await supabase.auth.exchangeCodeForSession(result.url)
-            exchangeError = res.error
-          }
-        } catch (err) {
-          exchangeError = err
-        }
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.user) return
 
-        if (!exchangeError) {
-          setSocial(null)
-          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
-          return
-        }
-        const { data: { session } } = await supabase.auth.getSession()
-        if (session) {
-          setSocial(null)
-          return
-        }
-        setError(sanitiseAuthError(exchangeError))
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('college_id, class_id')
+        .eq('id', session.user.id)
+        .single()
+
+      if (!profile?.college_id) {
+        console.log('[Login][Google] No college — routing to college-selection')
+        router.replace('/(auth)/college-selection' as any)
+      } else if (!profile?.class_id) {
+        console.log('[Login][Google] No class — routing to class-selection')
+        router.replace({
+          pathname: '/(auth)/class-selection',
+          params: { college_id: profile.college_id },
+        } as any)
+      } else {
+        // Profile complete — RootLayout will route to /(tabs) on SIGNED_IN
+        console.log('[Login][Google] Profile complete — handing off to RootLayout')
       }
-      setSocial(null)
-    } catch (err: unknown) {
-      if (__DEV__) console.error('[OAuth]', err instanceof Error ? err.message : err)
-      const isCancelled =
-        err instanceof Error &&
-        (err.message.toLowerCase().includes('cancel') ||
-         err.message.toLowerCase().includes('dismiss'))
-      if (!isCancelled) setError('Sign-in failed. Please try again.')
-      setSocial(null)
+    } catch (err) {
+      if (__DEV__) console.warn('[Login][Google] navigateAfterOAuth error:', err)
     }
-  }, [isOffline, shake, router])
+  }, [router])
+
+  // ── OAuth ────────────────────────────────────────────────────────────────
+  const handleOAuth = useCallback((provider: 'google') => {
+    setShowGoogleModal(true)
+  }, [])
 
   // ── Derived state ────────────────────────────────────────────────────────
   const isFormDisabled = useMemo(
@@ -469,6 +446,32 @@ export default function LoginScreen() {
 
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <Modal
+        visible={showGoogleModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowGoogleModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalIconBox}>
+              <Ionicons name="time-outline" size={32} color={P.accent} />
+            </View>
+            <Text style={styles.modalTitle}>Coming Soon</Text>
+            <Text style={styles.modalBody}>
+              Google login is coming soon. For now, please sign in using your email instead!
+            </Text>
+            <TouchableOpacity
+              style={styles.modalBtn}
+              onPress={() => setShowGoogleModal(false)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.modalBtnText}>Got it</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   )
 }
@@ -610,4 +613,25 @@ const styles = StyleSheet.create({
   },
   footerText: { fontSize: 14, color: P.muted },
   footerLink: { fontSize: 14, fontWeight: '700', color: P.accent },
+
+  modalOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center', alignItems: 'center', padding: 24,
+  },
+  modalContent: {
+    backgroundColor: P.bgCard, borderRadius: 24, padding: 24,
+    width: '100%', maxWidth: 340, alignItems: 'center',
+    borderWidth: 1, borderColor: P.border,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.5, shadowRadius: 24, elevation: 10,
+  },
+  modalIconBox: {
+    width: 64, height: 64, borderRadius: 32,
+    backgroundColor: 'rgba(232,105,42,0.1)',
+    justifyContent: 'center', alignItems: 'center', marginBottom: 16,
+  },
+  modalTitle: { fontSize: 22, fontWeight: '800', color: P.white, marginBottom: 12 },
+  modalBody: { fontSize: 15, color: P.muted, textAlign: 'center', lineHeight: 22, marginBottom: 24 },
+  modalBtn: { backgroundColor: P.accent, paddingVertical: 14, width: '100%', borderRadius: 14, alignItems: 'center' },
+  modalBtnText: { color: P.white, fontSize: 16, fontWeight: '700' },
 })

@@ -367,3 +367,29 @@ export async function createComment(userId: string, postId: string, content: str
 
   return newComment;
 }
+
+/**
+ * Logs a resource view (material, profile, course, or post)
+ * Uses the sync queue to push the increment to the server.
+ */
+export async function logResourceView(userId: string, resourceId: string, resourceType: 'material' | 'profile' | 'course' | 'post') {
+  // Update local view count if applicable (e.g. for forum posts)
+  if (resourceType === 'post') {
+    try {
+      await database.write(async () => {
+        const post = await col<any>('posts').find(resourceId);
+        await post.update((p: any) => {
+          p.viewsCount = (p.viewsCount || 0) + 1;
+        });
+      });
+    } catch {}
+  }
+
+  // Enqueue for server sync
+  // The backend sync handler should call the `increment_resource_view` RPC
+  await enqueue(userId, 'resource_views', 'create', {
+    user_id: userId,
+    resource_id: resourceId,
+    resource_type: resourceType,
+  });
+}

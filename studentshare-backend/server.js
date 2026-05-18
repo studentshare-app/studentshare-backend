@@ -1,9 +1,14 @@
 ﻿require('dotenv').config()
 const express = require('express')
 const cors = require('cors')
+const crypto = require('crypto')
 const rateLimit = require('express-rate-limit')
 const helmet = require('helmet')
 const { createClient } = require('@supabase/supabase-js')
+const { loadEnv } = require('./src/config/env')
+
+const env = loadEnv()
+const NODE_ENV = env.nodeEnv
 
 const app = express()
 app.set('trust proxy', 1) // trust Render's proxy
@@ -12,10 +17,7 @@ app.set('trust proxy', 1) // trust Render's proxy
 app.use(helmet())
 
 // ─── CORS — lock to your app's origins only ───────────────────────────────────
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? '')
-  .split(',')
-  .map(o => o.trim())
-  .filter(Boolean)
+const ALLOWED_ORIGINS = env.allowedOrigins
 
 app.use(cors({
   origin: (origin, callback) => {
@@ -36,8 +38,8 @@ app.use(express.json({ limit: '16kb' })) // prevent large payload attacks
 // ─── Supabase — use SERVICE ROLE key server-side (bypasses RLS safely) ────────
 // NEVER use SUPABASE_ANON_KEY on the server — it leaks client-level permissions.
 const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY  // ← changed from SUPABASE_ANON_KEY
+  env.supabaseUrl,
+  env.supabaseServiceRoleKey
 )
 
 // ─── Rate limiters ────────────────────────────────────────────────────────────
@@ -76,7 +78,7 @@ app.use(generalLimiter)
 // This keeps it out of server logs and browser history.
 function requireAdmin(req, res, next) {
   const secret = req.headers['x-admin-secret']
-  if (!secret || secret !== process.env.ADMIN_SECRET) {
+  if (!secret || secret !== env.adminSecret) {
     return res.status(403).json({ error: 'Unauthorized' })
   }
   next()
@@ -92,6 +94,25 @@ function isValidUUID(str) {
 
 function isValidPhone(str) {
   return /^\+?[0-9\s\-]{7,20}$/.test(str)
+}
+
+function isNonEmptyString(value, maxLen = 200) {
+  return typeof value === 'string' && value.trim().length > 0 && value.length <= maxLen
+}
+
+function isValidEmail(value) {
+  if (typeof value !== 'string' || value.length > 254) return false
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+}
+
+function validateBody(validators) {
+  return (req, res, next) => {
+    for (const validator of validators) {
+      const error = validator(req.body)
+      if (error) return res.status(400).json({ error })
+    }
+    next()
+  }
 }
 
 const PLANS = {
@@ -146,12 +167,15 @@ app.post('/api/subscribe', subscribeLimiter, async (req, res) => {
 })
 
 // POST /api/approve — admin only, secret via header
-app.post('/api/approve', adminLimiter, requireAdmin, async (req, res) => {
+app.post(
+  '/api/approve',
+  adminLimiter,
+  requireAdmin,
+  validateBody([
+    body => (!body.subscription_id || !isValidUUID(body.subscription_id) ? 'Invalid subscription_id' : null),
+  ]),
+  async (req, res) => {
   const { subscription_id } = req.body
-
-  if (!subscription_id || !isValidUUID(subscription_id)) {
-    return res.status(400).json({ error: 'Invalid subscription_id' })
-  }
 
   const { data: sub } = await supabase
     .from('subscriptions')
@@ -187,12 +211,15 @@ app.post('/api/approve', adminLimiter, requireAdmin, async (req, res) => {
 })
 
 // POST /api/reject — admin only, secret via header
-app.post('/api/reject', adminLimiter, requireAdmin, async (req, res) => {
+app.post(
+  '/api/reject',
+  adminLimiter,
+  requireAdmin,
+  validateBody([
+    body => (!body.subscription_id || !isValidUUID(body.subscription_id) ? 'Invalid subscription_id' : null),
+  ]),
+  async (req, res) => {
   const { subscription_id } = req.body
-
-  if (!subscription_id || !isValidUUID(subscription_id)) {
-    return res.status(400).json({ error: 'Invalid subscription_id' })
-  }
 
   await supabase
     .from('subscriptions')
@@ -267,15 +294,17 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() })
 })
 // POST /api/create-checkout — creates a Monime checkout session
-app.post('/api/create-checkout', generalLimiter, async (req, res) => {
+app.post(
+  '/api/create-checkout',
+  generalLimiter,
+  validateBody([
+    body => (!body.userId || !isValidUUID(body.userId) ? 'Invalid userId' : null),
+    body => (!body.plan || !['monthly', 'academic_year', 'yearly'].includes(body.plan) ? 'Invalid plan' : null),
+    body => (body.userEmail && !isValidEmail(body.userEmail) ? 'Invalid userEmail' : null),
+    body => (body.userName && !isNonEmptyString(body.userName, 80) ? 'Invalid userName' : null),
+  ]),
+  async (req, res) => {
   const { plan, userId, userEmail, userName } = req.body
-
-  if (!userId || !plan) {
-    return res.status(400).json({ error: 'Missing required fields' })
-  }
-  if (!isValidUUID(userId)) {
-    return res.status(400).json({ error: 'Invalid userId' })
-  }
 
   const MONIME_PLANS = {
     monthly:       { name: 'Monthly Plan',       price: 2500,  days: 30  },
@@ -284,9 +313,7 @@ app.post('/api/create-checkout', generalLimiter, async (req, res) => {
   }
 
   const planInfo = MONIME_PLANS[plan]
-  if (!planInfo) {
-    return res.status(400).json({ error: 'Invalid plan' })
-  }
+  if (!planInfo) return res.status(400).json({ error: 'Invalid plan' })
 
   try {
     // 1. Create subscription record in pending state
@@ -307,13 +334,13 @@ app.post('/api/create-checkout', generalLimiter, async (req, res) => {
 
     // 2. Create Monime checkout session
     const idempotencyKey = `sub_${sub.id}_${Date.now()}`
-    const backendUrl = process.env.BACKEND_URL || 'https://studentshare-backend.onrender.com'
+    const backendUrl = env.backendUrl
 
     const monimeRes = await fetch(`https://api.monime.io/v1/checkout-sessions`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${process.env.MONIME_ACCESS_TOKEN}`,
-        'Monime-Space-Id': process.env.MONIME_SPACE_ID,
+        'Authorization': `Bearer ${env.monimeAccessToken}`,
+        'Monime-Space-Id': env.monimeSpaceId,
         'Content-Type': 'application/json',
         'Idempotency-Key': idempotencyKey,
       },
@@ -375,17 +402,65 @@ app.post('/api/create-checkout', generalLimiter, async (req, res) => {
 })
 
 // POST /api/monime-webhook — receives Monime payment events
-app.post('/api/monime-webhook', express.raw({ type: '*/*' }), async (req, res) => {
+app.post('/api/monime-webhook', async (req, res) => {
   try {
+    const signatureHeader = req.headers['monime-signature']
     const body = req.body.toString('utf8')
+    const expectedSig = crypto
+      .createHmac('sha256', env.monimeWebhookSecret || 'dev-only-missing-secret')
+      .update(body)
+      .digest('hex')
+    const providedSig = typeof signatureHeader === 'string'
+      ? signatureHeader.replace(/^sha256=/i, '').trim()
+      : ''
+
+    if (NODE_ENV === 'production') {
+      if (!providedSig) return res.status(401).json({ error: 'Missing webhook signature' })
+      const providedBuffer = Buffer.from(providedSig, 'hex')
+      const expectedBuffer = Buffer.from(expectedSig, 'hex')
+      if (
+        providedBuffer.length !== expectedBuffer.length ||
+        !crypto.timingSafeEqual(providedBuffer, expectedBuffer)
+      ) {
+        return res.status(401).json({ error: 'Invalid webhook signature' })
+      }
+    }
+
     const event = JSON.parse(body)
     const eventName = event.event?.name
     const session = event.data
+    const webhookEventIdHeader = req.headers['monime-event-id']
+    const webhookEventId = typeof webhookEventIdHeader === 'string'
+      ? webhookEventIdHeader.trim()
+      : (event.id || event.event?.id || '')
 
     console.log('[Monime Webhook]', eventName, session?.id)
 
     if (eventName !== 'checkout_session.completed') {
       return res.json({ received: true })
+    }
+
+    if (NODE_ENV === 'production' && !webhookEventId) {
+      return res.status(400).json({ error: 'Missing webhook event id' })
+    }
+
+    if (webhookEventId) {
+      const { error: replayError } = await supabase
+        .from('webhook_events')
+        .insert({
+          provider: 'monime',
+          event_id: webhookEventId,
+          received_at: new Date().toISOString(),
+        })
+
+      if (replayError?.code === '23505') {
+        return res.json({ received: true, duplicate: true })
+      }
+
+      if (replayError) {
+        console.error('[Webhook Replay Guard Error]', replayError.message)
+        return res.status(500).json({ error: 'Webhook replay guard failed' })
+      }
     }
 
     const userId = session?.metadata?.userId
@@ -467,5 +542,8 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal server error' })
 })
 
-const PORT = process.env.PORT || 3000
-app.listen(PORT, () => console.log(`StudentShare backend running on port ${PORT}`))
+if (require.main === module) {
+  app.listen(env.port, () => console.log(`StudentShare backend running on port ${env.port}`))
+}
+
+module.exports = { app }

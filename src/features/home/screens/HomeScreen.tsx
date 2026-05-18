@@ -36,7 +36,8 @@ import { useHomeDashboard } from '@/features/home/hooks/useHomeDashboard'
 import type { HomeScheduleItem } from '@/features/home/hooks/useStudyPlannerSnapshot'
 import { useStudyPlannerSnapshot } from '@/features/home/hooks/useStudyPlannerSnapshot'
 import type { DashCard } from '@/features/home/types'
-import { isAvatarRefetchLocked, useProfileSync } from '@/hooks/useProfileSync'
+import { isAvatarRefetchLocked } from '@/core/utils/avatarLock'
+import { useProfileSync } from '@/hooks/useProfileSync'
 import { C } from '@/lib/colors'
 import { Ionicons } from '@expo/vector-icons'
 import AsyncStorage from '@react-native-async-storage/async-storage'
@@ -502,48 +503,54 @@ function HomeScreenInner() {
 
             {/* Info pills — college · class · materials */}
             {profile?.college && (
-              <View style={s.infoPillsRow}>
-                <View style={s.infoPill}>
-                  <Text style={s.infoPillIcon}>🏛</Text>
-                  <Text allowFontScaling={false} style={s.infoPillText} numberOfLines={1}>
-                    {profile.college.short_name || profile.college.name}
-                  </Text>
-                </View>
-
-                {profile.class?.name && (
-                  <View style={[s.infoPill, s.infoPillClass]}>
-                    <Text style={s.infoPillIcon}>🎓</Text>
-                    <Text allowFontScaling={false} style={[s.infoPillText, s.infoPillClassText]} numberOfLines={1}>
-                      {profile.class.name}
+              <View style={s.infoPillsScrollWrap}>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={s.infoPillsRow}
+                >
+                  <View style={s.infoPill}>
+                    <Text style={s.infoPillIcon}>🏛</Text>
+                    <Text allowFontScaling={false} style={s.infoPillText}>
+                      {profile.college.short_name || profile.college.name}
                     </Text>
                   </View>
-                )}
 
-                <TouchableOpacity
-                  style={[s.infoPill, s.infoPillMats]}
-                  onPress={() => routerRef.current.push('/study-materials' as any)}
-                  activeOpacity={0.75}
-                  accessibilityRole="button"
-                  accessibilityLabel={`${materialsPillLabel} — view study materials`}
-                >
-                  <Text style={s.infoPillIcon}>📂</Text>
-                  <Text allowFontScaling={false} style={[s.infoPillText, s.infoPillMatsText]} numberOfLines={1}>
-                    {materialsPillLabel}
-                  </Text>
-                </TouchableOpacity>
+                  {profile.class?.name && (
+                    <View style={[s.infoPill, s.infoPillClass]}>
+                      <Text style={s.infoPillIcon}>🎓</Text>
+                      <Text allowFontScaling={false} style={[s.infoPillText, s.infoPillClassText]}>
+                        {profile.class.name}
+                      </Text>
+                    </View>
+                  )}
 
-                <TouchableOpacity
-                  style={[s.infoPill, s.infoPillRank]}
-                  onPress={() => routerRef.current.push('/leaderboard' as any)}
-                  activeOpacity={0.75}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Rank ${rankPillLabel} — view leaderboard`}
-                >
-                  <Text style={s.infoPillIcon}>🏆</Text>
-                  <Text allowFontScaling={false} style={[s.infoPillText, s.infoPillRankText]} numberOfLines={1}>
-                    {rankPillLabel}
-                  </Text>
-                </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[s.infoPill, s.infoPillMats]}
+                    onPress={() => routerRef.current.push('/study-materials' as any)}
+                    activeOpacity={0.75}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${materialsPillLabel} — view study materials`}
+                  >
+                    <Text style={s.infoPillIcon}>📂</Text>
+                    <Text allowFontScaling={false} style={[s.infoPillText, s.infoPillMatsText]}>
+                      {materialsPillLabel}
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[s.infoPill, s.infoPillRank]}
+                    onPress={() => routerRef.current.push('/leaderboard' as any)}
+                    activeOpacity={0.75}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Rank ${rankPillLabel} — view leaderboard`}
+                  >
+                    <Text style={s.infoPillIcon}>🏆</Text>
+                    <Text allowFontScaling={false} style={[s.infoPillText, s.infoPillRankText]}>
+                      {rankPillLabel}
+                    </Text>
+                  </TouchableOpacity>
+                </ScrollView>
               </View>
             )}
           </View>
@@ -747,12 +754,13 @@ const s = StyleSheet.create({
   getPremiumStar:  { fontSize: 9, color: '#fff' },
   getPremiumText:  { fontSize: 11, fontWeight: '800', color: '#fff', letterSpacing: 0.3 },
 
-  infoPillsRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
-infoPill:     { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: C.raised, borderWidth: 1, borderColor: C.border, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5, flexShrink: 1, flexGrow: 0, minWidth: 0 },
+  infoPillsScrollWrap: { marginRight: -BODY_H_PAD, marginTop: 4 },
+  infoPillsRow:      { flexDirection: 'row', alignItems: 'center', gap: 8, paddingRight: BODY_H_PAD },
+  infoPill:          { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.raised, borderWidth: 1, borderColor: C.border, borderRadius: 24, paddingHorizontal: 14, paddingVertical: 7, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 3, elevation: 1 },
   infoPillClass:     { backgroundColor: 'rgba(75,140,245,0.08)', borderColor: 'rgba(75,140,245,0.2)' },
   infoPillMats:      { backgroundColor: 'rgba(223,168,60,0.08)', borderColor: 'rgba(223,168,60,0.22)' },
-  infoPillIcon:      { fontSize: 11 },
-  infoPillText:      { fontSize: 11, fontWeight: '600', color: C.textSub, flexShrink: 1 },
+  infoPillIcon:      { fontSize: 14 },
+  infoPillText:      { fontSize: 12, fontWeight: '700', color: C.textSub },
   infoPillClassText: { color: C.sapphire },
   infoPillMatsText:  { color: C.gold },
   infoPillRank:      { backgroundColor: 'rgba(238,104,104,0.08)', borderColor: 'rgba(238,104,104,0.22)' },

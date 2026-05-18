@@ -15,8 +15,15 @@ export function useQuery<T extends Model>(collectionName: string, conditions: an
   const [records, setRecords] = useState<T[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Memoize conditions to prevent infinite re-subscription if they are recreated every render
-  const memoizedConditions = useMemo(() => JSON.stringify(conditions), [conditions]);
+  // Memoize conditions to prevent infinite re-subscription. 
+  // Watermelon Q objects are complex, so we stringify them for a stable dependency check.
+  const memoizedConditions = useMemo(() => {
+    try {
+      return JSON.stringify(conditions.map(c => c.serialize ? c.serialize() : c));
+    } catch {
+      return Math.random(); // Fallback to force update if serialization fails
+    }
+  }, [conditions]);
 
   useEffect(() => {
     const query = db.collections
@@ -48,7 +55,10 @@ export function useUser(id?: string) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!id) return;
+    if (!id) {
+      setLoading(false);
+      return;
+    }
 
     // First try finding by WatermelonDB local ID, then fall back to remote_id
     // (session.user.id from Supabase auth is typically stored as remote_id)

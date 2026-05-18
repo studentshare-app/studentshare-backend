@@ -298,7 +298,7 @@ export default function CollegeSelectionScreen() {
       if (error) throw error
       if (isEditMode) {
         Alert.alert('College updated ✓', 'Your college has been saved. Would you like to update your class now?', [
-          { text: 'Update Class', onPress: () => router.replace({ pathname: '/(auth)/class-selection', params: { college_id: selected, mode: 'edit' } } as any) },
+          { text: 'Change Class', onPress: () => router.replace({ pathname: '/(auth)/class-selection', params: { college_id: selected, mode: 'edit' } } as any) },
           { text: 'Later', style: 'cancel', onPress: () => router.replace('/(tabs)/profile') },
         ])
       } else {

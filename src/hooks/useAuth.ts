@@ -26,37 +26,31 @@ export function useAuth() {
   const setUser = useAppStore((s: any) => s.setUser);
 
   useEffect(() => {
+    let mounted = true;
+
     const loadSession = async () => {
       try {
-        // 1. Check local storage first — works offline
-        const localToken = await SecureStore.getItemAsync('auth_token');
+        const { data: { session }, error } = await supabase.auth.getSession();
+        
+        if (!mounted) return;
 
-        if (localToken) {
-          // We have a token locally, so the user was previously logged in.
-          // Try to get the full session from Supabase (may fail offline).
-          const { data: { session } } = await supabase.auth.getSession();
-
-          if (session) {
-            // Online and session is valid — use the fresh session
-            setState({ user: session.user, loading: false, isAuthenticated: true });
-            setUser(session.user);
-          } else {
-            // Offline or session fetch failed — trust the local token.
-            // Restore minimal user state from the cached user in the store,
-            // or set isAuthenticated: true so the user stays logged in.
-            const cachedUser = useAppStore.getState().user;
-            setState({ user: cachedUser, loading: false, isAuthenticated: true });
-            // Don't call setUser here — the store already has the user
-          }
+        if (session?.user) {
+          setState({ user: session.user, loading: false, isAuthenticated: true });
+          // Ensure Zustand store is synced with active session, especially for OAuth logins
+          setUser(session.user);
         } else {
-          // No local token at all — user has never logged in or explicitly logged out
-          setState({ user: null, loading: false, isAuthenticated: false });
+          // Offline fallback
+          const cachedUser = useAppStore.getState().user;
+          if (cachedUser) {
+            setState({ user: cachedUser, loading: false, isAuthenticated: true });
+          } else {
+            setState({ user: null, loading: false, isAuthenticated: false });
+          }
         }
       } catch (err) {
-        // Any unexpected error: if we have a local token, stay logged in
-        const localToken = await SecureStore.getItemAsync('auth_token').catch(() => null);
-        if (localToken) {
-          const cachedUser = useAppStore.getState().user;
+        if (!mounted) return;
+        const cachedUser = useAppStore.getState().user;
+        if (cachedUser) {
           setState({ user: cachedUser, loading: false, isAuthenticated: true });
         } else {
           setState({ user: null, loading: false, isAuthenticated: false });
@@ -65,6 +59,25 @@ export function useAuth() {
     };
 
     loadSession();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!mounted) return;
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+        if (session?.user) {
+          setState({ user: session.user, loading: false, isAuthenticated: true });
+          setUser(session.user);
+        }
+      } else if (event === 'SIGNED_OUT') {
+        setState({ user: null, loading: false, isAuthenticated: false });
+        // Don't call setUser(null) here to keep offline cache if we just lost connection,
+        // RootLayout decides when to truly log out.
+      }
+    });
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   // Login

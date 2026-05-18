@@ -69,6 +69,17 @@ async function hasStoredRefreshToken(): Promise<boolean> {
   }
 }
 
+async function getStoredUserId(): Promise<string | null> {
+  try {
+    const raw = await AsyncStorage.getItem(SUPABASE_SESSION_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    return parsed?.user?.id || parsed?.currentSession?.user?.id || null
+  } catch {
+    return null
+  }
+}
+
 // ── Onboarding key – must match the one in OnboardingScreen ──────────────────
 const ONBOARDING_KEY = 'onboarding_complete'
 
@@ -81,17 +92,29 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T
 }
 
 // ── Check if user has completed profile setup ─────────────────────────────────
-async function hasCompletedProfile(userId: string): Promise<{ complete: boolean; collegeId?: string }> {
+async function hasCompletedProfile(userId: string): Promise<{ complete: boolean; collegeId?: string; isOffline?: boolean }> {
+  const cacheKey = `profile_complete_${userId}`
   try {
-    const { data, error } = await supabase
+    // 1. FAST PATH: Check local cache
+    const cached = await AsyncStorage.getItem(cacheKey)
+    if (cached === 'true') {
+      return { complete: true }
+    }
+
+    // 2. NETWORK FETCH WITH TIMEOUT
+    const fetchPromise = supabase
       .from('profiles')
       .select('college_id, class_id')
       .eq('id', userId)
       .single()
 
+    const { data, error } = await withTimeout(Promise.resolve(fetchPromise), 3000, { error: new Error('timeout') } as any)
+
     if (error || !data) {
-      console.log('[AuthCheck] Profile missing or error:', error?.message)
-      return { complete: false }
+      console.log('[AuthCheck] Profile missing or error/timeout:', error?.message)
+      // If we got an error or timeout while fetching, and there's no cache, 
+      // assume offline/slow-network and let them through rather than trapping them in auth.
+      return { complete: false, isOffline: true }
     }
 
     if (!data.college_id) {
@@ -105,10 +128,12 @@ async function hasCompletedProfile(userId: string): Promise<{ complete: boolean;
     }
 
     console.log('[AuthCheck] Profile complete')
+    // Update Cache
+    await AsyncStorage.setItem(cacheKey, 'true').catch(() => {})
     return { complete: true }
   } catch (err) {
     console.error('[AuthCheck] Profile fetch exception:', err)
-    return { complete: false } // Fail-closed: require setup on error
+    return { complete: false, isOffline: true } // Fail-closed but allow offline access fallback
   }
 }
 
@@ -129,50 +154,26 @@ export default function RootLayout() {
   useEffect(() => {
     const doSessionCheck = async (): Promise<AuthStatus> => {
       try {
-        // ✅ Check network first — if offline, skip Supabase call entirely
-        const netState = await withTimeout(
-          NetInfo.fetch(),
-          2000,
-          { isConnected: false } as any
-        )
-        const isOnline = netState.isConnected
+        // Fast path for immediate offline/online resolution
+        // Read directly from cache to bypass any NetInfo/Supabase blocking
+        const hasRefresh = await hasStoredRefreshToken()
+        if (hasRefresh) return 'authenticated'
 
-        if (!isOnline) {
-          console.log('[Auth] Offline — checking stored token')
-          const hasRefresh = await hasStoredRefreshToken()
-          return hasRefresh ? 'authenticated' : 'unauthenticated'
-        }
-
-        // Online — check Supabase session with a timeout fallback
+        // If no cached token found, fallback to checking Supabase (with a short timeout)
         const sessionResult = await withTimeout(
           supabase.auth.getSession(),
-          5000,
+          1500,
           { data: { session: null }, error: new Error('timeout') } as any
         )
 
         const { data: { session }, error } = sessionResult
 
         if (error) {
-          const msg = error.message?.toLowerCase() ?? ''
-          const isHardError =
-            msg.includes('invalid') ||
-            msg.includes('jwt') ||
-            msg.includes('refresh')
-
-          if (isHardError) {
-            await supabase.auth.signOut().catch(() => {})
-            return 'unauthenticated'
-          }
-
-          // Soft error (e.g. timeout) — fall back to stored token
-          const hasRefresh = await hasStoredRefreshToken()
-          return hasRefresh ? 'authenticated' : 'unauthenticated'
+          return 'unauthenticated'
         }
 
         if (session) return 'authenticated'
-
-        const hasRefresh = await hasStoredRefreshToken()
-        return hasRefresh ? 'authenticated' : 'unauthenticated'
+        return 'unauthenticated'
 
       } catch {
         const hasRefresh = await hasStoredRefreshToken()
@@ -303,27 +304,46 @@ export default function RootLayout() {
 
   // NAVIGATION — reactive authority for routing
   useEffect(() => {
-    // In cold start, we wait for everything. 
-    // On status changes (like login), we want to re-evaluate navigation.
+    // Wait until auth status, onboarding flag, and the navigator are all resolved.
     if (status === 'loading' || onboardingDone === null || !navReady) return
 
-    // ✅ Never interrupt the OAuth callback route prematurely.
-    // Let callback.tsx handle the token exchange. Once the session is recovered,
-    // status will become 'authenticated' and RootLayout will gracefully handle routing.
     const navigate = async () => {
-      // 1. If currently on the callback route, wait for the session to be established.
-      // Once authenticated, we proceed to navigation to handle profile checks.
-      if (pathname === '/auth/callback' && status !== 'authenticated') return
+      // ── Guard 1: Never interrupt the OAuth callback ────────────────────────
+      // Let callback.tsx exchange the code and explicitly route the user once
+      // the session is active.
+      if (pathname === '/auth/callback') return
+
+
+      // ── Guard 2: Never interrupt onboarding screens ────────────────────────
+      // college-selection and class-selection own their own routing chain
+      // (college → class → tabs). If RootLayout re-fires while the user is
+      // on those screens it will race against the DB write, see the profile
+      // as still incomplete, and loop back — so we stand down entirely.
+      const isOnboardingInProgress =
+        pathname.includes('college-selection') ||
+        pathname.includes('class-selection')
+
+      if (isOnboardingInProgress) {
+        // Hide splash but don't touch the navigation stack
+        setTimeout(() => { SplashScreen.hideAsync().catch(() => {}) }, 150)
+        return
+      }
 
       if (status === 'authenticated') {
-        const { data: { session } } = await supabase.auth.getSession()
-        const userId = session?.user?.id
+        const userId = await getStoredUserId()
 
         if (userId) {
           const profileResult = await hasCompletedProfile(userId)
-          
+
           if (!profileResult.complete) {
-            if (profileResult.collegeId) {
+            if (profileResult.isOffline) {
+              // Assume profile complete to avoid layout freeze/trap when offline 
+              console.log('[NAV] → Tabs (Offline session fallback)')
+              const isLandingPath = pathname === '/' || isAuthRoute(pathname) || pathname === '/index'
+              if (isLandingPath && !pathname.includes('(tabs)')) {
+                router.replace('/(tabs)' as any)
+              }
+            } else if (profileResult.collegeId) {
               console.log('[NAV] → Class Selection (class missing)')
               router.replace({ pathname: '/(auth)/class-selection', params: { college_id: profileResult.collegeId } } as any)
             } else {
@@ -331,27 +351,43 @@ export default function RootLayout() {
               router.replace('/(auth)/college-selection' as any)
             }
           } else {
-            // Only redirect to tabs if at the root or on an auth screen that is no longer needed
-            const isLandingPath = pathname === '/' || isAuthRoute(pathname) || pathname === '/index'
-            if (!isLandingPath || pathname.includes('(tabs)')) return
-
-            console.log('[NAV] → Tabs (profile complete)')
-            router.replace('/(tabs)' as any)
+            // Only redirect to tabs when on a root / auth landing screen
+            const isLandingPath =
+              pathname === '/' || isAuthRoute(pathname) || pathname === '/index'
+            if (!isLandingPath || pathname.includes('(tabs)')) {
+              // already there or elsewhere
+            } else {
+              console.log('[NAV] → Tabs (profile complete)')
+              router.replace('/(tabs)' as any)
+            }
+          }
+        } else {
+          // No user id locally, might be unauth fallback
+          if (!isAuthRoute(pathname)) {
+            console.log('[NAV] → Login (no user id)')
+            router.replace('/(auth)/login' as any)
           }
         }
       } else {
-        // If on any auth screen, stay there and let it handle its own state.
-        if (isAuthRoute(pathname)) return
-        console.log('[NAV] → Login (unauthenticated, current:', pathname, ')')
-        router.replace('/(auth)/login' as any)
+        // Unauthenticated: if already on an auth screen let it handle itself
+        if (isAuthRoute(pathname)) {
+          // do nothing
+        } else {
+          console.log('[NAV] → Login (unauthenticated, current:', pathname, ')')
+          router.replace('/(auth)/login' as any)
+        }
       }
 
+      // Hide splash rapidly once navigation has evaluated
       setTimeout(() => {
         SplashScreen.hideAsync().catch(() => {})
-      }, 150)
+      }, 50)
     }
 
     navigate()
+  // pathname is intentionally included so we can re-evaluate routing when the
+  // route changes (e.g. after the callback screen completes the exchange).
+  // The onboarding guard above prevents the problematic re-triggers.
   }, [status, onboardingDone, navReady, pathname])
 
   return (

@@ -60,6 +60,7 @@ import {
 import * as FileSystem from 'expo-file-system/legacy'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { supabase } from '@/core/api/supabase'
+import { logResourceView } from '@/database/actions'
 import { ROUTES } from '@/core/config/routes'
 import { useProfileSync } from '@/hooks/useProfileSync'
 import {
@@ -213,10 +214,10 @@ async function fetchTrendingQueries(category: string): Promise<TrendingQuery[]> 
       const q = row.query?.trim().toLowerCase()
       if (q) counts[q] = (counts[q] || 0) + 1
     })
-    return Object.entries(counts)
+  return Object.entries(counts)
       .map(([query, count]) => ({ query, count }))
       .sort((a, b) => b.count - a.count)
-      .slice(0, 5)
+      .slice(0, 10)
   } catch {
     return []
   }
@@ -231,8 +232,10 @@ async function fetchTopMaterials(): Promise<Result[]> {
       .from('materials')
       .select('id, title, type, file_url, created_at, courses(name)')
       .eq('status', 'published')
+      .order('view_count', { ascending: false })
+      .order('download_count', { ascending: false })
       .order('created_at', { ascending: false })
-      .limit(5)
+      .limit(10)
     return (data ?? []) as Result[]
   } catch {
     return []
@@ -248,12 +251,13 @@ async function fetchTopMaterials(): Promise<Result[]> {
 async function fetchTopPeople(searchHistory: string[]): Promise<PersonResult[]> {
   try {
     if (!searchHistory.length) {
-      // No history — return recently joined users
+      // No history — return popular users
       const { data } = await supabase
         .from('profiles')
         .select('id, full_name, avatar_url, is_verified, college:colleges(short_name)')
+        .order('view_count', { ascending: false })
         .order('created_at', { ascending: false })
-        .limit(5)
+        .limit(10)
       return (data ?? []) as PersonResult[]
     }
 
@@ -267,7 +271,8 @@ async function fetchTopPeople(searchHistory: string[]): Promise<PersonResult[]> 
       .from('profiles')
       .select('id, full_name, avatar_url, is_verified, college:colleges(short_name)')
       .or(orFilter)
-      .limit(5)
+      .order('view_count', { ascending: false })
+      .limit(10)
     return (data ?? []) as PersonResult[]
   } catch {
     return []
@@ -292,8 +297,9 @@ async function fetchTopCourses(searchHistory: string[]): Promise<CourseResult[]>
       const { data } = await supabase
         .from('courses')
         .select('id, name, code, description')
+        .order('view_count', { ascending: false })
         .order('name', { ascending: true })
-        .limit(5)
+        .limit(10)
       return (data ?? []) as CourseResult[]
     }
 
@@ -306,7 +312,8 @@ async function fetchTopCourses(searchHistory: string[]): Promise<CourseResult[]>
       .from('courses')
       .select('id, name, code, description')
       .or(orFilter)
-      .limit(5)
+      .order('view_count', { ascending: false })
+      .limit(10)
     return (data ?? []) as CourseResult[]
   } catch {
     return []
@@ -329,7 +336,7 @@ async function fetchTrendingForum(): Promise<ForumResult[]> {
       .from('forum_posts')
       .select('id, title, body, created_at, interaction_count, author:profiles(full_name)')
       .order('interaction_count', { ascending: false })
-      .limit(5)
+      .limit(10)
 
     if (!error && data?.length) return data as ForumResult[]
 
@@ -338,7 +345,7 @@ async function fetchTrendingForum(): Promise<ForumResult[]> {
       .from('posts')
       .select('id, title, body, created_at')
       .order('created_at', { ascending: false })
-      .limit(5)
+      .limit(10)
 
     if (!error2 && data2?.length) return data2 as ForumResult[]
 
@@ -880,17 +887,9 @@ export default function SearchScreen() {
     if (q.trim() && userId) {
       await saveSearchHistory(userId, q.trim())
       fetchSearchHistory(userId).then(setSearchHistory)
+      
       // Log with category so trending works
-      // TODO: logSearch needs to accept category — update your logSearch() function signature
-      // or call supabase directly:
-      try {
-        await supabase.from('search_logs').upsert({
-          user_id: userId,
-          query:   q.trim(),
-          category: activeCategory,
-          college_id: collegeId,
-        })
-      } catch { /* column may not exist yet — safe to ignore */ }
+      await logSearch(userId, q.trim(), collegeId, activeCategory)
     }
   }, [userId, collegeId, activeCategory])
 
@@ -974,9 +973,18 @@ export default function SearchScreen() {
     isDownloaded:  downloadedIds.has(item.id),
     onBookmark:    () => toggleBookmark(item),
     onDownload:    () => downloadFile(item),
-    onChat:        () => router.push({ pathname: '/chat' as any, params: { material_title: item.title, file_url: item.file_url, conversation_id: 'new', back: BACK } }),
-    onPress:       () => router.push({ pathname: '/viewer' as any, params: { file_url: item.file_url, title: item.title, color: C.orange, material_id: item.id, back: BACK } }),
-    onQuiz:        () => openQuiz(item),
+    onChat:        () => {
+      if (userId) logResourceView(userId, item.id, 'material')
+      router.push({ pathname: '/chat' as any, params: { material_title: item.title, file_url: item.file_url, conversation_id: 'new', back: BACK } })
+    },
+    onPress:       () => {
+      if (userId) logResourceView(userId, item.id, 'material')
+      router.push({ pathname: '/viewer' as any, params: { file_url: item.file_url, title: item.title, color: C.orange, material_id: item.id, back: BACK } })
+    },
+    onQuiz:        () => {
+      if (userId) logResourceView(userId, item.id, 'material')
+      openQuiz(item)
+    },
   })
 
   const showPreSearch = !searched && !query.trim()
@@ -1058,7 +1066,10 @@ export default function SearchScreen() {
                     <PersonCard
                       key={p.id}
                       person={p}
-                      onPress={() => router.push({ pathname: '/profile' as any, params: { user_id: p.id, back: BACK } })}
+                      onPress={() => {
+                        if (userId) logResourceView(userId, p.id, 'profile')
+                        router.push({ pathname: '/profile' as any, params: { user_id: p.id, back: BACK } })
+                      }}
                     />
                   ))
             }
@@ -1089,7 +1100,10 @@ export default function SearchScreen() {
                     <CourseCard
                       key={c.id}
                       course={c}
-                      onPress={() => router.push({ pathname: '/my-courses' as any, params: { course_id: c.id, back: BACK } })}
+                      onPress={() => {
+                        if (userId) logResourceView(userId, c.id, 'course')
+                        router.push({ pathname: '/my-courses' as any, params: { course_id: c.id, back: BACK } })
+                      }}
                     />
                   ))
             }
@@ -1110,7 +1124,10 @@ export default function SearchScreen() {
                     <ForumCard
                       key={post.id}
                       post={post}
-                      onPress={() => router.push({ pathname: ROUTES.STUDENT_FORUM as any, params: { post_id: post.id, back: BACK } })}
+                      onPress={() => {
+                        if (userId) logResourceView(userId, post.id, 'post')
+                        router.push({ pathname: ROUTES.STUDENT_FORUM as any, params: { post_id: post.id, back: BACK } })
+                      }}
                     />
                   ))
             }
@@ -1125,7 +1142,10 @@ export default function SearchScreen() {
                     <ForumCard
                       key={post.id}
                       post={post}
-                      onPress={() => router.push({ pathname: ROUTES.STUDENT_FORUM as any, params: { post_id: post.id, back: BACK } })}
+                      onPress={() => {
+                        if (userId) logResourceView(userId, post.id, 'post')
+                        router.push({ pathname: ROUTES.STUDENT_FORUM as any, params: { post_id: post.id, back: BACK } })
+                      }}
                     />
                   ))
             }

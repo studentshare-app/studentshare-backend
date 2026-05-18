@@ -8,19 +8,11 @@ import NetInfo from '@react-native-community/netinfo'
 
 // ── Cache keys ──────────────────────────────────────────────────────
 const USER_ID_CACHE_KEY = 'studentshare_user_id_cache'
-const DASHBOARD_CACHE_KEY = 'studentshare_dashboard_cache'
 const STALE_TIME_MS = 2 * 60 * 1000
 
-// ── Avatar Lock ─────────────────────────────────────────────────────
-let avatarUploadLockUntil = 0
-
-export function lockAvatarRefetch() {
-  avatarUploadLockUntil = Date.now() + 8000
-}
-
-export function isAvatarRefetchLocked() {
-  return Date.now() < avatarUploadLockUntil
-}
+import { isAvatarRefetchLocked } from '@/core/utils/avatarLock'
+import { fetchDashboard } from '@/features/home/api/home'
+import { DASHBOARD_CACHE_KEY } from '@/features/home/constants'
 
 // ── Types ────────────────────────────────────────────────────────────
 export type SyncedProfile = {
@@ -78,15 +70,16 @@ export function useProfileSync(): UseProfileSyncResult {
     cancelledRef.current = false
 
     const init = async () => {
-      const [cachedId, rawDash] = await Promise.all([
-        AsyncStorage.getItem(USER_ID_CACHE_KEY).catch(() => null),
-        AsyncStorage.getItem(DASHBOARD_CACHE_KEY).catch(() => null),
-      ])
+      const cachedId = await AsyncStorage.getItem(USER_ID_CACHE_KEY).catch(() => null)
+      const userCacheKey = cachedId ? `${DASHBOARD_CACHE_KEY}_${cachedId}` : DASHBOARD_CACHE_KEY
+      const rawDash = await AsyncStorage.getItem(userCacheKey).catch(() => null)
 
       if (cancelledRef.current) return
 
       const parsed = safeParseDashboard(rawDash)
-      if (parsed) cachedDashboardRef.current = parsed
+      if (parsed) {
+        cachedDashboardRef.current = parsed
+      }
 
       if (cachedId) {
         userIdRef.current = cachedId
@@ -126,17 +119,22 @@ export function useProfileSync(): UseProfileSyncResult {
           }
 
           queryClient.clear()
+          const oldUserId = userIdRef.current
           userIdRef.current = null
           cachedDashboardRef.current = null
 
-          AsyncStorage.multiRemove([
+          const keysToRemove = [
             USER_ID_CACHE_KEY,
             DASHBOARD_CACHE_KEY,
             'studentshare_materials_cache',
             'studentshare_materials_meta',
             'studentshare_my_courses_cache',
             'studentshare_announcements_cache',
-          ]).catch(() => {})
+          ]
+          if (oldUserId) {
+            keysToRemove.push(`${DASHBOARD_CACHE_KEY}_${oldUserId}`)
+          }
+          AsyncStorage.multiRemove(keysToRemove).catch(() => {})
 
           setUserId(null)
           setIsAdmin(false)
@@ -177,9 +175,18 @@ export function useProfileSync(): UseProfileSyncResult {
   // ── QUERY CACHE ACCESS ────────────────────────────────────────────
   const { data: subscribedData } = useQuery({
     queryKey: ['dashboard', userId],
-    queryFn: () => Promise.resolve(null),
-    enabled: false,
-    staleTime: Infinity,
+    queryFn: async () => {
+      if (!userId) return null
+      const fresh = await fetchDashboard(userId)
+      if (fresh) {
+        const userCacheKey = `${DASHBOARD_CACHE_KEY}_${userId}`
+        void AsyncStorage.setItem(userCacheKey, JSON.stringify(fresh)).catch(() => {})
+        cachedDashboardRef.current = fresh
+      }
+      return fresh
+    },
+    enabled: !!userId && cacheReady,
+    staleTime: STALE_TIME_MS,
     placeholderData: cachedDashboardRef.current ?? undefined,
   })
 

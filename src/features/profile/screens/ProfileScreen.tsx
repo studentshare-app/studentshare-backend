@@ -36,7 +36,8 @@ import {
   View,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { isAvatarRefetchLocked, useProfileSync } from '@/hooks/useProfileSync'
+import { isAvatarRefetchLocked } from '@/core/utils/avatarLock'
+import { useProfileSync } from '@/hooks/useProfileSync'
 import { supabase } from '@/core/api/supabase'
 import { ROUTES } from '@/core/config/routes'
 
@@ -486,6 +487,7 @@ export default function ProfileScreen() {
   const [showAbout,       setShowAbout]       = useState(false)
   const [showPrivacy,     setShowPrivacy]     = useState(false)
   const [showCollegeDialog, setShowCollegeDialog] = useState(false)
+  const [showClassDialog, setShowClassDialog] = useState(false)
   const [showMenu,        setShowMenu]        = useState(false)
 
   // Pulsing avatar ring
@@ -770,10 +772,7 @@ const handleProfileUpdate = async () => {
             iconBg={C.lavDim}
             iconBorderColor={C.lavBorder}
             color={C.lavender}
-            onPress={async () => {
-              await handleProfileUpdate()
-              router.push({ pathname: '/(auth)/class-selection', params: { college_id: profile?.college_id ?? '', mode: 'edit' } } as any)
-            }}
+            onPress={() => setShowClassDialog(true)}
           />
 
           {isAdmin && (
@@ -834,17 +833,39 @@ const handleProfileUpdate = async () => {
         <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.7)' }} activeOpacity={1} onPress={() => setShowCollegeDialog(false)}>
           <TouchableOpacity activeOpacity={1} style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
             <View style={{ backgroundColor: C.surface, borderRadius: 24, padding: 32, alignItems: 'center', gap: 16, borderWidth: 1, borderColor: C.border }}>
-              <Ionicons name="information-circle" size={48} color={C.orange} />
+              <Ionicons name="school" size={48} color={C.orange} />
               <Text style={{ fontSize: 20, fontWeight: '800', color: C.text, textAlign: 'center', lineHeight: 26 }}>Strict College Change Rule</Text>
               <Text style={{ fontSize: 14, color: C.textSub, textAlign: 'center', lineHeight: 22, marginHorizontal: 8 }}>Changing your college will reset your class selection. You must pick a new class to see personalized materials for your new college.</Text>
               <TouchableOpacity style={{ flexDirection: 'row', gap: 8, backgroundColor: C.orange, borderRadius: 16, paddingHorizontal: 24, paddingVertical: 14 }} onPress={async () => {
                 setShowCollegeDialog(false)
                 await handleProfileUpdate()
-                router.push({ pathname: '/(auth)/class-selection', params: { mode: 'strict' } } as any)
+                router.push({ pathname: '/(auth)/college-selection', params: { mode: 'edit' } } as any)
               }}>
-                <Text style={{ fontSize: 16, fontWeight: '800', color: '#fff' }}>Update Class Now</Text>
+                <Text style={{ fontSize: 16, fontWeight: '800', color: '#fff' }}>Change College</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={() => setShowCollegeDialog(false)}>
+                <Text style={{ fontSize: 14, color: C.sapphire, fontWeight: '600' }}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
+      <Modal visible={showClassDialog} transparent animationType="fade" presentationStyle="overFullScreen">
+        <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.7)' }} activeOpacity={1} onPress={() => setShowClassDialog(false)}>
+          <TouchableOpacity activeOpacity={1} style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+            <View style={{ backgroundColor: C.surface, borderRadius: 24, padding: 32, alignItems: 'center', gap: 16, borderWidth: 1, borderColor: C.border }}>
+              <Ionicons name="book" size={48} color={C.lavender} />
+              <Text style={{ fontSize: 20, fontWeight: '800', color: C.text, textAlign: 'center', lineHeight: 26 }}>Change Class</Text>
+              <Text style={{ fontSize: 14, color: C.textSub, textAlign: 'center', lineHeight: 22, marginHorizontal: 8 }}>Changing your class will refresh your study materials and forum content for your specific level.</Text>
+              <TouchableOpacity style={{ flexDirection: 'row', gap: 8, backgroundColor: C.lavender, borderRadius: 16, paddingHorizontal: 24, paddingVertical: 14 }} onPress={async () => {
+                setShowClassDialog(false)
+                await handleProfileUpdate()
+                router.push({ pathname: '/(auth)/class-selection', params: { college_id: (profile?.college as any)?.id ?? profile?.college_id ?? '', mode: 'edit' } } as any)
+              }}>
+                <Text style={{ fontSize: 16, fontWeight: '800', color: '#fff' }}>Change Class</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setShowClassDialog(false)}>
                 <Text style={{ fontSize: 14, color: C.sapphire, fontWeight: '600' }}>Cancel</Text>
               </TouchableOpacity>
             </View>

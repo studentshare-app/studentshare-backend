@@ -24,8 +24,8 @@
 
 import * as WebBrowser from 'expo-web-browser'
 import { useURL } from 'expo-linking'
-import { useRouter } from 'expo-router'
-import { useEffect, useRef } from 'react'
+import { useRouter, Redirect } from 'expo-router'
+import { useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native'
 import { supabase } from '@/core/api/supabase'
 import { ROUTES } from '@/core/config/routes'
@@ -42,6 +42,7 @@ export default function OAuthCallbackScreen() {
   const router = useRouter()
   const callbackUrl = useURL()
   const doneRef = useRef(false)
+  const [targetRoute, setTargetRoute] = useState<any>(null)
 
   const finish = useRef(async (userId: string) => {
     if (doneRef.current) return
@@ -49,11 +50,30 @@ export default function OAuthCallbackScreen() {
 
     console.log('[callback] finish started for userId:', userId)
     
-    // We signal success here. RootLayout.tsx has a listener for
-    // SIGNED_IN events and its own navigate() logic that handles 
-    // profile completeness checks. By marking ourselves as done, 
-    // we stop our own safety timers and let the layout take over.
-    console.log('[callback] Handing over to RootLayout for final routing.')
+    try {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('college_id, class_id')
+        .eq('id', userId)
+        .single()
+
+      if (!profile?.college_id) {
+        console.log('[callback] No college → routing to college-selection')
+        setTargetRoute('/(auth)/college-selection')
+      } else if (!profile?.class_id) {
+        console.log('[callback] No class → routing to class-selection')
+        setTargetRoute({
+          pathname: '/(auth)/class-selection',
+          params: { college_id: profile.college_id },
+        })
+      } else {
+        console.log('[callback] Profile complete → routing to tabs')
+        setTargetRoute('/(tabs)')
+      }
+    } catch (err) {
+      console.error('[callback] profile fetch error, defaulting to tabs:', err)
+      setTargetRoute('/(tabs)')
+    }
   }).current
 
   useEffect(() => {
@@ -61,7 +81,7 @@ export default function OAuthCallbackScreen() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
         console.log('[callback] onAuthStateChange event:', event, !!session?.user)
-        if (event === 'SIGNED_IN' && session?.user) {
+        if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session?.user) {
           finish(session.user.id)
         }
       }
@@ -136,20 +156,22 @@ export default function OAuthCallbackScreen() {
         const { data: { session } } = await supabase.auth.getSession()
         if (!session?.user) {
           console.log('[callback] No session in safety net, going to LOGIN')
-          if (router.canGoBack()) router.back()
-          else router.replace(ROUTES.LOGIN)
+          setTargetRoute(ROUTES.LOGIN)
         } else {
           console.log('[callback] Session found in safety net')
           finish(session.user.id)
         }
       } catch (e) {
         console.log('[callback] Exception in safety net, heading to LOGIN')
-        if (router.canGoBack()) router.back()
-        else router.replace(ROUTES.LOGIN)
+        setTargetRoute(ROUTES.LOGIN)
       }
     }, 8_000)
     return () => clearTimeout(timer)
-  }, [router, finish])
+  }, [finish])
+
+  if (targetRoute) {
+    return <Redirect href={targetRoute} />
+  }
 
   return (
     <View style={s.root}>

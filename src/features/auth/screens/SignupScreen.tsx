@@ -33,6 +33,7 @@ import React, {
 } from 'react'
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   Easing,
   KeyboardAvoidingView,
@@ -211,6 +212,7 @@ export default function SignUpScreen() {
   const [termsAccepted,   setTermsAccepted]   = useState(false)
   const [showTerms,       setShowTerms]       = useState(false)
   const [termsLoading,    setTermsLoading]    = useState(true)
+  const [showGoogleModal, setShowGoogleModal] = useState(false)
   const [errorMsg,        setErrorMsg]        = useState('')
   const [isOffline,       setIsOffline]       = useState(false)
 
@@ -336,77 +338,49 @@ export default function SignUpScreen() {
 
   // ── Redirect is now handled solely by RootLayout.tsx for consistency ───────
 
-  // ── Google OAuth ──────────────────────────────────────────────────────────
-  const handleGoogle = useCallback(async () => {
-    if (googleLoading) return
-    setErrorMsg('')
-
-    if (isOffline) {
-      setErrorMsg('No internet connection. Please connect and try again.')
-      return
-    }
-
-    setGoogleLoading(true)
+  // ── Post-OAuth navigation helper ──────────────────────────────────────
+  // Called after a successful Google sign-in to actively route the user instead
+  // of relying solely on RootLayout — this makes the flow deterministic and
+  // eliminates races between RootLayout’s profile check and the DB write.
+  const navigateAfterGoogleSignIn = useCallback(async () => {
     try {
-      const { data, error: oauthError } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: { redirectTo: 'studentshare://auth/callback', skipBrowserRedirect: true },
-      })
-      if (oauthError || !data.url) {
-        setErrorMsg(sanitiseAuthError(oauthError ?? { message: 'Could not start sign-in.' }))
-        setGoogleLoading(false)
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.user) {
+        // No session yet — RootLayout will handle it once the session lands
         return
       }
-      const result = await WebBrowser.openAuthSessionAsync(data.url, 'studentshare://auth/callback')
-      if (result.type === 'success' && result.url) {
-        let exchangeError: any = null
-        try {
-          const match = result.url.match(/code=([^&#]+)/)
-          if (match && match[1]) {
-            const res = await supabase.auth.exchangeCodeForSession(match[1])
-            exchangeError = res.error
-          } else {
-            const res = await supabase.auth.exchangeCodeForSession(result.url)
-            exchangeError = res.error
-          }
-        } catch (err) {
-          exchangeError = err
-        }
 
-        if (!exchangeError) {
-          setGoogleLoading(false)
-          return
-        }
-        
-        // Also check if session exists anyway (if callback.tsx exchanged it)
-        const { data: { session } } = await supabase.auth.getSession()
-        if (session?.user) {
-          setGoogleLoading(false)
-          return
-        }
-        
-        setErrorMsg(sanitiseAuthError(exchangeError))
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('college_id, class_id')
+        .eq('id', session.user.id)
+        .single()
+
+      if (!profile?.college_id) {
+        // New Google user: send directly to college onboarding
+        console.log('[SignUp][Google] No college — routing to college-selection')
+        router.replace('/(auth)/college-selection' as any)
+      } else if (!profile?.class_id) {
+        // Has college but missing class
+        console.log('[SignUp][Google] No class — routing to class-selection')
+        router.replace({
+          pathname: '/(auth)/class-selection',
+          params: { college_id: profile.college_id },
+        } as any)
       } else {
-        // On Android, Chrome Custom Tabs close the tab when the deep link fires,
-        // which causes openAuthSessionAsync to return type:'cancel' even though
-        // the OAuth succeeded. The /auth/callback screen handles the exchange
-        // in that case — just check if a session was established.
-        const { data: { session } } = await supabase.auth.getSession()
-        if (session?.user) {
-          setGoogleLoading(false)
-          return
-        }
+        // Profile complete — RootLayout will see the SIGNED_IN event
+        // and navigate to /(tabs) on its own
+        console.log('[SignUp][Google] Profile complete — handing off to RootLayout')
       }
-    } catch (err: unknown) {
-      if (__DEV__) console.error('[Google OAuth]', err instanceof Error ? err.message : err)
-      const isCancelled =
-        err instanceof Error &&
-        (err.message.toLowerCase().includes('cancel') ||
-          err.message.toLowerCase().includes('dismiss'))
-      if (!isCancelled) setErrorMsg('Sign-in failed. Please try again.')
+    } catch (err) {
+      if (__DEV__) console.warn('[SignUp][Google] navigateAfterGoogleSignIn error:', err)
     }
-    setGoogleLoading(false)
-  }, [googleLoading, isOffline, router])
+  }, [router])
+
+  // ── Google OAuth ──────────────────────────────────────────────────────────
+  const handleGoogle = useCallback(() => {
+    setShowGoogleModal(true)
+  }, [])
 
   // ── Pickers ───────────────────────────────────────────────────────────────
   const goToCollegePicker = useCallback(() => {
@@ -864,6 +838,33 @@ export default function SignUpScreen() {
           </View>
         </SafeAreaView>
       </Modal>
+
+      {/* Google Coming Soon Modal */}
+      <Modal
+        visible={showGoogleModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowGoogleModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalIconBox}>
+              <Ionicons name="time-outline" size={32} color={P.accent} />
+            </View>
+            <Text style={styles.modalTitle}>Coming Soon</Text>
+            <Text style={styles.modalBody}>
+              Google signup is coming soon. For now, please create your account by filling your details below!
+            </Text>
+            <TouchableOpacity
+              style={styles.modalBtn}
+              onPress={() => setShowGoogleModal(false)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.modalBtnText}>Got it</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   )
 }
@@ -973,4 +974,121 @@ const styles = StyleSheet.create({
   termsFooter:       { padding: 16, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E2E8F0' },
   termsAgreeBtn:     { backgroundColor: P.accent, borderRadius: 14, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, shadowColor: P.accent, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.22, shadowRadius: 8, elevation: 4 },
   termsAgreeBtnText: { color: P.white, fontSize: 15, fontWeight: '700' },
+
+  // Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalContent: {
+    backgroundColor: P.bgCard,
+    borderRadius: 24,
+    padding: 24,
+    width: '100%',
+    maxWidth: 340,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: P.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.5,
+    shadowRadius: 24,
+    elevation: 10,
+  },
+  modalIconBox: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(232,105,42,0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: P.white,
+    marginBottom: 12,
+  },
+  modalBody: {
+    fontSize: 15,
+    color: P.muted,
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 24,
+  },
+  modalBtn: {
+    backgroundColor: P.accent,
+    paddingVertical: 14,
+    width: '100%',
+    borderRadius: 14,
+    alignItems: 'center',
+  },
+  modalBtnText: {
+    color: P.white,
+    fontSize: 16,
+    fontWeight: '700',
+  },
+
+
+  // Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalContent: {
+    backgroundColor: P.bgCard,
+    borderRadius: 24,
+    padding: 24,
+    width: '100%',
+    maxWidth: 340,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: P.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.5,
+    shadowRadius: 24,
+    elevation: 10,
+  },
+  modalIconBox: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(232,105,42,0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: P.white,
+    marginBottom: 12,
+  },
+  modalBody: {
+    fontSize: 15,
+    color: P.muted,
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 24,
+  },
+  modalBtn: {
+    backgroundColor: P.accent,
+    paddingVertical: 14,
+    width: '100%',
+    borderRadius: 14,
+    alignItems: 'center',
+  },
+  modalBtnText: {
+    color: P.white,
+    fontSize: 16,
+    fontWeight: '700',
+  },
 }) 

@@ -191,6 +191,14 @@ export function mapRemoteToLocal(table: TableName, remote: any, local: any) {
       if (table === 'materials' && remoteKey === 'lecturer_name' && remote.lecturers) {
         value = remote.lecturers.name;
       }
+      if (table === 'posts' && remote.profiles) {
+        if (remoteKey === 'author_name') value = remote.profiles.full_name;
+        if (remoteKey === 'author_handle') value = remote.profiles.forum_handle;
+        if (remoteKey === 'author_initials') value = remote.profiles.forum_initials;
+        if (remoteKey === 'author_grad' && remote.profiles.forum_grad) value = JSON.stringify(remote.profiles.forum_grad);
+        if (remoteKey === 'author_avatar_url') value = remote.profiles.avatar_url;
+        if (remoteKey === 'author_verified') value = remote.profiles.is_verified;
+      }
     }
 
     if (value !== undefined && value !== null) {

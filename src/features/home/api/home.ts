@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { Alert } from 'react-native'
 import { supabase } from '@/core/api/supabase'
-import { lockAvatarRefetch } from '@/hooks/useProfileSync'
+import { lockAvatarRefetch } from '@/core/utils/avatarLock'
 import { C } from '@/lib/colors'
 import {
   AVATAR_LOCK_KEY,

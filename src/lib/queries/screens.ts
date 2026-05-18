@@ -396,6 +396,7 @@ export async function logSearch(
   userId:    string,
   query:     string,
   collegeId: string | null,
+  category:  string = 'materials',
 ): Promise<void> {
   if (!query.trim() || query.trim().length < 2) return
   try {
@@ -403,6 +404,7 @@ export async function logSearch(
       user_id:    userId,
       college_id: collegeId ?? null,
       query:      query.trim().toLowerCase(),
+      category:   category,
     })
   } catch {
     // non-critical
@@ -426,7 +428,7 @@ export async function fetchTrendingSearches(
   try {
     const { data, error } = await supabase.rpc('get_trending_searches', {
       p_college_id:  collegeId,
-      p_limit:       5,
+      p_limit:       10,
       p_min_results: 3,
     })
     if (error) throw error

@@ -13,6 +13,7 @@ import {
   Pressable,
   RefreshControl,
   ScrollView,
+  SectionList,
   StyleSheet,
   Text,
   TextInput,
@@ -39,7 +40,7 @@ import {
 import { usePremium } from '@/core/entitlements/PremiumProvider'
 import { useNetworkStatus } from '@/hooks/useNetworkStatus'
 import { downloadMaterial as syncDownload } from '@/core/sync/fileSyncService'
-import { triggerSync, cacheProfileIds } from '@/core/sync/syncService'
+import { triggerSync, cacheProfileIds, getCachedProfileIds } from '@/core/sync/syncService'
 
 // ─────────────────────────────────────────────
 // Design Tokens
@@ -106,12 +107,18 @@ export type MaterialRecord = {
   lecturer_name?:  string | null
 }
 
-type LecturerGroup = {
+interface LecturerGroup {
   id:            string
   name:          string
   materialCount: number
   materials:     MaterialRecord[]
   types:         Set<MaterialType>
+}
+
+interface MaterialSection {
+  title:      string
+  data:       MaterialRecord[]
+  isOfficial: boolean
 }
 
 // ─────────────────────────────────────────────
@@ -430,10 +437,16 @@ function MaterialCard({
                 <Ionicons name="calendar-outline" size={11} color={C.textSub} />
                 <Text allowFontScaling={false} style={ss.matMetaText}>{fmtDate(item.created_at)}</Text>
               </View>
-              {item.type === 'slide' && item.lecturers?.name && (
+              {item.type === 'slide' && (item.lecturers?.name || item.lecturer_name) && (
                 <View style={ss.matMetaItem}>
                   <Ionicons name="person-outline" size={11} color={C.textSub} />
-                  <Text allowFontScaling={false} style={ss.matMetaText}>{item.lecturers.name}</Text>
+                  <Text allowFontScaling={false} style={ss.matMetaText}>{item.lecturers?.name || item.lecturer_name}</Text>
+                </View>
+              )}
+              {item.type === 'past_question' && item.academic_year && (
+                <View style={ss.matMetaItem}>
+                  <Ionicons name="calendar" size={11} color={C.textSub} />
+                  <Text allowFontScaling={false} style={ss.matMetaText}>{item.academic_year}</Text>
                 </View>
               )}
               {item.file_size ? (
@@ -456,10 +469,10 @@ function MaterialCard({
               </Text>
             </View>
           )}
-          {item.lecturers?.name && item.type !== 'slide' && (
+          {(item.lecturers?.name || item.lecturer_name) && item.type !== 'slide' && (
             <View style={ss.stat}>
               <Ionicons name="person-outline" size={12} color={C.textSub} />
-              <Text allowFontScaling={false} style={ss.statText}>{item.lecturers.name}</Text>
+              <Text allowFontScaling={false} style={ss.statText}>{item.lecturers?.name || item.lecturer_name}</Text>
             </View>
           )}
           {isNew && (
@@ -495,7 +508,7 @@ function MaterialCard({
                 size={16} 
                 color={isDownloaded ? C.emerald : C.text} 
               />
-              <Text allowFontScaling={false} style={[isDownloaded ? ss.matBtnSavedText : ss.matBtnMinorText]} numberOfLines={1}>
+              <Text allowFontScaling={false} style={isDownloaded ? ss.matBtnSavedText : ss.matBtnMinorText} numberOfLines={1}>
                 {isDownloaded ? 'Offline' : 'Save'}
               </Text>
             </TouchableOpacity>
@@ -521,7 +534,7 @@ function MaterialCard({
             </TouchableOpacity>
 
             <TouchableOpacity style={ss.iconBtn} onPress={onQuiz} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <Ionicons name={'school-outline' as any} size={15} color={C.lavender} />
+              <Ionicons name="school-outline" size={15} color={C.lavender} />
               <Text style={ss.utilLabel}>Quiz</Text>
             </TouchableOpacity>
           </View>
@@ -546,19 +559,20 @@ export default function StudyMaterialsScreen() {
   const [sortOpen,         setSortOpen]         = useState(false)
   const [dotIdx,           setDotIdx]           = useState(0)
   const [selectedLecturer, setSelectedLecturer] = useState<LecturerGroup | null>(null)
+  const [refreshing,       setRefreshing]       = useState(false)
 
-  const [userId,          setUserId]          = useState<string | null>(null)
-  const [profileInfo,     setProfileInfo]     = useState<{ classId: string | null; collegeId: string | null } | null>(null)
+  const [userId,      setUserId]      = useState<string | null>(null)
+  const [profileInfo, setProfileInfo] = useState<{ classId: string | null; collegeId: string | null } | null>(null)
 
   // ── Offline Queries ──────────────────────────
-  const { user: localUser }                                    = useUser(userId || undefined)
+  const { user: localUser } = useUser(userId || undefined)
 
-  const effectiveClassId   = useMemo(() => localUser?.classId || profileInfo?.classId || null, [localUser, profileInfo])
+  const effectiveClassId   = useMemo(() => localUser?.classId   || profileInfo?.classId   || null, [localUser, profileInfo])
   const effectiveCollegeId = useMemo(() => localUser?.collegeId || profileInfo?.collegeId || null, [localUser, profileInfo])
 
   // ── WatermelonDB reactive hooks ──────────────────────────
   const { records: localMaterials, loading: materialsLoading } = useMaterials() as { records: any[], loading: boolean }
-  const { records: localCourses }                              = useCourses(effectiveClassId) as { records: any[] }
+  const { records: localCourses,   loading: coursesLoading }   = useCourses()   as { records: any[], loading: boolean }
   const { records: localLecturers }                            = useLecturers(effectiveCollegeId) as { records: any[] }
   const { records: localBookmarks }                            = useBookmarks(userId || '', 'material') as { records: any[] }
 
@@ -571,73 +585,109 @@ export default function StudyMaterialsScreen() {
 
   useEffect(() => {
     if (!userId) return
+
+    // 1. Best source: live WatermelonDB user record (always available offline)
     if (localUser && localUser.classId && localUser.collegeId) {
       setProfileInfo({ classId: localUser.classId, collegeId: localUser.collegeId })
-      // ✅ Cache so sync engine can use on next launch without network
       cacheProfileIds(localUser.classId, localUser.collegeId).catch(() => {})
       return
     }
-    supabase.from('profiles').select('college_id, class_id').eq('id', userId).single()
-      .then(({ data }) => {
-        if (data?.class_id && data?.college_id) {
-          setProfileInfo({ classId: data.class_id, collegeId: data.college_id })
-          // ✅ Cache for offline sync
-          cacheProfileIds(data.class_id, data.college_id).catch(() => {})
+
+    // 2. Try Supabase (online only); on any failure fall back to AsyncStorage cache
+    const applyCache = () =>
+      getCachedProfileIds().then(cached => {
+        if (cached.classId && cached.collegeId) {
+          setProfileInfo({ classId: cached.classId, collegeId: cached.collegeId })
         }
       })
+
+    Promise.resolve(
+      supabase
+        .from('profiles')
+        .select('college_id, class_id')
+        .eq('id', userId)
+        .single()
+    ).then(({ data, error }) => {
+      if (!error && data?.class_id && data?.college_id) {
+        setProfileInfo({ classId: data.class_id, collegeId: data.college_id })
+        cacheProfileIds(data.class_id, data.college_id).catch(() => {})
+      } else {
+        // Supabase returned no data (offline / network error) — use cache
+        applyCache()
+      }
+    }).catch(() => applyCache()) // hard network rejection — use cache
   }, [userId, localUser])
 
+  // ── Metadata Mapping (Persistent Pattern) ────────
+  // We use a Ref to ensure the map persists even if localCourses 
+  // is temporarily empty/re-syncing. This prevents "flickering" 
+  // where names disappear for a split second.
+  const coursesMapRef = useRef<Map<string, any>>(new Map())
   const coursesMap = useMemo(() => {
-    const map = new Map<string, any>()
-    localCourses.forEach(c => {
-      map.set(c.id, c)
-      if (c.remoteId) map.set(c.remoteId, c)
-    })
-    return map
+    if (localCourses.length > 0) {
+      const newMap = new Map<string, any>()
+      localCourses.forEach((c: any) => {
+        newMap.set(c.id, c)
+        if (c.remoteId) newMap.set(c.remoteId, c)
+      })
+      coursesMapRef.current = newMap
+    }
+    return coursesMapRef.current
   }, [localCourses])
 
+  const lecturersMapRef = useRef<Map<string, any>>(new Map())
   const lecturersMap = useMemo(() => {
-    const map = new Map<string, any>()
-    localLecturers.forEach(l => {
-      map.set(l.id, l)
-      if (l.remoteId) map.set(l.remoteId, l)
-    })
-    return map
+    if (localLecturers.length > 0) {
+      const newMap = new Map<string, any>()
+      localLecturers.forEach((l: any) => {
+        newMap.set(l.id, l)
+        if (l.remoteId) newMap.set(l.remoteId, l)
+      })
+      lecturersMapRef.current = newMap
+    }
+    return lecturersMapRef.current
   }, [localLecturers])
 
-  // ── Material Transform ───────────────────────
-  // Show ALL local materials immediately. Once effectiveClassId resolves, hide
-  // materials that clearly belong to a different class (cross-user isolation).
+  // ── Material Transform & Class Filter ────────
   const materials = useMemo((): MaterialRecord[] => {
+    // Show skeletons until we know the user's class (prevents flashing all college materials)
+    if (!effectiveClassId) return []
+    // Show skeletons only on true first load (nothing cached yet)
+    if (localMaterials.length === 0 && materialsLoading) return []
+
     return localMaterials
-      .filter(m => {
-        // If we know the class and this material has a different class, hide it
-        if (effectiveClassId && m.classId && m.classId !== effectiveClassId) return false
+      .filter((m: any) => {
+        if (m.classId !== effectiveClassId) return false
+        if (m.status && m.status !== 'published') return false
         return true
       })
-      .map(m => {
-        const course = coursesMap.get(m.courseId)
-        const lecturer = lecturersMap.get(m.lecturerId)
+      .map((m: any) => {
+        const course   = m.courseId   ? coursesMap.get(m.courseId)     : null
+        const lecturer = m.lecturerId ? lecturersMap.get(m.lecturerId) : null
         return {
           id:             m.id,
           title:          m.title,
           type:           (m.fileType as MaterialType) || 'other',
           file_url:       m.fileUrl,
           file_size:      m.fileSize,
-          is_premium:     false,
+          is_premium:     !!m.isPremium,
           created_at:     new Date(m.createdAt).toISOString(),
           downloadStatus: m.downloadStatus,
-          academic_year:  m.academicYear,
-          download_count: m.downloadCount,
-          courses: course ? { name: course.name, code: course.code, class_id: course.classId, is_official: course.isOfficial } : null,
-          lecturers: lecturer ? { name: lecturer.name } : null,
-          lecturer_id:    m.lecturerId,
+          academic_year:  m.academicYear || null,
+          content_text:   m.contentText  || null,
+          cover_url:      null,
+          download_count: m.downloadCount || 0,
+          courses:        course ? { name: course.name, code: course.code, class_id: course.classId, is_official: !!course.isOfficial } : null,
+          lecturers:      lecturer ? { name: lecturer.name } : null,
+          lecturer_id:    m.lecturerId || null,
           lecturer_name:  m.lecturerName || lecturer?.name || null,
+          author:         null,
+          created_by:     m.uploaderId || null,
         } as MaterialRecord
       })
-  }, [localMaterials, coursesMap, lecturersMap, effectiveClassId, effectiveCollegeId])
+  }, [localMaterials, coursesMap, lecturersMap, effectiveClassId, materialsLoading])
 
-  const bookmarkedIds = useMemo(() => new Set(localBookmarks.map(b => b.itemId)), [localBookmarks])
+  const bookmarkedIds = useMemo(() => new Set(localBookmarks.map((b: any) => b.itemId)), [localBookmarks])
 
   const lecturerGroups = useMemo((): LecturerGroup[] => {
     const map = new Map<string, LecturerGroup>()
@@ -654,20 +704,33 @@ export default function StudyMaterialsScreen() {
       group.types.add(m.type)
     })
     return [...map.values()].sort((a, b) => a.name.localeCompare(b.name))
-  }, [materials, lecturersMap])
+  }, [materials])
 
-  // ── Filtered Lists ───────────────────────────
-  const filtered     = filterList(materials, filter, query)
-  const officialList = useMemo(() => sortList(filtered.filter(m => m.courses?.is_official === true), sort), [filtered, sort])
-  const studentList  = useMemo(() => sortList(filtered.filter(m => !m.courses?.is_official), sort), [filtered, sort])
-  const featured     = useMemo(() => [...materials].sort((a,b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(0,3), [materials])
+  // ── Filtered Lists & Sections ────────────────
+  const filtered     = useMemo(() => filterList(materials, filter, query), [materials, filter, query])
+  
+  // As requested, all items are displayed under Official Resources for a unified layout.
+  const officialList = useMemo(() => sortList(filtered, sort), [filtered, sort])
+  const featured     = useMemo(() => [...materials].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(0, 3), [materials])
+  const totalCount   = useMemo(() => materials.length, [materials])
+
+  const sections = useMemo((): MaterialSection[] => {
+    const list: MaterialSection[] = []
+    if (officialList.length > 0) list.push({ title: 'Official Resources', data: officialList, isOfficial: true })
+    return list
+  }, [officialList])
 
   const showFeatured  = filter === 'all' && !query.trim()
   const showLecturers = filter === 'lecturers'
-  const noResults     = !showLecturers && officialList.length === 0 && studentList.length === 0
-  const showSkeletons = materialsLoading && localMaterials.length === 0
+  const noResults     = !showLecturers && officialList.length === 0
+  const showSkeletons = (materialsLoading && localMaterials.length === 0) || !effectiveClassId
 
   // ── Handlers ─────────────────────────────────
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true)
+    try { await triggerSync() } catch (e) { console.warn('[Sync] refresh failed', e) } finally { setRefreshing(false) }
+  }, [])
+
   const handleDownload = useCallback((item: MaterialRecord) => {
     if (!isPremium) {
       Alert.alert('Premium Required', 'Downloading materials for offline viewing requires a Premium subscription.', [
@@ -676,7 +739,7 @@ export default function StudyMaterialsScreen() {
       ])
       return
     }
-    const material = localMaterials.find(x => x.id === item.id)
+    const material = localMaterials.find((x: any) => x.id === item.id)
     if (material) syncDownload(material)
   }, [isPremium, localMaterials, router])
 
@@ -690,11 +753,11 @@ export default function StudyMaterialsScreen() {
     router.push({
       pathname: '/viewer' as any,
       params: { 
-        file_url: item.file_url, 
-        title: item.title, 
+        file_url:    item.file_url, 
+        title:       item.title, 
         material_id: item.id, 
-        is_local: item.downloadStatus === 'done' ? '1' : '0',
-        color: TYPE_META[item.type]?.accentColor ?? C.sapphire,
+        is_local:    item.downloadStatus === 'done' ? '1' : '0',
+        color:       TYPE_META[item.type]?.accentColor ?? C.sapphire,
       },
     })
   }, [router])
@@ -710,7 +773,7 @@ export default function StudyMaterialsScreen() {
       {isOffline && (
         <View style={ss.offlineBanner}>
           <Ionicons name="cloud-offline" size={13} color={C.gold} />
-          <Text style={ss.offlineBannerText}>Offline Mode — using local database</Text>
+          <Text style={ss.offlineBannerText}>Offline — showing {totalCount} cached material{totalCount !== 1 ? 's' : ''}</Text>
         </View>
       )}
 
@@ -760,102 +823,133 @@ export default function StudyMaterialsScreen() {
       </View>
 
       {/* BODY */}
-      <ScrollView
-        style={{ flex: 1 }}
-        contentContainerStyle={[ss.body, { paddingBottom: insets.bottom + 110 }]}
-        refreshControl={<RefreshControl refreshing={false} onRefresh={() => triggerSync()} tintColor={C.orange} />}
-      >
-        {showSkeletons && <View style={{ marginTop: 22 }}>{Array(4).fill(null).map((_, i) => <SkeletonCard key={i} index={i} />)}</View>}
-
-        {!showSkeletons && (
-          <>
-            {/* LECTURERS TAB */}
-            {showLecturers && !selectedLecturer && (
-              <View style={ss.matSection}>
-                <SectionHead title="Lecturers" right={<View style={ss.countBadge}><Text style={ss.countBadgeText}>{lecturerGroups.length} lecturers</Text></View>} />
-                {lecturerGroups.map(group => (
-                  <LecturerCard key={group.id} group={group} onPress={() => setSelectedLecturer(group)} />
-                ))}
-              </View>
-            )}
-
-            {/* LECTURER DETAIL */}
-            {showLecturers && selectedLecturer && (
-              <View style={ss.matSection}>
-                <TouchableOpacity style={ss.lecBackRow} onPress={() => setSelectedLecturer(null)}>
-                  <Ionicons name="arrow-back" size={16} color={C.orange} />
-                  <Text style={ss.lecBackText}>All Lecturers</Text>
-                </TouchableOpacity>
-                <SectionHead title={selectedLecturer.name} right={<View style={ss.countBadge}><Text style={ss.countBadgeText}>{selectedLecturer.materialCount} files</Text></View>} />
-                {selectedLecturer.materials.map(m => (
-                  <MaterialCard
-                    key={m.id} item={m} isOfficial={true} isNew={false} isBookmarked={bookmarkedIds.has(m.id)} bookmarkLoading={bookmarkLoading === m.id}
-                    onOpen={() => openMaterial(m)} onDownload={() => handleDownload(m)}
-                    onChat={() => router.push({ pathname: '/chat' as any, params: { material_title: m.title, file_url: m.file_url, material_id: m.id } })}
-                    onBookmark={() => toggleBookmark(m)}
-                    onQuiz={() => router.push({ pathname: '/quiz-flashcards' as any, params: { material_id: m.id, title: m.title, file_url: m.file_url, type: m.type, auto_generate: '1' } })}
-                  />
-                ))}
-              </View>
-            )}
-
-            {/* NORMAL TABS */}
-            {!showLecturers && (
-              <>
-                {showFeatured && featured.length > 0 && (
-                  <View style={ss.featSection}>
-                    <SectionHead title="Pinned & Featured" />
-                    <FlatList
-                      data={featured} keyExtractor={item => item.id} horizontal showsHorizontalScrollIndicator={false}
-                      snapToInterval={FEAT_CARD_W + FEAT_GAP} decelerationRate="fast"
-                      contentContainerStyle={{ gap: FEAT_GAP, paddingRight: 4 }}
-                      onScroll={onFeatScroll} scrollEventThrottle={16}
-                      renderItem={({ item, index }) => <FeaturedCard item={item} gradIdx={index} onPress={() => openMaterial(item)} />}
-                    />
-                    <View style={ss.dotsRow}>
-                      {featured.map((_, i) => <View key={i} style={[ss.dot, i === dotIdx ? { width: 18, backgroundColor: C.orange } : { width: 5,  backgroundColor: C.borderHi }]} />)}
-                    </View>
+      {showSkeletons ? (
+        <View style={[ss.body, { marginTop: 22 }]}>
+          {Array(4).fill(null).map((_, i) => <SkeletonCard key={i} index={i} />)}
+        </View>
+      ) : showLecturers ? (
+        <ScrollView 
+          style={{ flex: 1 }}
+          contentContainerStyle={[ss.body, { paddingBottom: insets.bottom + 110 }]}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.orange} />}
+        >
+          {!selectedLecturer ? (
+            <View style={ss.matSection}>
+              <SectionHead
+                title="Lecturers"
+                right={
+                  <View style={ss.countBadge}>
+                    <Text style={ss.countBadgeText}>{lecturerGroups.length} lecturer{lecturerGroups.length !== 1 ? 's' : ''} • {totalCount} total</Text>
                   </View>
-                )}
-
-                {(officialList.length > 0 || studentList.length > 0) && (
-                  <View style={ss.matSection}>
-                    <SectionHead 
-                      title="Official Resources" 
-                      right={<View style={ss.countBadge}><Text style={ss.countBadgeText}>{officialList.length + studentList.length} files</Text></View>} 
-                    />
-                    {[...officialList, ...studentList].map(m => (
-                      <MaterialCard
-                        key={m.id} 
-                        item={m} 
-                        isOfficial={true} 
-                        isNew={false} 
-                        isBookmarked={bookmarkedIds.has(m.id)} 
-                        bookmarkLoading={bookmarkLoading === m.id}
-                        onOpen={() => openMaterial(m)} 
-                        onDownload={() => handleDownload(m)}
-                        onChat={() => router.push({ pathname: '/chat' as any, params: { material_title: m.title, file_url: m.file_url, material_id: m.id } })}
-                        onBookmark={() => toggleBookmark(m)}
-                        onQuiz={() => router.push({ pathname: '/quiz-flashcards' as any, params: { material_id: m.id, title: m.title, file_url: m.file_url, type: m.type, auto_generate: '1' } })}
+                }
+              />
+              {lecturerGroups.map(group => (
+                <LecturerCard key={group.id} group={group} onPress={() => setSelectedLecturer(group)} />
+              ))}
+            </View>
+          ) : (
+            <View style={ss.matSection}>
+              <TouchableOpacity style={ss.lecBackRow} onPress={() => setSelectedLecturer(null)}>
+                <Ionicons name="arrow-back" size={16} color={C.orange} />
+                <Text style={ss.lecBackText}>All Lecturers</Text>
+              </TouchableOpacity>
+              <SectionHead
+                title={selectedLecturer.name}
+                right={
+                  <View style={ss.countBadge}>
+                    <Text style={ss.countBadgeText}>{selectedLecturer.materialCount} files</Text>
+                  </View>
+                }
+              />
+              {selectedLecturer.materials.map(m => (
+                <MaterialCard
+                  key={m.id} item={m} isOfficial={!!m.courses?.is_official} isNew={false}
+                  isBookmarked={bookmarkedIds.has(m.id)} bookmarkLoading={bookmarkLoading === m.id}
+                  onOpen={() => openMaterial(m)} onDownload={() => handleDownload(m)}
+                  onChat={() => router.push({ pathname: '/chat' as any, params: { material_title: m.title, file_url: m.file_url, material_id: m.id } })}
+                  onBookmark={() => toggleBookmark(m)}
+                  onQuiz={() => router.push({ pathname: '/quiz-flashcards' as any, params: { material_id: m.id, title: m.title, file_url: m.file_url, type: m.type, auto_generate: '1' } })}
+                />
+              ))}
+            </View>
+          )}
+        </ScrollView>
+      ) : (
+        <SectionList
+          sections={sections}
+          keyExtractor={item => item.id}
+          stickySectionHeadersEnabled={false}
+          contentContainerStyle={[ss.body, { paddingBottom: insets.bottom + 110 }]}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.orange} />}
+          initialNumToRender={10}
+          maxToRenderPerBatch={10}
+          windowSize={5}
+          ListHeaderComponent={
+            <>
+              {showFeatured && featured.length > 0 && (
+                <View style={ss.featSection}>
+                  <SectionHead title="Pinned & Featured" />
+                  <FlatList
+                    data={featured} keyExtractor={item => item.id} horizontal showsHorizontalScrollIndicator={false}
+                    snapToInterval={FEAT_CARD_W + FEAT_GAP} decelerationRate="fast"
+                    contentContainerStyle={{ gap: FEAT_GAP, paddingRight: 4, paddingBottom: 4 }}
+                    onScroll={onFeatScroll} scrollEventThrottle={16}
+                    renderItem={({ item, index }: { item: MaterialRecord; index: number }) => (
+                      <FeaturedCard item={item} gradIdx={index} onPress={() => openMaterial(item)} />
+                    )}
+                  />
+                  <View style={ss.dotsRow}>
+                    {featured.map((_, i) => (
+                      <View
+                        key={i}
+                        style={[ss.dot, i === dotIdx
+                          ? { width: 18, backgroundColor: C.orange }
+                          : { width: 5,  backgroundColor: C.borderHi }
+                        ]}
                       />
                     ))}
                   </View>
-                )}
-
-                {noResults && (
-                  <View style={ss.empty}>
-                    <Text style={ss.emptyIcon}>🔍</Text>
-                    <Text style={ss.emptyTitle}>No materials found</Text>
-                    <Text style={ss.emptySub}>Try a different search term or filter.</Text>
+                </View>
+              )}
+              {noResults && (
+                <View style={ss.empty}>
+                  <Text style={ss.emptyIcon}>🔍</Text>
+                  <Text style={ss.emptyTitle}>No materials found</Text>
+                  <Text style={ss.emptySub}>Try a different search term or filter.</Text>
+                </View>
+              )}
+            </>
+          }
+          renderSectionHeader={({ section }: { section: MaterialSection }) => (
+            <View style={ss.matSection}>
+              <SectionHead 
+                title={section.title} 
+                right={
+                  <View style={ss.countBadge}>
+                    <Text style={ss.countBadgeText}>{section.data.length} file{section.data.length !== 1 ? 's' : ''}</Text>
                   </View>
-                )}
-              </>
-            )}
-          </>
-        )}
-      </ScrollView>
+                } 
+              />
+            </View>
+          )}
+          renderItem={({ item, section }: { item: MaterialRecord; section: MaterialSection }) => (
+            <MaterialCard
+              item={item} 
+              isOfficial={section.isOfficial} 
+              isNew={new Date(item.created_at).getTime() > Date.now() - 48 * 60 * 60 * 1000}
+              isBookmarked={bookmarkedIds.has(item.id)} 
+              bookmarkLoading={bookmarkLoading === item.id}
+              onOpen={() => openMaterial(item)} 
+              onDownload={() => handleDownload(item)}
+              onChat={() => router.push({ pathname: '/chat' as any, params: { material_title: item.title, file_url: item.file_url, material_id: item.id } })}
+              onBookmark={() => toggleBookmark(item)}
+              onQuiz={() => router.push({ pathname: '/quiz-flashcards' as any, params: { material_id: item.id, title: item.title, file_url: item.file_url, type: item.type, auto_generate: '1' } })}
+            />
+          )}
+        />
+      )}
 
-      {/* SORT DROPDOWN OVERLAY (Simplified) */}
+      {/* SORT DROPDOWN OVERLAY */}
       {sortOpen && (
         <>
           <Pressable style={StyleSheet.absoluteFill} onPress={() => setSortOpen(false)} />
@@ -914,29 +1008,29 @@ const ss = StyleSheet.create({
   matHeader:         { flex: 1 },
   matCourse:         { fontSize: 10, fontWeight: '700', color: C.orange, textTransform: 'uppercase' },
   matTitle:          { fontSize: 17, fontWeight: '700', color: C.text, lineHeight: 22 },
-  matMetaRow:        { flexDirection: 'row', gap: 12, marginTop: 4 },
-  matMetaItem:       { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  matMetaRow:        { flexDirection: 'row', gap: 12, marginTop: 4, flexWrap: 'wrap' },
+  matMetaItem:       { flexDirection: 'row', alignItems: 'center', gap: 4, minWidth: 60 },
   matMetaText:       { fontSize: 11, color: C.textSub },
-  statBar:           { flexDirection: 'row', alignItems: 'center', marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.border },
-  stat:              { flexDirection: 'row', alignItems: 'center', gap: 4, marginRight: 12 },
+  statBar:           { flexDirection: 'row', alignItems: 'center', marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.border, flexWrap: 'wrap', gap: 8 },
+  stat:              { flexDirection: 'row', alignItems: 'center', gap: 4, marginRight: 4 },
   statText:          { fontSize: 11, color: C.textSub },
   newBadge:          { backgroundColor: '#052e16', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
   newBadgeText:      { fontSize: 9, fontWeight: '900', color: '#4ade80' },
   typeChip:          { borderRadius: 7, paddingHorizontal: 9, paddingVertical: 3, borderWidth: 1 },
   typeChipText:      { fontSize: 9.5, fontWeight: '700' },
-  matActions: { marginTop: 16, gap: 10 },
-  primaryRow: { flexDirection: 'row', gap: 8 },
-  utilityRow: { flexDirection: 'row', gap: 8, paddingTop: 4 },
+  matActions: { marginTop: 16, gap: 12 },
+  primaryRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+  utilityRow: { flexDirection: 'row', gap: 8, paddingTop: 6, flexWrap: 'wrap' },
   matBtn:     { flex: 1, height: 42, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
   matBtnPrimary:     { backgroundColor: C.orange },
   matBtnMinor:       { backgroundColor: C.raised, borderWidth: 1, borderColor: C.border },
   matBtnSaved:       { backgroundColor: C.emerDim, borderWidth: 1, borderColor: C.emerald },
-  matBtnPrimaryText: { fontSize: 13, fontWeight: '700', color: '#fff' },
-  matBtnMinorText:   { fontSize: 13, fontWeight: '700', color: C.text },
-  matBtnSavedText:   { fontSize: 13, fontWeight: '700', color: C.emerald },
-  iconBtn:           { flex: 1, height: 38, borderRadius: 10, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
+  matBtnPrimaryText: { fontSize: 12, fontWeight: '700', color: '#fff' },
+  matBtnMinorText:   { fontSize: 12, fontWeight: '700', color: C.text },
+  matBtnSavedText:   { fontSize: 12, fontWeight: '700', color: C.emerald },
+  iconBtn:           { flex: 1, minWidth: 90, height: 38, borderRadius: 10, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: 4 },
   iconBtnActive:     { backgroundColor: C.goldDim, borderColor: C.gold + '40' },
-  utilLabel:         { fontSize: 11, fontWeight: '600', color: C.textSub },
+  utilLabel:         { fontSize: 10, fontWeight: '600', color: C.textSub },
   featSection:   { marginTop: 22 },
   featCard:      { width: FEAT_CARD_W, borderRadius: 22, padding: 22, overflow: 'hidden' },
   featOrb:       { position: 'absolute' },

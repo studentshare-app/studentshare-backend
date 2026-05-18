@@ -20,7 +20,7 @@ const TABLE_CONFIG: Record<string, TableConfig> = {
   users:                 { cursorCol: 'updated_at', cursorType: 'bigint', localName: 'users'             },
   courses:               { cursorCol: 'created_at', cursorType: 'iso',    localName: 'courses'           },
   lecturers:             { cursorCol: 'created_at', cursorType: 'iso',    localName: 'lecturers'         },
-  sq_posts:              { cursorCol: 'updated_at', cursorType: 'iso',    localName: 'posts'             },
+  sq_posts:              { cursorCol: 'created_at', cursorType: 'iso',    localName: 'posts'             },
   comments:              { cursorCol: 'updated_at', cursorType: 'bigint', localName: 'comments'          },
   materials:             { cursorCol: 'updated_at', cursorType: 'iso',    localName: 'materials'         },
   notes:                 { cursorCol: 'updated_at', cursorType: 'iso',    localName: 'notes'             },
@@ -159,9 +159,15 @@ export async function pullIncoming(
   if (!cfg) return []
 
   try {
+    const selectQuery = table === 'materials' 
+      ? '*, lecturers(name)'
+      : table === 'sq_posts'
+      ? '*, profiles(full_name, forum_handle, forum_initials, forum_grad, avatar_url, is_verified)'
+      : '*'
+
     let query = supabase
       .from(table)
-      .select(table === 'materials' ? '*, lecturers(name)' : '*')
+      .select(selectQuery)
       .gt(cfg.cursorCol, cursor)
       .order(cfg.cursorCol, { ascending: true })
       .limit(SYNC_PAGE_SIZE)
@@ -189,17 +195,11 @@ export async function cacheProfileIds(classId: string, collegeId: string): Promi
   } catch (e) {}
 }
 
-/** Resolve the current user's classId and collegeId from local DB → AsyncStorage → Supabase (in that order) */
-async function resolveProfileIds(): Promise<{ classId: string | null; collegeId: string | null }> {
-  // 1. Try local WatermelonDB first (fastest)
-  try {
-    const users = await database.collections.get('users').query(Q.where('deleted', false), Q.take(1)).fetch() as any[]
-    if (users.length > 0 && users[0].classId && users[0].collegeId) {
-      return { classId: users[0].classId, collegeId: users[0].collegeId }
-    }
-  } catch (e) {}
-
-  // 2. Try AsyncStorage cache (available offline after first login)
+/**
+ * Read the locally-cached profile IDs written by cacheProfileIds().
+ * Safe to call offline — pure AsyncStorage read, no network.
+ */
+export async function getCachedProfileIds(): Promise<{ classId: string | null; collegeId: string | null }> {
   try {
     const raw = await AsyncStorage.getItem(PROFILE_IDS_KEY)
     if (raw) {
@@ -209,20 +209,46 @@ async function resolveProfileIds(): Promise<{ classId: string | null; collegeId:
       }
     }
   } catch (e) {}
+  return { classId: null, collegeId: null }
+}
 
-  // 3. Fall back to Supabase profiles table (requires network)
+/** Resolve the current user's classId and collegeId from local DB → AsyncStorage → Supabase (in that order) */
+async function resolveProfileIds(): Promise<{ classId: string | null; collegeId: string | null }> {
+  // 1. Prioritize active Supabase profile to avoid stale local cache issues mid-sync
   try {
-    const { data: { session } } = await supabase.auth.getSession()
-    if (session?.user?.id) {
-      const { data } = await supabase
-        .from('profiles')
-        .select('class_id, college_id')
-        .eq('id', session.user.id)
-        .single()
-      if (data?.class_id && data?.college_id) {
-        // Cache for future use
-        await cacheProfileIds(data.class_id, data.college_id)
-        return { classId: data.class_id, collegeId: data.college_id }
+    const isOnline = await NetInfo.fetch().then(s => s.isConnected)
+    if (isOnline) {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session?.user?.id) {
+        const { data } = await supabase
+          .from('profiles')
+          .select('class_id, college_id')
+          .eq('id', session.user.id)
+          .single()
+        if (data?.class_id && data?.college_id) {
+          // Cache for offline sync
+          await cacheProfileIds(data.class_id, data.college_id)
+          return { classId: data.class_id, collegeId: data.college_id }
+        }
+      }
+    }
+  } catch (e) {}
+
+  // 2. Try local WatermelonDB next
+  try {
+    const users = await database.collections.get('users').query(Q.where('deleted', false), Q.take(1)).fetch() as any[]
+    if (users.length > 0 && users[0].classId && users[0].collegeId) {
+      return { classId: users[0].classId, collegeId: users[0].collegeId }
+    }
+  } catch (e) {}
+
+  // 3. Fall back to AsyncStorage cache (available offline after first login)
+  try {
+    const raw = await AsyncStorage.getItem(PROFILE_IDS_KEY)
+    if (raw) {
+      const cached = JSON.parse(raw)
+      if (cached?.classId && cached?.collegeId) {
+        return { classId: cached.classId, collegeId: cached.collegeId }
       }
     }
   } catch (e) {}
@@ -248,6 +274,11 @@ export async function runSync(): Promise<void> {
       const cursorKey = `sync_cursor_${table}`
       let currentCursorRaw = await database.adapter.getLocal(cursorKey)
       
+      // Force metadata metadata reset for full integrity fetch
+      if (table === 'courses' || table === 'lecturers') {
+        currentCursorRaw = undefined
+      }
+      
       // Default cursors (approx. "beginning of time")
       let currentCursor: string | number = cfg.cursorType === 'bigint' ? 0 : '1970-01-01T00:00:00Z'
       if (currentCursorRaw) {
@@ -258,16 +289,17 @@ export async function runSync(): Promise<void> {
 
       let queryBuilder: ((q: any) => any) | undefined
       if (table === 'courses') {
-        if (!classId) continue
-        queryBuilder = (q) => q.eq('class_id', classId)
+        // Broaden sync: Pull all available courses to ensure materials can always resolve names. 
+        // Metadata is small and essential for data integrity across all classes in the college.
+        queryBuilder = undefined
       }
       if (table === 'lecturers') {
-        if (!collegeId) continue
-        queryBuilder = (q) => q.eq('college_id', collegeId)
+        // Broaden sync: No college_id filter since some schemas are missing it.
+        queryBuilder = undefined 
       }
       if (table === 'materials') {
-        if (!classId) continue
-        queryBuilder = (q) => q.eq('class_id', classId)
+        if (!collegeId) continue
+        queryBuilder = (q) => q.eq('college_id', collegeId)
       }
 
       let hasMore = true

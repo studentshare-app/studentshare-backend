@@ -14,6 +14,7 @@ import { PostOptionsSheet, type PostOption } from '@/features/forum/components/P
 import { useForumInteractions } from '@/features/forum/hooks/useForumInteractions'
 import type { Notif, Post, UserProfile } from '@/features/forum/types'
 import { useAuth }            from '@/hooks/useAuth'
+import useAppStore            from '@/store'
 import { useNetworkStatus }   from '@/hooks/useNetworkStatus'
 import { supabase }           from '@/lib/supabase'
 import { Ionicons }           from '@expo/vector-icons'
@@ -325,7 +326,7 @@ function Poll({
 // ─────────────────────────────────────────────────────────────────────────────
 function PostCard({
   post, myUserId, onLike, onRepost, onBookmark, onReply,
-  onShare, onOpen, onVote, onHashtag, onAvatarPress, onDelete,
+  onShare, onOpen, onVote, onHashtag, onAvatarPress, onDelete, onImagePress,
 }: {
   post:           Post
   myUserId:       string
@@ -537,7 +538,9 @@ const TABS: { key: FeedTab; label: string }[] = [
 export default function ForumScreen() {
   const router      = useRouter()
   const insets      = useSafeAreaInsets()
-  const { user }    = useAuth()
+  const { user: authUser } = useAuth()
+  const storeUser   = useAppStore((s: any) => s.user)
+  const user        = authUser || storeUser
   const { isOffline } = useNetworkStatus()
 
   // ── Profile ───────────────────────────────────────────────────────────────

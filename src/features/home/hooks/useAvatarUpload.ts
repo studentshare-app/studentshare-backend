@@ -14,7 +14,7 @@ import {
 } from '@/features/home/constants'
 import { base64ToBytes, retryPendingAvatarUpload } from '@/features/home/api/home'
 import type { PendingAvatarUpload } from '@/features/home/types'
-import { lockAvatarRefetch } from '@/hooks/useProfileSync'
+import { lockAvatarRefetch } from '@/core/utils/avatarLock'
 
 async function updateCachedAvatar(userId: string, avatarUrl: string) {
   const cached = await AsyncStorage.getItem(DASHBOARD_CACHE_KEY)

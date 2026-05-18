@@ -32,7 +32,7 @@ import { LinearGradient } from 'expo-linear-gradient'
 
 import { supabase } from '@/lib/supabase'
 import { toggleBookmark as dbToggleBookmark } from '@/database/actions'
-import { triggerSync, cacheProfileIds } from '@/core/sync/syncService'
+import { triggerSync, cacheProfileIds, getCachedProfileIds } from '@/core/sync/syncService'
 import {
   useMaterials,
   useCourses,
@@ -99,6 +99,7 @@ interface MaterialRecord {
   file_size: number | null
   is_premium: boolean
   created_at: string
+  academic_year: string | null
   download_count?: number
   downloadStatus?: string
   courses: {
@@ -306,6 +307,12 @@ function MaterialCard({
                   <Text allowFontScaling={false} style={S.matMetaText}>{item.lecturers?.name || item.lecturer_name}</Text>
                 </View>
               )}
+              {item.type === 'past_question' && item.academic_year && (
+                <View style={S.matMetaItem}>
+                  <Ionicons name="calendar" size={11} color={C.textSub} />
+                  <Text allowFontScaling={false} style={S.matMetaText}>{item.academic_year}</Text>
+                </View>
+              )}
               {item.file_size ? (
                 <View style={S.matMetaItem}>
                   <Ionicons name="server-outline" size={11} color={C.textSub} />
@@ -402,12 +409,14 @@ function MaterialCard({
 function SkeletonCard({ index }: { index: number }) {
   const opacity = useRef(new Animated.Value(0.4)).current
   useEffect(() => {
-    Animated.loop(
+    const anim = Animated.loop(
       Animated.sequence([
         Animated.timing(opacity, { toValue: 0.9, duration: 800, useNativeDriver: true }),
         Animated.timing(opacity, { toValue: 0.4, duration: 800, useNativeDriver: true }),
       ])
-    ).start()
+    )
+    anim.start()
+    return () => anim.stop()
   }, [opacity])
 
   return (
@@ -461,13 +470,13 @@ export default function NewMaterialsScreen() {
   const [profileInfo, setProfileInfo] = useState<{ classId: string | null; collegeId: string | null } | null>(null)
 
   // Effective user info for filtering: prefer WatermelonDB, fallback to profiles
-  const effectiveClassId = useMemo(() => user?.classId || profileInfo?.classId || null, [user, profileInfo])
+  const effectiveClassId   = useMemo(() => user?.classId   || profileInfo?.classId   || null, [user, profileInfo])
   const effectiveCollegeId = useMemo(() => user?.collegeId || profileInfo?.collegeId || null, [user, profileInfo])
 
   const { records: localMaterials, loading: materialsLoading } = useMaterials() as { records: any[], loading: boolean }
-  const { records: localCourses }   = useCourses(effectiveClassId) as { records: any[] }
-  const { records: localLecturers } = useLecturers(effectiveCollegeId) as { records: any[] }
-  const { records: localBookmarks } = useBookmarks(userId || '', 'material') as { records: any[] }
+  const { records: localCourses,   loading: coursesLoading }   = useCourses()   as { records: any[], loading: boolean }
+  const { records: localLecturers }                            = useLecturers(effectiveCollegeId) as { records: any[] }
+  const { records: localBookmarks }                            = useBookmarks(userId || '', 'material') as { records: any[] }
 
   const [refreshing, setRefreshing] = useState(false)
 
@@ -508,55 +517,87 @@ export default function NewMaterialsScreen() {
 
   useEffect(() => {
     if (!userId) return
+
+    // 1. Best source: live WatermelonDB user record (always available offline)
     if (user && user.classId && user.collegeId) {
       setProfileInfo({ classId: user.classId, collegeId: user.collegeId })
-      // ✅ Cache so sync engine has IDs on next app launch without network
       cacheProfileIds(user.classId, user.collegeId).catch(() => {})
       return
     }
-    supabase.from('profiles').select('college_id, class_id').eq('id', userId).single()
-      .then(({ data }) => {
-        if (data?.class_id && data?.college_id) {
-          setProfileInfo({ classId: data.class_id, collegeId: data.college_id })
-          // ✅ Cache for offline sync
-          cacheProfileIds(data.class_id, data.college_id).catch(() => {})
+
+    // 2. Try Supabase (online only); on any failure fall back to AsyncStorage cache
+    const applyCache = () =>
+      getCachedProfileIds().then(cached => {
+        if (cached.classId && cached.collegeId) {
+          setProfileInfo({ classId: cached.classId, collegeId: cached.collegeId })
         }
       })
+
+    Promise.resolve(
+      supabase
+        .from('profiles')
+        .select('college_id, class_id')
+        .eq('id', userId)
+        .single()
+    ).then(({ data, error }) => {
+      if (!error && data?.class_id && data?.college_id) {
+        setProfileInfo({ classId: data.class_id, collegeId: data.college_id })
+        cacheProfileIds(data.class_id, data.college_id).catch(() => {})
+      } else {
+        // Supabase returned no data (offline / network error) — use cache
+        applyCache()
+      }
+    }).catch(() => applyCache()) // hard network rejection — use cache
   }, [userId, user])
 
   const bookmarkedIds = useMemo(() => new Set(localBookmarks.map((b: any) => b.itemId)), [localBookmarks])
 
+  // FIX: Always rebuild maps from current arrays — no stale ref guard
+  // ── Metadata Mapping (Persistent Pattern) ────────
+  // We use a Ref to ensure the map persists even if localCourses 
+  // is temporarily empty/re-syncing. This prevents "flickering".
+  const coursesMapRef = useRef<Map<string, any>>(new Map())
   const coursesMap = useMemo(() => {
-    const map = new Map<string, any>()
-    localCourses.forEach((c: any) => {
-      map.set(c.id, c)
-      if (c.remoteId) map.set(c.remoteId, c)
-    })
-    return map
+    if (localCourses.length > 0) {
+      const newMap = new Map<string, any>()
+      localCourses.forEach((c: any) => {
+        newMap.set(c.id, c)
+        if (c.remoteId) newMap.set(c.remoteId, c)
+      })
+      coursesMapRef.current = newMap
+    }
+    return coursesMapRef.current
   }, [localCourses])
 
+  const lecturersMapRef = useRef<Map<string, any>>(new Map())
   const lecturersMap = useMemo(() => {
-    const map = new Map<string, any>()
-    localLecturers.forEach((l: any) => {
-      map.set(l.id, l)
-      if (l.remoteId) map.set(l.remoteId, l)
-    })
-    return map
+    if (localLecturers.length > 0) {
+      const newMap = new Map<string, any>()
+      localLecturers.forEach((l: any) => {
+        newMap.set(l.id, l)
+        if (l.remoteId) newMap.set(l.remoteId, l)
+      })
+      lecturersMapRef.current = newMap
+    }
+    return lecturersMapRef.current
   }, [localLecturers])
 
-  // Show ALL local materials immediately. Once effectiveClassId resolves, hide
-  // materials that belong to a different class (cross-user isolation).
+  // ── Material Transform & Class Filter ────────
   const materials = useMemo((): MaterialRecord[] => {
-    if (materialsLoading && localMaterials.length === 0) return []
+    // Show skeletons until we know the user's class (prevents flashing all college materials)
+    if (!effectiveClassId) return []
+    // Show skeletons only on true first load (nothing cached yet)
+    if (localMaterials.length === 0 && materialsLoading) return []
+
     return localMaterials
       .filter((m: any) => {
-        // If we know the class and this material belongs to a different one, hide it
-        if (effectiveClassId && m.classId && m.classId !== effectiveClassId) return false
+        if (m.classId !== effectiveClassId) return false
+        if (m.status && m.status !== 'published') return false
         return true
       })
       .map((m: any) => {
-        const course   = coursesMap.get(m.courseId)
-        const lecturer = lecturersMap.get(m.lecturerId)
+        const course   = m.courseId   ? coursesMap.get(m.courseId)     : null
+        const lecturer = m.lecturerId ? lecturersMap.get(m.lecturerId) : null
         return {
           id:             m.id,
           remoteId:       m.remoteId,
@@ -564,63 +605,52 @@ export default function NewMaterialsScreen() {
           type:           (m.fileType as MaterialType) || 'other',
           file_url:       m.fileUrl,
           file_size:      m.fileSize,
-          is_premium:     false,
+          is_premium:     !!m.isPremium,
           download_count: m.downloadCount || 0,
           created_at:     new Date(m.createdAt).toISOString(),
+          academic_year:  m.academicYear || null,
           downloadStatus: m.downloadStatus,
-          courses:        course ? { name: course.name, code: course.code, class_id: course.classId, is_official: course.isOfficial } : null,
+          courses:        course ? { name: course.name, code: course.code, class_id: course.classId, is_official: !!course.isOfficial } : null,
           lecturers:      lecturer ? { name: lecturer.name } : null,
-          lecturer_id:    m.lecturerId,
+          lecturer_id:    m.lecturerId || null,
           lecturer_name:  m.lecturerName || lecturer?.name || null,
         } as MaterialRecord
       })
       .sort((a: MaterialRecord, b: MaterialRecord) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-      .slice(0, 50)
-  }, [localMaterials, coursesMap, lecturersMap, materialsLoading])
-
-  const counts = useMemo(() => {
-    const c: Record<string, number> = {}
-    for (const m of materials) {
-      c[m.type] = (c[m.type] ?? 0) + 1
-    }
-    return c
-  }, [materials])
+  }, [localMaterials, coursesMap, lecturersMap, effectiveClassId, materialsLoading])
 
   const featured = useMemo(() => materials.slice(0, 5), [materials])
 
   const displayed = useMemo(() => {
-    let list = materials
-    if (search.trim()) {
-      const q = search.trim().toLowerCase()
-      list = list.filter(m =>
-        m.title.toLowerCase().includes(q) ||
-        (m.courses?.name ?? '').toLowerCase().includes(q) ||
-        (m.courses?.code ?? '').toLowerCase().includes(q)
-      )
-    }
-    return list
+    if (!search.trim()) return materials
+    const q = search.trim().toLowerCase()
+    return materials.filter(m =>
+      m.title.toLowerCase().includes(q) ||
+      (m.courses?.name ?? '').toLowerCase().includes(q) ||
+      (m.courses?.code ?? '').toLowerCase().includes(q)
+    )
   }, [materials, search])
 
   const sections = useMemo(() => {
-    const today: MaterialRecord[] = []
+    const today: MaterialRecord[]     = []
     const yesterday: MaterialRecord[] = []
-    const older: MaterialRecord[] = []
+    const older: MaterialRecord[]     = []
 
-    const now = Date.now()
-    const oneDay = 24 * 60 * 60 * 1000
+    const now     = Date.now()
+    const oneDay  = 24 * 60 * 60 * 1000
     const twoDays = 48 * 60 * 60 * 1000
 
     displayed.forEach(m => {
       const ts = new Date(m.created_at).getTime()
-      if (ts > now - oneDay) today.push(m)
+      if (ts > now - oneDay)      today.push(m)
       else if (ts > now - twoDays) yesterday.push(m)
-      else older.push(m)
+      else                         older.push(m)
     })
 
     const res = []
-    if (today.length > 0) res.push({ title: 'New Today', data: today, isNew: true })
-    if (yesterday.length > 0) res.push({ title: 'Yesterday', data: yesterday })
-    if (older.length > 0) res.push({ title: 'Previous Submissions', data: older })
+    if (today.length     > 0) res.push({ title: 'New Today',            data: today,     isNew: true  })
+    if (yesterday.length > 0) res.push({ title: 'Yesterday',            data: yesterday, isNew: false })
+    if (older.length     > 0) res.push({ title: 'Previous Submissions', data: older,     isNew: false })
     return res
   }, [displayed])
 
@@ -689,7 +719,7 @@ export default function NewMaterialsScreen() {
           <Text style={S.heroTitle}>New Class Materials</Text>
         </View>
         <Text style={S.heroSub}>
-          {materialsLoading ? 'Loading…' : `${materials.length} materials available`}
+          {materialsLoading && materials.length === 0 ? 'Loading…' : `${displayed.length} material${displayed.length !== 1 ? 's' : ''} available`}
         </Text>
         
         <View style={S.searchWrap}>
@@ -704,7 +734,7 @@ export default function NewMaterialsScreen() {
         </View>
       </Animated.View>
 
-      {materialsLoading && materials.length === 0 ? (
+      {(materialsLoading && materials.length === 0) || !effectiveClassId ? (
         <View style={S.list}>
           {Array(6).fill(0).map((_, i) => <SkeletonCard key={i} index={i} />)}
         </View>
@@ -737,15 +767,15 @@ export default function NewMaterialsScreen() {
               </View>
             ) : null
           }
-          renderSectionHeader={({ section: { title, isNew } }) => (
+          renderSectionHeader={({ section: { title, isNew } }: { section: { title: string; data: MaterialRecord[]; isNew: boolean } }) => (
             <View style={{ marginTop: 20, marginBottom: 12 }}>
               <SectionHead 
                 title={title} 
-                right={isNew && (
+                right={isNew ? (
                   <View style={{ backgroundColor: C.orange + '20', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, borderWidth: 1, borderColor: C.orange + '40' }}>
                     <Text style={{ fontSize: 10, fontWeight: '800', color: C.orange }}>LATEST</Text>
                   </View>
-                )}
+                ) : undefined}
               />
             </View>
           )}
@@ -758,10 +788,10 @@ export default function NewMaterialsScreen() {
               <Text style={S.emptySub}>Try a different search or filter.</Text>
             </View>
           }
-          renderItem={({ item, index }) => (
+          renderItem={({ item, index }: { item: MaterialRecord; index: number }) => (
             <MaterialCard
               item={item} index={index}
-              isOfficial={true}
+              isOfficial={!!item.courses?.is_official}
               isNew={new Date(item.created_at).getTime() > Date.now() - 24 * 60 * 60 * 1000}
               isBookmarked={bookmarkedIds.has(item.id)}
               bookmarkLoading={bookmarkLoading === item.id}
@@ -819,27 +849,27 @@ const S = StyleSheet.create({
   matHeader:         { flex: 1 },
   matCourse:         { fontSize: 10, fontWeight: '700', color: C.orange, textTransform: 'uppercase' },
   matTitle:          { fontSize: 17, fontWeight: '700', color: C.text, lineHeight: 22 },
-  matMetaRow:        { flexDirection: 'row', gap: 12, marginTop: 4 },
-  matMetaItem:       { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  matMetaRow:        { flexDirection: 'row', gap: 12, marginTop: 4, flexWrap: 'wrap' },
+  matMetaItem:       { flexDirection: 'row', alignItems: 'center', gap: 4, minWidth: 60 },
   matMetaText:       { fontSize: 11, color: C.textSub },
-  statBar:           { flexDirection: 'row', alignItems: 'center', marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.border },
-  stat:              { flexDirection: 'row', alignItems: 'center', gap: 4, marginRight: 12 },
+  statBar:           { flexDirection: 'row', alignItems: 'center', marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.border, flexWrap: 'wrap', gap: 8 },
+  stat:              { flexDirection: 'row', alignItems: 'center', gap: 4, marginRight: 4 },
   statText:          { fontSize: 11, color: C.textSub },
   newBadge:          { backgroundColor: '#052e16', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
   newBadgeText:      { fontSize: 9, fontWeight: '900', color: '#4ade80' },
   typeChip:          { borderRadius: 7, paddingHorizontal: 9, paddingVertical: 3, borderWidth: 1 },
   typeChipText:      { fontSize: 9.5, fontWeight: '700' },
-  matActions: { marginTop: 16, gap: 10 },
-  primaryRow: { flexDirection: 'row', gap: 8 },
-  utilityRow: { flexDirection: 'row', gap: 8, paddingTop: 4 },
-  matBtn:     { flex: 1, height: 42, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
+  matActions: { marginTop: 16, gap: 12 },
+  primaryRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+  utilityRow: { flexDirection: 'row', gap: 8, paddingTop: 6, flexWrap: 'wrap' },
+  matBtn:     { flex: 1, minWidth: 120, height: 42, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
   matBtnPrimary:     { backgroundColor: C.orange },
   matBtnMinor:       { backgroundColor: C.raised, borderWidth: 1, borderColor: C.border },
   matBtnSaved:       { backgroundColor: C.emerDim, borderWidth: 1, borderColor: C.emerald },
   matBtnText:        { fontSize: 13, fontWeight: '700', color: '#fff' },
-  utilBtn:           { flex: 1, height: 38, borderRadius: 10, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
+  utilBtn:           { flex: 1, minWidth: 90, height: 38, borderRadius: 10, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: 4 },
   utilBtnActive:     { backgroundColor: C.goldDim, borderColor: C.gold + '40' },
-  utilBtnText:       { fontSize: 11, fontWeight: '600', color: C.textSub },
+  utilBtnText:       { fontSize: 10, fontWeight: '600', color: C.textSub },
 
   summaryRow:      { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 14 },
   summaryChip:     { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, borderWidth: 1, borderColor: C.border },
