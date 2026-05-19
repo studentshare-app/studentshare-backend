@@ -117,37 +117,6 @@ function validateBody(validators) {
   }
 }
 
-function normalizeSignature(value) {
-  if (typeof value !== 'string') return ''
-  return value.replace(/^sha256=/i, '').trim()
-}
-
-function signaturesMatch(rawBody, webhookSecret, providedSignature) {
-  if (!providedSignature || !webhookSecret) return false
-
-  const normalized = normalizeSignature(providedSignature)
-  const expectedHex = crypto
-    .createHmac('sha256', webhookSecret)
-    .update(rawBody)
-    .digest('hex')
-  const expectedBase64 = crypto
-    .createHmac('sha256', webhookSecret)
-    .update(rawBody)
-    .digest('base64')
-
-  const safeEqual = (a, b) => {
-    const ab = Buffer.from(a)
-    const bb = Buffer.from(b)
-    return ab.length === bb.length && crypto.timingSafeEqual(ab, bb)
-  }
-
-  if (/^[0-9a-f]+$/i.test(normalized)) {
-    return safeEqual(normalized.toLowerCase(), expectedHex.toLowerCase())
-  }
-
-  return safeEqual(normalized, expectedBase64)
-}
-
 function bearerAuthMatches(req, monimeAccessToken, monimeSpaceId) {
   const authHeader = req.headers['authorization']
   const spaceHeader = req.headers['monime-space-id']
@@ -157,6 +126,15 @@ function bearerAuthMatches(req, monimeAccessToken, monimeSpaceId) {
   const bearer = authHeader.trim()
   const expectedBearer = `Bearer ${monimeAccessToken}`
   return bearer === expectedBearer && spaceHeader.trim() === monimeSpaceId
+}
+
+function redactBearer(authHeader) {
+  if (typeof authHeader !== 'string') return null
+  const value = authHeader.trim()
+  if (!value.toLowerCase().startsWith('bearer ')) return 'non-bearer'
+  const token = value.slice(7)
+  if (token.length <= 8) return 'Bearer ****'
+  return `Bearer ${token.slice(0, 4)}...${token.slice(-4)}`
 }
 
 const PLANS = {
@@ -448,17 +426,16 @@ app.post(
 // POST /api/monime-webhook — receives Monime payment events
 app.post('/api/monime-webhook', async (req, res) => {
   try {
-    const signatureHeader = req.headers['monime-signature']
-      || req.headers['x-monime-signature']
-      || req.headers['x-signature']
     const body = req.body.toString('utf8')
-    const providedSig = typeof signatureHeader === 'string' ? signatureHeader : ''
 
     if (NODE_ENV === 'production') {
-      const signatureOk = providedSig && signaturesMatch(body, env.monimeWebhookSecret, providedSig)
       const bearerOk = bearerAuthMatches(req, env.monimeAccessToken, env.monimeSpaceId)
-      if (!signatureOk && !bearerOk) {
-        console.error('[Webhook Auth] No valid signature or bearer auth')
+      if (!bearerOk) {
+        console.error('[Webhook Auth] bearer/space mismatch', {
+          hasAuthHeader: typeof req.headers['authorization'] === 'string',
+          authPreview: redactBearer(req.headers['authorization']),
+          hasSpaceHeader: typeof req.headers['monime-space-id'] === 'string',
+        })
         return res.status(401).json({ error: 'Invalid webhook authentication' })
       }
     }
@@ -471,7 +448,12 @@ app.post('/api/monime-webhook', async (req, res) => {
       ? webhookEventIdHeader.trim()
       : (event.event?.id || event.id || '')
 
-    console.log('[Monime Webhook]', eventName, session?.id)
+    console.log('[Monime Webhook]', {
+      eventName,
+      sessionId: session?.id || null,
+      eventId: webhookEventId || null,
+      authMode: 'bearer+space',
+    })
 
     if (eventName !== 'checkout_session.completed') {
       return res.json({ received: true })
@@ -491,6 +473,7 @@ app.post('/api/monime-webhook', async (req, res) => {
         })
 
       if (replayError?.code === '23505') {
+        console.log('[Monime Webhook] duplicate delivery ignored', { eventId: webhookEventId })
         return res.json({ received: true, duplicate: true })
       }
 
@@ -549,7 +532,7 @@ app.post('/api/monime-webhook', async (req, res) => {
       })
       .eq('id', userId)
 
-    console.log(`[Webhook] ✅ Activated premium for user ${userId}, plan ${plan}`)
+    console.log('[Webhook] ✅ Activated premium', { userId, plan, sessionId: monimeSessionId })
     res.json({ received: true })
 
   } catch (err) {
